@@ -216,6 +216,43 @@ the bridge itself was killed mid-run, the next bridge start removes such folders
 hour old. Where
 the audio goes next is up to the command: a local engine keeps it on the host.
 
+#### Example: Cactus Whistle
+
+[Whistle](https://huggingface.co/Cactus-Compute/whistle) by Cactus Compute is a 16.9 MB speech
+model. Its model card states the Apache-2.0 licence. It runs on the CPU with no GPU and no Python, and it knows
+English, German, French, Spanish, Italian, Dutch and Polish. Its runner, `needle`, reads WAV files
+only, and the phone records webm or mp4, so a short wrapper converts the recording with `ffmpeg`
+first. You need `ffmpeg` and `jq` on the host.
+
+Download the runner for your platform from
+[Cactus-Compute/needle3](https://huggingface.co/Cactus-Compute/needle3) (`linux-x86_64/needle`,
+`macos-arm64/needle`, `windows-x86_64/needle.exe` and others) and `whistle.cact` from the Whistle
+repository, and put both in one folder, for example `~/.local/share/collie-whistle/`. Save this
+script beside them as `whistle-stt` and make it executable:
+
+```sh
+#!/bin/sh
+# Collie passes the recording as the last argument and reads the transcript from stdout.
+set -eu
+here=$(dirname "$(readlink -f "$0")")
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+ffmpeg -loglevel error -nostdin -i "$1" -ac 1 -ar 16000 "$work/a.wav"
+"$here/needle" --model "$here/whistle.cact" --audio "$work/a.wav" | jq -r .text
+```
+
+Then point Collie at it:
+
+```bash
+bin/collie stt setup --provider local-cli --command ~/.local/share/collie-whistle/whistle-stt
+bin/collie stt test
+```
+
+The service runs with a short `PATH`. If `ffmpeg` or `jq` sits outside `/usr/bin`, write their full
+paths into the script. Whistle detects the language by itself. To fix one, add
+`--audio-language de` to the `needle` line. To favour names and project words, list them one per
+line in a file and add `--audio-keywords <file>`.
+
 The reasoning for all of the above — why this was declined twice, what changed, and why the seam
 looks like this — is [ADR 0029](../.adr/0029-speech-to-text-is-a-provider-seam-collie-owns.md).
 
