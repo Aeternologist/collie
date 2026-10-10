@@ -19,7 +19,7 @@ phone, no credential is held, no child process runs. Absent, not disabled. Three
 | --- | --- |
 | **`openai-compatible`** | Any endpoint that speaks `POST /audio/transcriptions` — the public OpenAI API, a cloud Whisper clone, or **a local engine on the same machine, which is the zero-egress choice** ([below](#zero-egress--point-it-at-your-own-engine)). |
 | **`codex`** | Borrows the `codex` binary you already trust for a short-lived token. No new account, no new key — and a **private, unsupported** endpoint that carries a consent step you have to type `yes` to ([below](#the-codex-provider--what-you-are-accepting)). |
-| **`local-cli`** | Runs a transcription command already on the host, such as `whisper-cli` or `muesli-cli`, once per recording, and reads the transcript from its stdout. No HTTP server needed ([below](#run-your-own-command-the-local-cli-provider)). |
+| **`local-cli`** | Runs a transcription command already on the host, such as `whisper-cli`, `muesli-cli` or [Cactus Whistle](#quick-start-cactus-whistle-on-this-machine), once per recording, and reads the transcript from its stdout. No HTTP server needed ([below](#run-your-own-command-the-local-cli-provider)). |
 
 Setup is a CLI act for the reason [pairing](security.md#pair-a-device--the-write-credential) is one: this
 surface accepts a credential, so it belongs on the host's keyboard. There is no web setup form.
@@ -87,6 +87,70 @@ being proved. If it fails, the error names its kind (auth, endpoint, response sh
 Collie on the phone: a microphone sits beside the message box. `collie stt status` says what is
 configured and *where each setting came from* (the file, or an environment variable that outranks
 it); `collie stt off` removes `stt.json` and the button is gone again, no restart either way.
+
+### Quick start: Cactus Whistle on this machine
+
+Four steps give you speech input that never leaves the host, with no account and no key. Run
+them in one shell, because steps 3 and 4 reuse the `$dir` that step 2 sets.
+
+1. Install `ffmpeg` and `jq`.
+
+   ```bash
+   sudo apt install ffmpeg jq      # Debian, Ubuntu
+   brew install ffmpeg jq          # macOS
+   ```
+
+2. Download the Whistle model and its runner.
+
+   ```bash
+   # linux-x86_64, linux-arm64 or macos-arm64
+   platform=linux-x86_64
+   dir=~/.local/share/collie-whistle
+   hf=https://huggingface.co/Cactus-Compute
+   mkdir -p "$dir"
+   curl -fL -o "$dir/needle" "$hf/needle3/resolve/main/$platform/needle"
+   curl -fL -o "$dir/whistle.cact" "$hf/whistle/resolve/main/whistle.cact"
+   chmod +x "$dir/needle"
+   ```
+
+3. Write the wrapper that Collie runs.
+
+   ```bash
+   cat > "$dir/whistle-stt" <<'EOF'
+   #!/bin/sh
+   # Collie passes the recording as the last argument and reads the text from stdout.
+   set -eu
+   PATH="$PATH:/usr/bin:/usr/local/bin:/opt/homebrew/bin"
+   here=$(dirname "$0")
+   work=$(mktemp -d)
+   trap 'rm -rf "$work"' EXIT
+   ffmpeg -loglevel error -nostdin -i "$1" -ac 1 -ar 16000 "$work/a.wav"
+   "$here/needle" --model "$here/whistle.cact" --audio "$work/a.wav" | jq -r .text
+   EOF
+   chmod +x "$dir/whistle-stt"
+   ```
+
+4. Point Collie at it and test it.
+
+   ```bash
+   bin/collie stt setup --provider local-cli --command "$dir/whistle-stt"
+   bin/collie stt test
+   ```
+
+The microphone appears on the phone at once, with no restart. `collie stt test` sends three
+silent clips, WAV, webm and mp4, and a pass prints an empty transcript for each.
+
+[Whistle](https://huggingface.co/Cactus-Compute/whistle) by Cactus Compute is a 16.9 MB model
+that runs on the CPU, with no GPU and no Python. Its model card states the Apache-2.0 licence. It
+knows English, German, French, Spanish, Italian, Dutch and Polish, and finds the language itself.
+A 10-second clip takes under a second on a desktop CPU.
+
+The wrapper exists because the runner reads WAV only and the phone records webm or mp4. It also
+adds the usual tool folders to `PATH`, since the service runs with a short one. To fix the
+language, add `--audio-language de` to the `needle` line. To favour project words and names, list
+them one per line in a file and add `--audio-keywords <file>`.
+
+Linux and macOS only. Cactus also ships a Windows runner, but this wrapper is a shell script.
 
 ### Container support is provider-specific
 
@@ -215,43 +279,6 @@ The temp file sits in a folder only your user can open, and Collie deletes it af
 the bridge itself was killed mid-run, the next bridge start removes such folders once they are an
 hour old. Where
 the audio goes next is up to the command: a local engine keeps it on the host.
-
-#### Example: Cactus Whistle
-
-[Whistle](https://huggingface.co/Cactus-Compute/whistle) by Cactus Compute is a 16.9 MB speech
-model. Its model card states the Apache-2.0 licence. It runs on the CPU with no GPU and no Python, and it knows
-English, German, French, Spanish, Italian, Dutch and Polish. Its runner, `needle`, reads WAV files
-only, and the phone records webm or mp4, so a short wrapper converts the recording with `ffmpeg`
-first. You need `ffmpeg` and `jq` on the host.
-
-Download the runner for your platform from
-[Cactus-Compute/needle3](https://huggingface.co/Cactus-Compute/needle3) (`linux-x86_64/needle`,
-`macos-arm64/needle`, `windows-x86_64/needle.exe` and others) and `whistle.cact` from the Whistle
-repository, and put both in one folder, for example `~/.local/share/collie-whistle/`. Save this
-script beside them as `whistle-stt` and make it executable:
-
-```sh
-#!/bin/sh
-# Collie passes the recording as the last argument and reads the transcript from stdout.
-set -eu
-here=$(dirname "$(readlink -f "$0")")
-work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
-ffmpeg -loglevel error -nostdin -i "$1" -ac 1 -ar 16000 "$work/a.wav"
-"$here/needle" --model "$here/whistle.cact" --audio "$work/a.wav" | jq -r .text
-```
-
-Then point Collie at it:
-
-```bash
-bin/collie stt setup --provider local-cli --command ~/.local/share/collie-whistle/whistle-stt
-bin/collie stt test
-```
-
-The service runs with a short `PATH`. If `ffmpeg` or `jq` sits outside `/usr/bin`, write their full
-paths into the script. Whistle detects the language by itself. To fix one, add
-`--audio-language de` to the `needle` line. To favour names and project words, list them one per
-line in a file and add `--audio-keywords <file>`.
 
 The reasoning for all of the above — why this was declined twice, what changed, and why the seam
 looks like this — is [ADR 0029](../.adr/0029-speech-to-text-is-a-provider-seam-collie-owns.md).
