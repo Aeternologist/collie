@@ -23,6 +23,10 @@ Running a crew? Update the lead first; members follow on their own. Details:
 
 ## [Unreleased]
 
+### Changed
+
+- **Dictation takes over the composer with a recorder.** Tap the mic and a bar covers the whole composer block, belt and box, in exactly its own space, so nothing above it moves. OK stands where the mic was and the bin at the far end, with a live level display between them. Once you have spoken, three seconds of quiet finish the clip, shown as a ring closing round OK; speaking again resets it. While it transcribes, the ring becomes one turning arc and the bin still cancels the request. The old recording strip is gone.
+
 ### Fixed
 
 - **Chat and History follow a Grok session reopened with `/resume`.** Herdr keeps the first session id a Grok pane reports, so while Grok runs, Collie checks Grok's own list of live sessions and reads the one live session in the pane's folder instead. Thanks @GGGODLIN (#405).

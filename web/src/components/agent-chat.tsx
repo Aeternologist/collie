@@ -2667,7 +2667,10 @@ export function AgentChat({
                   darker. --chrome is rgb(23) in dark, the same raised surface the sheets stand on,
                   and unchanged at rgb(235) in light, where --card would be pure white and land
                   1.04:1 against the inverted mirror. index.css states the whole argument. */}
-              <div data-slot="chrome-block" className="border-t border-rule bg-chrome">
+              {/* `relative` is the box the voice takeover is drawn over: it is `absolute inset-0` in this
+                  block, a sibling of the composer, so it fills exactly the composer's own box and
+                  adds no height (components/voice-takeover.tsx). */}
+              <div data-slot="chrome-block" className="relative border-t border-rule bg-chrome">
                 <Composer
                   ref={composerRef}
                   paneId={paneId}

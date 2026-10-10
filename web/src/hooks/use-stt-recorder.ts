@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import * as api from "@/lib/api";
+import { createAudioMeter, type AudioMeter } from "@/lib/audio-meter";
 import { t } from "@/lib/i18n";
 import {
   MAX_STT_AUDIO_BYTES,
@@ -13,10 +14,10 @@ import {
 /** Where one clip is in its life. `requesting` is the browser's permission prompt. */
 export type SttPhase = "idle" | "requesting" | "recording" | "transcribing";
 
-/** One composer's microphone. Everything the button and the strip above it need. */
+/** One composer's microphone. Everything the button and the voice takeover need. */
 export interface SttRecorder {
   phase: SttPhase;
-  /** `m:ss` since the recording started — the elapsed readout on the armed strip. */
+  /** `m:ss` since the recording started — the elapsed readout on the voice takeover. */
   elapsedLabel: string;
   /** True for every phase but `idle`: a clip is being recorded or is in flight. */
   busy: boolean;
@@ -24,8 +25,18 @@ export interface SttRecorder {
   start: () => void;
   /** Stop and transcribe. A no-op unless recording. */
   stopAndSend: () => void;
-  /** Throw the clip away — no upload, nothing kept. Safe in any phase. */
+  /**
+   * Throw the clip away — no upload, nothing kept. Safe in any phase, and in `transcribing` it ABORTS
+   * the request in flight and drops whatever it would have answered (the operation identity is
+   * cleared first, so the answer finds a stale operation and is ignored).
+   */
   discard: () => void;
+  /**
+   * The level meter on this clip's stream, for the takeover to read per frame; `null` when there is
+   * no clip, no Web Audio, or the clip is over. Made inside the tap that called `start`
+   * (lib/audio-meter.ts says why), closed on every path `teardown` covers.
+   */
+  meter: AudioMeter | null;
 }
 
 interface SttRecorderOptions {
@@ -77,6 +88,8 @@ export function useSttRecorder({
 }: SttRecorderOptions): SttRecorder {
   const [phase, setPhase] = useState<SttPhase>("idle");
   const [elapsedMs, setElapsedMs] = useState(0);
+  const [meter, setMeter] = useState<AudioMeter | null>(null);
+  const meterRef = useRef<AudioMeter | null>(null);
   // The live phase for the async continuations below, which run between renders and must not read a
   // value that is one render behind.
   const phaseRef = useRef<SttPhase>("idle");
@@ -144,6 +157,13 @@ export function useSttRecorder({
     streamRef.current = null;
   }
 
+  // The meter shares the stream and the lifetime of the clip: closed wherever the tracks are.
+  function closeMeter(publish: boolean): void {
+    meterRef.current?.close();
+    meterRef.current = null;
+    if (publish) setMeter(null);
+  }
+
   /**
    * Drop the current operation and release everything it holds. `publish` is false only from the
    * unmount path, where a state update would be a no-op React warns about.
@@ -170,6 +190,7 @@ export function useSttRecorder({
       }
     }
     stopTracks();
+    closeMeter(publish);
     if (publish) {
       setElapsedMs(0);
       setPhaseNow("idle");
@@ -239,6 +260,10 @@ export function useSttRecorder({
     }
     const operation = new AbortController();
     operationRef.current = operation;
+    // Inside the tap, so the audio context can be resumed under the user's gesture.
+    const levelMeter = createAudioMeter();
+    meterRef.current = levelMeter;
+    setMeter(levelMeter);
     setElapsedMs(0);
     setPhaseNow("requesting");
     void (async () => {
@@ -254,6 +279,7 @@ export function useSttRecorder({
         return;
       }
       streamRef.current = stream;
+      levelMeter?.attach(stream);
       let recorder: MediaRecorder;
       try {
         recorder = new MediaRecorder(stream, {
@@ -292,6 +318,7 @@ export function useSttRecorder({
         clearTimers();
         recorderRef.current = null;
         stopTracks();
+        closeMeter(true);
         const chunks = chunksRef.current;
         chunksRef.current = [];
         bytesRef.current = 0;
@@ -354,5 +381,6 @@ export function useSttRecorder({
     start,
     stopAndSend,
     discard,
+    meter,
   };
 }
