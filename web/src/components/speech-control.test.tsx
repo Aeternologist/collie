@@ -5,13 +5,16 @@ import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { __resetOperatorCommands } from "@/lib/operator-config";
-import { __resetSttEngine, sttEnginePreference } from "@/lib/stt";
+import { __resetHandsFree, __resetSttEngine, setSttEnginePreference, sttEnginePreference } from "@/lib/stt";
 import * as sttModel from "@/lib/stt-model";
 import { dateTime } from "@/lib/format";
 import { CODEX_CONSENT_ID } from "@/lib/stt-consent";
 import type { SttCapability, SttHostStatus, WhistleStatus } from "@/lib/types";
 import { server } from "@/test/setup";
-import { SpeechCards, SpeechControl, type SpeechCardsProps } from "./speech-control";
+import { SpeechCards, SpeechControl, type SpeechCardsProps, type VoiceView } from "./speech-control";
+
+// Settings → Voice: the hub, Host speech and Whistle model (ADR 0096, ADR 0097). The view cases
+// draw `SpeechCards` from handed-in facts; the controller cases drive `SpeechControl` against msw.
 
 // The probe starts a real worker; its own test is stt.test.ts. Here it only has to be asked.
 vi.mock("@/lib/stt", async (importOriginal) => ({
@@ -34,11 +37,11 @@ const BYTES = 16_919_407;
 
 const ABSENT: WhistleStatus = { state: "absent", bytes: BYTES, hostEngine: false, hostTaken: false };
 const READY: WhistleStatus = { ...ABSENT, state: "ready", sha256: SHA, revision: REVISION, fetchedAt: FETCHED_AT };
-const HOST_WHISTLE: SttCapability = { provider: "whistle", available: true };
+const STT_WHISTLE: SttCapability = { provider: "whistle", available: true };
 const COPY = { sha256: SHA, bytes: BYTES, revision: REVISION };
 
 const CODEX_BIN = "/home/op/.local/bin/codex";
-/** The host with no provider, Whistle not downloaded yet, Codex installed but signed out. */
+/** The host with no option, Whistle not downloaded yet, Codex installed but signed out. */
 const HOST_NONE: SttHostStatus = {
   provider: "none",
   available: false,
@@ -51,30 +54,30 @@ const HOST_NONE: SttHostStatus = {
   },
 };
 const OPEN_ALL: SttHostStatus["switchable"] = { whistle: { ok: true }, codex: { ok: true }, off: { ok: true } };
-const HOST_WHISTLE_ON: SttHostStatus = { ...HOST_NONE, provider: "whistle", available: true, configuredBy: "file", switchable: OPEN_ALL };
-const HOST_CODEX_ON: SttHostStatus = { ...HOST_WHISTLE_ON, provider: "codex", identity: "honest" };
+const HOST_NONE_OPEN: SttHostStatus = { ...HOST_NONE, switchable: OPEN_ALL };
+const HOST_WHISTLE: SttHostStatus = { ...HOST_NONE, provider: "whistle", available: true, configuredBy: "file", switchable: OPEN_ALL };
+const HOST_CODEX: SttHostStatus = { ...HOST_WHISTLE, provider: "codex", identity: "honest" };
 const LOCKED = (reason: "terminal" | "env" | "unreadable"): SttHostStatus["switchable"] => ({
   whistle: { ok: false, reason },
   codex: { ok: false, reason },
   off: { ok: false, reason },
 });
-const HOST_KEYED: SttHostStatus = {
-  provider: "openai-compatible",
-  available: true,
-  configuredBy: "file",
-  switchable: LOCKED("terminal"),
-};
+const HOST_SERVICE: SttHostStatus = { provider: "openai-compatible", available: true, configuredBy: "file", switchable: LOCKED("terminal") };
 
 function props(over: Partial<SpeechCardsProps> = {}): SpeechCardsProps {
   return {
+    page: "hub",
     whistle: ABSENT,
     hostStt: null,
-    host: null,
+    host: HOST_NONE,
+    hostRead: true,
     switching: null,
     providerError: null,
+    confirmTo: null,
     consentOpen: false,
     consentError: null,
     canWrite: true,
+    recording: true,
     engine: "host",
     block: null,
     local: null,
@@ -83,481 +86,559 @@ function props(over: Partial<SpeechCardsProps> = {}): SpeechCardsProps {
     hostError: null,
     phoneError: null,
     hostBusy: false,
+    checking: false,
     confirmingRemove: false,
+    handsFree: false,
     onEngine: vi.fn(),
+    onHandsFree: vi.fn(),
     onSetup: vi.fn(),
+    onSetupBoth: vi.fn(),
     onAskRemove: vi.fn(),
     onCancelRemove: vi.fn(),
     onRemove: vi.fn(),
     onChooseProvider: vi.fn(),
+    onConfirm: vi.fn(),
+    onCancelConfirm: vi.fn(),
     onAcceptConsent: vi.fn(),
     onCancelConsent: vi.fn(),
     onPhoneDownload: vi.fn(),
     onPhoneRemove: vi.fn(),
+    onCheckAgain: vi.fn(),
+    onOpenPage: vi.fn(),
     ...over,
   };
 }
+
+/** The props of a hub where the host runs Whistle and the model is ready on it. */
+const WHISTLE_HUB: Partial<SpeechCardsProps> = { whistle: { ...READY, hostEngine: true }, hostStt: STT_WHISTLE, host: HOST_WHISTLE };
+
+const follows = (a: Node, b: Node) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+const phoneGroup = () => screen.getByRole("radiogroup", { name: "Where this phone's speech becomes text." });
+const hostGroup = () => screen.getByRole("radiogroup", { name: "What your host uses" });
 
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
 });
 
-describe("SpeechCards, the credit", () => {
-  it("draws nothing where the host offers no Whistle and the phone holds no copy", () => {
-    const { container } = render(<SpeechCards {...props({ whistle: null })} />);
-    expect(container).toBeEmptyDOMElement();
+// ── The hub ─────────────────────────────────────────────────────────────────────────────────────
+
+describe("the hub", () => {
+  it("reads top to bottom: the mic's status, this phone, every device on the host, after you speak, the model", () => {
+    render(<SpeechCards {...props(WHISTLE_HUB)} />);
+    const status = screen.getByText("When you press the mic");
+    const phone = screen.getByRole("heading", { name: "Only this phone" });
+    const host = screen.getByRole("heading", { name: "Every device on your host" });
+    const after = screen.getByRole("heading", { name: "After you speak" });
+    const model = screen.getByRole("button", { name: /Whistle model/ });
+    expect(follows(status, phone)).toBe(true);
+    expect(follows(phone, host)).toBe(true);
+    expect(follows(host, after)).toBe(true);
+    expect(follows(after, model)).toBe(true);
   });
 
-  it("names Cactus Compute and links to them, in a new tab with no opener", () => {
+  it("nothing set up: Needs setup, nothing is recorded, and On your host cannot be chosen", () => {
     render(<SpeechCards {...props()} />);
-    expect(screen.getByText(/Whistle is a speech model by/)).toBeInTheDocument();
+    expect(screen.getByText("Nothing yet. Dictation is not set up on this phone or on your host.")).toBeInTheDocument();
+    expect(screen.getByText("Needs setup")).toBeInTheDocument();
+    expect(screen.getByText("Nothing is recorded.")).toBeInTheDocument();
+    expect(within(phoneGroup()).getByRole("radio", { name: /^On your host/ })).toBeDisabled();
+    expect(screen.getByText("Your host has no speech option yet. Choose one below.")).toBeInTheDocument();
+  });
+
+  it("nothing on the host: Set up does both steps, and says so", async () => {
+    const p = props();
+    render(<SpeechCards {...p} />);
+    expect(within(phoneGroup()).getByRole("radio", { name: /^On this phone/ })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Set up (16.9 MB)" }));
+    expect(p.onSetupBoth).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Your host downloads it from Hugging Face, then this phone copies it from your host.")).toBeInTheDocument();
+  });
+
+  it("the host holds the model: Copy to this phone, and a read-only device may copy too", async () => {
+    const p = props({ ...WHISTLE_HUB, canWrite: false });
+    render(<SpeechCards {...p} />);
+    await userEvent.click(screen.getByRole("button", { name: "Copy to this phone (16.9 MB)" }));
+    expect(p.onPhoneDownload).toHaveBeenCalledTimes(1);
+  });
+
+  it("the host runs Whistle: Works, and the audio stays on the host", () => {
+    render(<SpeechCards {...props(WHISTLE_HUB)} />);
+    expect(screen.getByText("Your host turns your speech into text, with Whistle.")).toBeInTheDocument();
+    expect(screen.getByText("Works")).toBeInTheDocument();
+    expect(within(phoneGroup()).getByRole("radio", { name: /^On your host/ })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByText("Uses what your host uses: Whistle.")).toBeInTheDocument();
+  });
+
+  it("this phone runs Whistle: works offline, the audio stays on the phone", () => {
+    render(<SpeechCards {...props({ ...WHISTLE_HUB, engine: "phone", local: COPY })} />);
+    expect(screen.getByText("This phone turns your speech into text, with Whistle.")).toBeInTheDocument();
+    expect(screen.getByText("Works, also offline")).toBeInTheDocument();
+    expect(within(phoneGroup()).getByRole("radio", { name: /^On this phone/ })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByText("Ready. Version ca52876.")).toBeInTheDocument();
+  });
+
+  it("paused: the phone's copy is gone, the choice stays, Collie does not switch, and Restore is the one action", async () => {
+    const p = props({ ...WHISTLE_HUB, engine: "phone", local: null });
+    render(<SpeechCards {...p} />);
+    expect(screen.getByText("Dictation is paused. This phone's copy of Whistle is gone.")).toBeInTheDocument();
+    expect(screen.getByText("Paused")).toBeInTheDocument();
+    expect(screen.getByText(/Collie does not switch to your host by itself\. Restore the copy/)).toBeInTheDocument();
+    expect(within(phoneGroup()).getByRole("radio", { name: /^On this phone/ })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByText("The copy on this phone is gone. Restore it above.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Restore (16.9 MB)" }));
+    expect(p.onPhoneDownload).toHaveBeenCalledTimes(1);
+    // Choosing the host is the person's other way out, and it is theirs to take.
+    await userEvent.click(within(phoneGroup()).getByRole("radio", { name: /^On your host/ }));
+    expect(p.onEngine).toHaveBeenCalledWith("host");
+  });
+
+  it("paused with no copy on the host to restore from: says so, with no button", () => {
+    render(<SpeechCards {...props({ engine: "phone", local: null, host: HOST_CODEX, hostStt: { provider: "codex", available: true } })} />);
+    expect(screen.getByText("Collie does not switch to your host by itself. Choose On your host below.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Restore/ })).toBeNull();
+  });
+
+  it("the host's option does not work: the host's own words, and Fix opens Host speech", async () => {
+    const p = props({ ...WHISTLE_HUB, host: { ...HOST_CODEX, available: false, reason: "codex is not signed in" } });
+    render(<SpeechCards {...p} />);
+    expect(screen.getAllByText("Not working").length).toBeGreaterThan(0);
+    expect(screen.getByText("codex is not signed in")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Fix" }));
+    expect(p.onOpenPage).toHaveBeenCalledWith("host");
+  });
+
+  it("a browser that cannot run Whistle: On this phone is off with the reason, and the host is in force", () => {
+    render(<SpeechCards {...props({ ...WHISTLE_HUB, engine: "phone", local: COPY, block: "insecure" })} />);
+    expect(within(phoneGroup()).getByRole("radio", { name: /^On this phone/ })).toBeDisabled();
+    expect(within(phoneGroup()).getByRole("radio", { name: /^On your host/ })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("a tap on a choice reports it; a tap on the chosen one does nothing", async () => {
+    const p = props({ ...WHISTLE_HUB, local: COPY });
+    render(<SpeechCards {...p} />);
+    await userEvent.click(within(phoneGroup()).getByRole("radio", { name: /^On your host/ }));
+    expect(p.onEngine).not.toHaveBeenCalled();
+    await userEvent.click(within(phoneGroup()).getByRole("radio", { name: /^On this phone/ }));
+    expect(p.onEngine).toHaveBeenCalledWith("phone");
+  });
+
+  it("an info button opens the five facts, titled with the option, and does not choose it", async () => {
+    const p = props({ ...WHISTLE_HUB, local: COPY });
+    render(<SpeechCards {...p} />);
+    await userEvent.click(screen.getByRole("button", { name: "About On this phone" }));
+    const sheet = await screen.findByRole("dialog", { name: "On this phone" });
+    for (const label of ["Audio", "Offline", "Cost", "Setup", "Speed"]) expect(within(sheet).getByText(label)).toBeInTheDocument();
+    expect(within(sheet).getByText("Stays on this phone.")).toBeInTheDocument();
+    expect(within(sheet).getByText("Two copies of 16.9 MB: to your host, then to this phone.")).toBeInTheDocument();
+    expect(p.onEngine).not.toHaveBeenCalled();
+    expect(within(phoneGroup()).getByRole("radio", { name: /^On your host/ })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("On your host's facts are those of what the host uses: ChatGPT leaves the network, and says so in words", async () => {
+    render(<SpeechCards {...props({ host: HOST_CODEX, hostStt: { provider: "codex", available: true } })} />);
+    await userEvent.click(screen.getByRole("button", { name: "About On your host" }));
+    const sheet = await screen.findByRole("dialog", { name: "On your host" });
+    expect(within(sheet).getByText("Goes to your host, then to ChatGPT (OpenAI).")).toBeInTheDocument();
+    expect(within(sheet).getByText("Leaves your network")).toBeInTheDocument();
+    expect(within(sheet).getByText("Counts against your ChatGPT plan. Your account carries the rate limits and the risk of a ban.")).toBeInTheDocument();
+  });
+
+  it("the host's row names the option, where audio goes and who changed it, and opens Host speech", async () => {
+    const changedAt = "2026-10-11T09:41:00.000Z";
+    const p = props({ ...WHISTLE_HUB, host: { ...HOST_WHISTLE, changedBy: "Pixel 8", changedAt } });
+    render(<SpeechCards {...p} />);
+    const row = screen.getByRole("button", { name: /^Whistle on your host/ });
+    expect(within(row).getByText("Goes to your host and stays there.")).toBeInTheDocument();
+    expect(within(row).getByText(`Last changed by Pixel 8, ${dateTime(Date.parse(changedAt))}.`)).toBeInTheDocument();
+    await userEvent.click(row);
+    expect(p.onOpenPage).toHaveBeenCalledWith("host");
+  });
+
+  it("says nothing about who changed it when the host recorded nobody", () => {
+    render(<SpeechCards {...props(WHISTLE_HUB)} />);
+    expect(screen.queryByText(/Last changed by/)).toBeNull();
+  });
+
+  it("a read-only device: one banner for host settings, and this phone's choice and hands-free stay live", async () => {
+    const p = props({ ...WHISTLE_HUB, local: COPY, canWrite: false });
+    render(<SpeechCards {...p} />);
+    expect(screen.getByText("This device can look but not change host settings. Ask the owner of your host.")).toBeInTheDocument();
+    await userEvent.click(within(phoneGroup()).getByRole("radio", { name: /^On this phone/ }));
+    expect(p.onEngine).toHaveBeenCalledWith("phone");
+    await userEvent.click(screen.getByRole("switch", { name: "Hands-free voice: send transcript immediately" }));
+    expect(p.onHandsFree).toHaveBeenCalledWith(true);
+  });
+
+  it("hands-free with ChatGPT names the provider the unread text comes back from", () => {
+    render(<SpeechCards {...props({ host: HOST_CODEX, hostStt: { provider: "codex", available: true }, handsFree: true })} />);
+    expect(
+      screen.getByText("The text comes back from ChatGPT (OpenAI) and goes into the terminal before you read it."),
+    ).toBeInTheDocument();
+  });
+
+  it("hands-free with Whistle on the host owes no warning", () => {
+    render(<SpeechCards {...props({ ...WHISTLE_HUB, handsFree: true })} />);
+    expect(screen.queryByText(/goes into the terminal before you read it/)).toBeNull();
+  });
+
+  it("the model's row carries its state in words, and opens Whistle model", async () => {
+    const p = props({ ...WHISTLE_HUB, local: COPY });
+    render(<SpeechCards {...p} />);
+    const row = screen.getByRole("button", { name: /Whistle model/ });
+    expect(within(row).getByText("Both ready")).toBeInTheDocument();
+    expect(within(row).getByText("By Cactus Compute · 16.9 MB")).toBeInTheDocument();
+    await userEvent.click(row);
+    expect(p.onOpenPage).toHaveBeenCalledWith("model");
+  });
+
+  it("keeps every button at least 44px tall", () => {
+    for (const over of [{}, WHISTLE_HUB, { ...WHISTLE_HUB, engine: "phone" as const }]) {
+      const { unmount } = render(<SpeechCards {...props(over)} />);
+      for (const button of screen.getAllByRole("button")) expect(button.className).toMatch(/\bh-11\b|\bmin-h-11\b|\bsize-11\b/);
+      for (const radio of screen.getAllByRole("radio")) expect(radio.className).toMatch(/\bmin-h-11\b/);
+      unmount();
+    }
+  });
+});
+
+// ── Host speech ─────────────────────────────────────────────────────────────────────────────────
+
+describe("Host speech", () => {
+  const host = (over: Partial<SpeechCardsProps> = {}) => props({ page: "host", whistle: READY, ...over });
+
+  it("lists five options in two tiers, then Off on its own, each with an info button", () => {
+    render(<SpeechCards {...host({ host: HOST_NONE_OPEN })} />);
+    const stays = screen.getByRole("heading", { name: "Stays on your machines" });
+    const leaves = screen.getByRole("heading", { name: "Leaves your host" });
+    const names = ["Whistle on your host", "Your own command", "A speech service", "ChatGPT subscription", "Off"];
+    for (const name of names) expect(screen.getByRole("button", { name: `About ${name}` })).toBeInTheDocument();
+    expect(follows(stays, screen.getByText("Your own command"))).toBe(true);
+    expect(follows(screen.getByText("Your own command"), leaves)).toBe(true);
+    expect(follows(leaves, screen.getByText("A speech service"))).toBe(true);
+    expect(screen.getByText("Collie cannot check where this command sends audio.")).toBeInTheDocument();
+    expect(screen.getByText("Your host takes no audio.")).toBeInTheDocument();
+  });
+
+  it("nothing on the host: Off is chosen, and each closed choice says why and what to run there", async () => {
+    const p = host({ whistle: ABSENT, host: HOST_NONE });
+    render(<SpeechCards {...p} />);
+    expect(within(hostGroup()).getByRole("radio", { name: /^Off/ })).toHaveAttribute("aria-checked", "true");
+    expect(within(hostGroup()).getByRole("radio", { name: /^Whistle on your host/ })).toBeDisabled();
+    expect(within(hostGroup()).getByRole("radio", { name: /^ChatGPT subscription/ })).toBeDisabled();
+    expect(screen.getByText("Codex is not signed in on your host. Run this there:")).toBeInTheDocument();
+    expect(screen.getByText("codex login")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Download to host (16.9 MB)" }));
+    expect(p.onSetup).toHaveBeenCalledTimes(1);
+  });
+
+  it("a tap on a switchable option reports it; the chosen one and a closed one do nothing", async () => {
+    const p = host({ host: HOST_WHISTLE });
+    render(<SpeechCards {...p} />);
+    await userEvent.click(within(hostGroup()).getByRole("radio", { name: /^Whistle on your host/ }));
+    expect(p.onChooseProvider).not.toHaveBeenCalled();
+    await userEvent.click(within(hostGroup()).getByRole("radio", { name: /^Off/ }));
+    expect(p.onChooseProvider).toHaveBeenCalledWith("off");
+    await userEvent.click(within(hostGroup()).getByRole("radio", { name: /^ChatGPT subscription/ }));
+    expect(p.onChooseProvider).toHaveBeenLastCalledWith("codex");
+    expect(screen.getByText("Asks for your consent first.")).toBeInTheDocument();
+  });
+
+  it("an info button opens the option's facts and does not choose it", async () => {
+    const p = host({ host: HOST_WHISTLE });
+    render(<SpeechCards {...p} />);
+    await userEvent.click(screen.getByRole("button", { name: "About A speech service" }));
+    const sheet = await screen.findByRole("dialog", { name: "A speech service" });
+    expect(within(sheet).getByText("The service bills you, usually per minute of audio.")).toBeInTheDocument();
+    expect(within(sheet).getByText("Leaves your network")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "About Off" }));
+    expect(p.onChooseProvider).not.toHaveBeenCalled();
+    expect(within(hostGroup()).getByRole("radio", { name: /^Whistle on your host/ })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("a terminal option is not a choice: a tap shows the fixed command, Copy and Check again", async () => {
+    const p = host({ host: HOST_WHISTLE });
+    render(<SpeechCards {...p} />);
+    const command = screen.getByRole("button", { name: /^Your own command/ });
+    expect(command).not.toHaveAttribute("role", "radio");
+    expect(command).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(command);
+    expect(command).toHaveAttribute("aria-expanded", "true");
+    expect(await screen.findByText("collie stt setup --provider local-cli")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Check again" }));
+    expect(p.onCheckAgain).toHaveBeenCalledTimes(1);
+    expect(p.onChooseProvider).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: /^A speech service/ }));
+    expect(await screen.findByText("collie stt setup --provider openai-compatible")).toBeInTheDocument();
+    expect(screen.getByText(/Your key stays on your host\. It never goes through this app\./)).toBeInTheDocument();
+  });
+
+  it("a speech service set up in a terminal: in use, the commands that change it, and no other choice", () => {
+    render(<SpeechCards {...host({ host: HOST_SERVICE })} />);
+    expect(within(hostGroup()).getByRole("radio", { name: /^A speech service/ })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByText("Set up in a terminal. Change it there too.")).toBeInTheDocument();
+    expect(screen.getByText(/This provider was set up in a terminal on the host/)).toBeInTheDocument();
+    expect(screen.getByText("collie stt setup")).toBeInTheDocument();
+    expect(screen.getByText("collie stt off")).toBeInTheDocument();
+    for (const name of [/^Whistle on your host/, /^ChatGPT subscription/, /^Off/]) {
+      expect(within(hostGroup()).getByRole("radio", { name })).toBeDisabled();
+    }
+  });
+
+  it("the environment and an unreadable file are shown with their own command", () => {
+    render(<SpeechCards {...host({ host: { ...HOST_WHISTLE, configuredBy: "env", switchable: LOCKED("env") } })} />);
+    expect(screen.getByText(/The host's environment sets the speech provider/)).toBeInTheDocument();
+    expect(screen.getByText("collie stt status")).toBeInTheDocument();
+    cleanup();
+    render(<SpeechCards {...host({ host: { ...HOST_WHISTLE, switchable: LOCKED("unreadable") } })} />);
+    expect(screen.getByText("The speech settings file on the host cannot be read. To see why, run this on the host:")).toBeInTheDocument();
+  });
+
+  it("ChatGPT in use: the identity, honest or the codex-cli fallback, in words", () => {
+    render(<SpeechCards {...host({ host: HOST_CODEX })} />);
+    expect(screen.getByText("Collie names itself to the endpoint.", { exact: false })).toBeInTheDocument();
+    cleanup();
+    render(<SpeechCards {...host({ host: { ...HOST_CODEX, identity: "codex-cli" } })} />);
+    expect(screen.getByText(/Collie wears the Codex CLI's headers/)).toBeInTheDocument();
+  });
+
+  it("an option in use that does not work shows the host's own words", () => {
+    render(<SpeechCards {...host({ host: { ...HOST_CODEX, available: false, reason: "codex is not signed in" } })} />);
+    expect(screen.getByText("codex is not signed in")).toBeInTheDocument();
+    expect(screen.getByText("Not working")).toBeInTheDocument();
+  });
+
+  it("a read-only device: the banner, the facts, In use on the one in use, and no choice", () => {
+    render(<SpeechCards {...host({ host: HOST_CODEX, canWrite: false })} />);
+    expect(screen.getByText("This device can look but not change host settings. Ask the owner of your host.")).toBeInTheDocument();
+    expect(screen.queryByRole("radiogroup")).toBeNull();
+    expect(screen.queryByRole("radio")).toBeNull();
+    expect(screen.getByText("In use")).toBeInTheDocument();
+    // The info buttons stay: reading is not a write.
+    expect(screen.getByRole("button", { name: "About ChatGPT subscription" })).toBeInTheDocument();
+  });
+
+  it("a host that says nothing (an older bridge) is drawn without a choice and without the banner", () => {
+    render(<SpeechCards {...host({ host: null, hostStt: STT_WHISTLE })} />);
+    expect(screen.queryByRole("radio")).toBeNull();
+    expect(screen.queryByText(/This device can look/)).toBeNull();
+    expect(screen.getByText("In use")).toBeInTheDocument();
+  });
+
+  it("names the device that last changed it", () => {
+    const changedAt = "2026-10-10T18:02:00.000Z";
+    render(<SpeechCards {...host({ host: { ...HOST_CODEX, changedBy: "ThinkPad", changedAt } })} />);
+    expect(screen.getByText(`Last changed by ThinkPad, ${dateTime(Date.parse(changedAt))}.`)).toBeInTheDocument();
+  });
+
+  it("while a choice is in flight, no other choice can be tapped", () => {
+    render(<SpeechCards {...host({ host: HOST_NONE_OPEN, switching: "whistle" })} />);
+    expect(within(hostGroup()).getByRole("radio", { name: /^ChatGPT subscription/ })).toBeDisabled();
+  });
+
+  it("says a refused switch in words", () => {
+    render(<SpeechCards {...host({ host: HOST_WHISTLE, providerError: "The speech settings on your host changed meanwhile." })} />);
+    expect(screen.getByRole("status")).toHaveTextContent("The speech settings on your host changed meanwhile.");
+  });
+
+  it("the host-wide confirm: now and after, each with its audio line, then Cancel or change for every device", async () => {
+    const p = host({ host: HOST_NONE_OPEN, confirmTo: "whistle" });
+    render(<SpeechCards {...p} />);
+    const sheet = await screen.findByRole("dialog", { name: "Use Whistle on your host?" });
+    expect(within(sheet).getByText("This changes dictation for every device paired to your host.")).toBeInTheDocument();
+    expect(within(sheet).getByText("Now: Off")).toBeInTheDocument();
+    expect(within(sheet).getByText("Your host takes no audio.")).toBeInTheDocument();
+    expect(within(sheet).getByText("After: Whistle on your host")).toBeInTheDocument();
+    expect(within(sheet).getByText("Goes to your host and stays there.")).toBeInTheDocument();
+    await userEvent.click(within(sheet).getByRole("button", { name: "Cancel" }));
+    expect(p.onCancelConfirm).toHaveBeenCalledTimes(1);
+    await userEvent.click(within(sheet).getByRole("button", { name: "Change for every device" }));
+    expect(p.onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("the ChatGPT consent: the host-wide line, the audio line, the CLI's four paragraphs, then Cancel or I accept", async () => {
+    const p = host({ host: HOST_WHISTLE, consentOpen: true });
+    render(<SpeechCards {...p} />);
+    const sheet = await screen.findByRole("dialog", { name: "Use your ChatGPT subscription?" });
+    expect(within(sheet).getByText("This changes dictation for every device paired to your host.")).toBeInTheDocument();
+    expect(within(sheet).getByText("Goes to your host, then to ChatGPT (OpenAI).")).toBeInTheDocument();
+    expect(within(sheet).getByText(/https:\/\/chatgpt\.com\/backend-api\/transcribe/)).toBeInTheDocument();
+    expect(within(sheet).getByText(new RegExp(CODEX_BIN.replaceAll(".", "\\.")))).toBeInTheDocument();
+    expect(within(sheet).getByText("Nothing has run yet. Nothing is written unless you accept.")).toBeInTheDocument();
+    await userEvent.click(within(sheet).getByRole("button", { name: "I accept" }));
+    expect(p.onAcceptConsent).toHaveBeenCalledTimes(1);
+  });
+
+  it("the consent while the host probes: both buttons wait; a refusal is written in the sheet", () => {
+    render(<SpeechCards {...host({ host: HOST_WHISTLE, consentOpen: true, switching: "codex" })} />);
+    const sheet = screen.getByRole("dialog");
+    expect(within(sheet).getByRole("button", { name: "I accept" })).toBeDisabled();
+    expect(within(sheet).getByRole("button", { name: "Cancel" })).toBeDisabled();
+    cleanup();
+    render(<SpeechCards {...host({ host: HOST_WHISTLE, consentOpen: true, consentError: "Codex is not signed in on your host." })} />);
+    expect(within(screen.getByRole("dialog")).getByText("Codex is not signed in on your host.")).toBeInTheDocument();
+  });
+});
+
+// ── Whistle model ───────────────────────────────────────────────────────────────────────────────
+
+describe("Whistle model", () => {
+  const model = (over: Partial<SpeechCardsProps> = {}) => props({ page: "model", ...over });
+
+  it("credits Cactus Compute, states the licence, and links the model page, in new tabs with no opener", () => {
+    render(<SpeechCards {...model()} />);
     const maker = screen.getByRole("link", { name: "Cactus Compute" });
     expect(maker).toHaveAttribute("href", "https://cactuscompute.com");
     expect(maker).toHaveAttribute("target", "_blank");
     expect(maker.getAttribute("rel")?.split(" ").toSorted()).toEqual(["noopener", "noreferrer"]);
-  });
-
-  it("states the licence and links to the model page on Hugging Face", () => {
-    render(<SpeechCards {...props()} />);
     expect(screen.getByText(/Released under the Apache 2\.0 licence\./)).toBeInTheDocument();
-    const page = screen.getByRole("link", { name: "Model page on Hugging Face" });
-    expect(page).toHaveAttribute("href", "https://huggingface.co/Cactus-Compute/whistle");
-    expect(page).toHaveAttribute("target", "_blank");
-    expect(page.getAttribute("rel")?.split(" ").toSorted()).toEqual(["noopener", "noreferrer"]);
+    expect(screen.getByRole("link", { name: "Model page on Hugging Face" })).toHaveAttribute("href", "https://huggingface.co/Cactus-Compute/whistle");
   });
 
-  it("puts the credit before the host step and the host step before the engine card", () => {
-    render(<SpeechCards {...props({ whistle: READY })} />);
-    const credit = screen.getByText(/Whistle is a speech model by/);
-    const host = screen.getByRole("heading", { name: "On your host" });
-    const phone = screen.getByRole("heading", { name: "On this phone" });
-    const engine = screen.getByRole("radiogroup", { name: "Speech engine" });
-    const follows = (a: Node, b: Node) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
-    expect(follows(credit, host)).toBe(true);
-    expect(follows(host, phone)).toBe(true);
-    expect(follows(phone, engine)).toBe(true);
-  });
-});
-
-describe("SpeechCards, the host step", () => {
-  it("absent: a write device sees Download to host with the size and one line, and taps it", async () => {
-    const onSetup = vi.fn();
-    render(<SpeechCards {...props({ onSetup })} />);
-    expect(screen.getByText("Your host downloads the model once from Hugging Face. Your phones copy it from your host.")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Download to host (16.9 MB)" }));
-    expect(onSetup).toHaveBeenCalledTimes(1);
-  });
-
-  it("absent: a read-only device sees the sentence and no button", () => {
-    render(<SpeechCards {...props({ canWrite: false })} />);
+  it("absent: a write device downloads to the host; a read-only device reads one sentence", async () => {
+    const p = model();
+    render(<SpeechCards {...p} />);
+    const hostCopy = screen.getByRole("region", { name: "On your host" });
+    expect(within(hostCopy).getByText("Not downloaded")).toBeInTheDocument();
+    await userEvent.click(within(hostCopy).getByRole("button", { name: "Download to host (16.9 MB)" }));
+    expect(p.onSetup).toHaveBeenCalledTimes(1);
+    cleanup();
+    render(<SpeechCards {...model({ canWrite: false })} />);
     expect(screen.getByText("A device with write access can set this up.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Download to host/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Download/ })).toBeNull();
   });
 
   it("downloading: a determinate bar from received over bytes", () => {
-    render(<SpeechCards {...props({ whistle: { ...ABSENT, state: "downloading", received: Math.round(BYTES / 2) } })} />);
-    const bar = screen.getByRole("progressbar", { name: "Model download progress" });
-    expect(bar).toHaveAttribute("aria-valuenow", "50");
-    expect(screen.getByText("8.5 MB of 16.9 MB")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Download to host/ })).toBeNull();
+    render(<SpeechCards {...model({ whistle: { ...ABSENT, state: "downloading", received: BYTES / 4 } })} />);
+    expect(screen.getByRole("progressbar", { name: "Model download progress" })).toHaveAttribute("aria-valuenow", "25");
   });
 
   it("failed: the reason and Try again", async () => {
-    const onSetup = vi.fn();
-    render(<SpeechCards {...props({ whistle: { ...ABSENT, state: "failed", reason: "Hugging Face answered 503." }, onSetup })} />);
-    expect(screen.getByText("The download failed.")).toBeInTheDocument();
-    expect(screen.getByText("Hugging Face answered 503.")).toBeInTheDocument();
+    const p = model({ whistle: { ...ABSENT, state: "failed", reason: "the host could not reach Hugging Face" } });
+    render(<SpeechCards {...p} />);
+    expect(screen.getByText("Download failed")).toBeInTheDocument();
+    expect(screen.getByText("the host could not reach Hugging Face")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Try again" }));
-    expect(onSetup).toHaveBeenCalledTimes(1);
+    expect(p.onSetup).toHaveBeenCalledTimes(1);
   });
 
-  it("ready: the details name the model, its size and a short checksum with the full one on hover", () => {
-    render(<SpeechCards {...props({ whistle: READY })} />);
-    const host = screen.getByRole("region", { name: "On your host" });
-    expect(within(host).getByText("Model").nextElementSibling).toHaveTextContent("Whistle");
-    expect(within(host).getByText("Size").nextElementSibling).toHaveTextContent("16.9 MB");
-    const checksum = within(host).getByText("sha256 b6e02f04…");
-    expect(checksum).toHaveAttribute("title", SHA);
-  });
-
-  it("ready: the version is the first seven characters of the revision, linked to that revision", () => {
-    render(<SpeechCards {...props({ whistle: READY })} />);
-    const host = screen.getByRole("region", { name: "On your host" });
-    const version = within(host).getByRole("link", { name: "Version ca52876 on Hugging Face" });
-    expect(version).toHaveTextContent("ca52876");
+  it("ready: the version links to its revision, the size shows, and Details unfolds the checksum and the date", async () => {
+    render(<SpeechCards {...model({ whistle: READY })} />);
+    const version = screen.getByRole("link", { name: "Version ca52876 on Hugging Face" });
     expect(version).toHaveAttribute("href", `https://huggingface.co/Cactus-Compute/whistle/tree/${REVISION}`);
-    expect(version).toHaveAttribute("target", "_blank");
-    expect(version.getAttribute("rel")?.split(" ").toSorted()).toEqual(["noopener", "noreferrer"]);
-  });
-
-  it("ready: says when the host downloaded it, with the app's own date helper", () => {
-    render(<SpeechCards {...props({ whistle: READY })} />);
-    const host = screen.getByRole("region", { name: "On your host" });
-    expect(within(host).getByText("Downloaded").nextElementSibling).toHaveTextContent(dateTime(Date.parse(FETCHED_AT)));
-  });
-
-  it("ready: a host that names no revision or time shows the hash prefix and no Downloaded row", () => {
-    const { revision: _revision, fetchedAt: _fetchedAt, ...bare } = READY;
-    render(<SpeechCards {...props({ whistle: bare })} />);
-    const host = screen.getByRole("region", { name: "On your host" });
-    expect(within(host).getByText("Version").nextElementSibling).toHaveTextContent("b6e02f0");
-    expect(within(host).queryByRole("link")).toBeNull();
-    expect(within(host).queryByText("Downloaded")).toBeNull();
+    expect(screen.getAllByText("16.9 MB").length).toBeGreaterThan(0);
+    const details = screen.getByRole("button", { name: "Details" });
+    expect(details).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(details);
+    expect(screen.getByText("sha256 b6e02f04…")).toHaveAttribute("title", SHA);
+    expect(screen.getByText(dateTime(Date.parse(FETCHED_AT)))).toBeInTheDocument();
   });
 
   it("ready: a revision that is not a full commit hash is shown, but never made a link", () => {
-    render(<SpeechCards {...props({ whistle: { ...READY, revision: "rev1" } })} />);
-    const host = screen.getByRole("region", { name: "On your host" });
-    expect(within(host).getByText("Version").nextElementSibling).toHaveTextContent("rev1");
-    expect(within(host).queryByRole("link")).toBeNull();
+    render(<SpeechCards {...model({ whistle: { ...READY, revision: "main" } })} />);
+    expect(screen.queryByRole("link", { name: /^Version/ })).toBeNull();
   });
 
-  it("ready: Remove from host takes two taps", async () => {
-    const onAskRemove = vi.fn();
-    const { rerender } = render(<SpeechCards {...props({ whistle: READY, onAskRemove })} />);
+  it("ready: Remove takes two taps, and says what it does to the devices that use it", async () => {
+    const p = model({ whistle: READY, host: HOST_WHISTLE });
+    const { rerender } = render(<SpeechCards {...p} />);
+    expect(
+      screen.getByText("Your host uses it for every device. Removing it turns dictation off for them, and asks first."),
+    ).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Remove from host" }));
-    expect(onAskRemove).toHaveBeenCalledTimes(1);
-
-    const onRemove = vi.fn();
-    const onCancelRemove = vi.fn();
-    rerender(<SpeechCards {...props({ whistle: READY, confirmingRemove: true, onRemove, onCancelRemove })} />);
-    expect(screen.getByText(/Remove the model from your host\?/)).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(onCancelRemove).toHaveBeenCalledTimes(1);
-    expect(onRemove).not.toHaveBeenCalled();
+    expect(p.onAskRemove).toHaveBeenCalledTimes(1);
+    rerender(<SpeechCards {...p} confirmingRemove />);
     await userEvent.click(screen.getByRole("button", { name: "Remove" }));
-    expect(onRemove).toHaveBeenCalledTimes(1);
+    expect(p.onRemove).toHaveBeenCalledTimes(1);
   });
 
   it("ready: a read-only device sees the details but cannot remove", () => {
-    render(<SpeechCards {...props({ whistle: READY, canWrite: false })} />);
-    expect(screen.getByText("sha256 b6e02f04…")).toBeInTheDocument();
+    render(<SpeechCards {...model({ whistle: READY, canWrite: false })} />);
+    expect(screen.getByRole("link", { name: "Version ca52876 on Hugging Face" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Remove from host" })).toBeNull();
   });
 
-  it("ready: the Whistle card has no host switch any more; the choice lives in the Host speech provider card", () => {
-    render(<SpeechCards {...props({ whistle: READY, host: HOST_NONE })} />);
-    const host = screen.getByRole("region", { name: "On your host" });
-    expect(within(host).queryByRole("switch")).toBeNull();
-    expect(within(host).queryByRole("radio")).toBeNull();
-    expect(screen.getByRole("radiogroup", { name: "Host speech provider" })).toBeInTheDocument();
-  });
-
-  it("shows a failed host action in words", () => {
-    render(<SpeechCards {...props({ whistle: READY, hostError: "Whistle could not be downloaded: disk full" })} />);
-    expect(screen.getByText("Whistle could not be downloaded: disk full")).toBeInTheDocument();
-  });
-});
-
-describe("SpeechCards, the Host speech provider", () => {
-  const group = () => screen.getByRole("radiogroup", { name: "Host speech provider" });
-  const detail = (label: string) => screen.getByText(label, { selector: "dt" }).nextElementSibling;
-
-  it("is not drawn while the host has not said (an older bridge)", () => {
-    render(<SpeechCards {...props({ whistle: READY, host: null })} />);
-    expect(screen.queryByText("Host speech provider")).toBeNull();
-  });
-
-  it("is drawn even where the Whistle cards are not", () => {
-    render(<SpeechCards {...props({ whistle: null, host: HOST_KEYED })} />);
-    expect(screen.getByText("Host speech provider")).toBeInTheDocument();
-    expect(screen.queryByText("Speech engine")).toBeNull();
-  });
-
-  it("nothing on the host: Off is chosen, and each closed choice says why and what to run there", () => {
-    render(<SpeechCards {...props({ host: HOST_NONE })} />);
-    expect(detail("Provider")).toHaveTextContent("None");
-    expect(detail("Status")).toHaveTextContent("Off. The host turns no recording into text.");
-    expect(within(group()).getByRole("radio", { name: /^Off/ })).toHaveAttribute("aria-checked", "true");
-    expect(within(group()).getByRole("radio", { name: /^Whistle/ })).toBeDisabled();
-    expect(screen.getByText("Download Whistle to your host first.")).toBeInTheDocument();
-    expect(within(group()).getByRole("radio", { name: /^Codex \(ChatGPT sign-in\)/ })).toBeDisabled();
-    expect(screen.getByText("Codex is not signed in on your host. Run this there:")).toBeInTheDocument();
-    expect(screen.getByText("codex login")).toBeInTheDocument();
-    // The terminal-only providers: the command, never a form.
-    expect(screen.getByText("Set up elsewhere")).toBeInTheDocument();
-    expect(screen.getByText("collie stt setup")).toBeInTheDocument();
-    expect(screen.queryByRole("textbox")).toBeNull();
-  });
-
-  it("each Codex verdict has its own words and command", () => {
-    for (const [reason, words, command] of [
-      ["codex-missing", "Codex is not installed on your host. Install it there, then sign in with ChatGPT:", "codex login"],
-      ["codex-other-login", "Codex on your host is not signed in with ChatGPT. Run this there and pick ChatGPT:", "codex login"],
-      ["codex-unknown", "Collie could not check the Codex sign-in on your host. To see why, run this there:", "codex login status"],
-    ] as const) {
-      const { unmount } = render(
-        <SpeechCards {...props({ host: { ...HOST_NONE, switchable: { ...HOST_NONE.switchable, codex: { ok: false, reason } } } })} />,
-      );
-      expect(screen.getByText(words)).toBeInTheDocument();
-      expect(screen.getByText(command)).toBeInTheDocument();
-      unmount();
-    }
-  });
-
-  it("Whistle on: it is chosen, and a tap on another choice reports it; a tap on the chosen one does nothing", async () => {
-    const onChooseProvider = vi.fn();
-    render(<SpeechCards {...props({ host: HOST_WHISTLE_ON, onChooseProvider })} />);
-    expect(detail("Provider")).toHaveTextContent("Whistle");
-    expect(detail("Status")).toHaveTextContent("Working");
-    const whistle = within(group()).getByRole("radio", { name: /^Whistle/ });
-    expect(whistle).toHaveAttribute("aria-checked", "true");
-    await userEvent.click(whistle);
-    expect(onChooseProvider).not.toHaveBeenCalled();
-    await userEvent.click(within(group()).getByRole("radio", { name: /^Off/ }));
-    expect(onChooseProvider).toHaveBeenCalledWith("off");
-    await userEvent.click(within(group()).getByRole("radio", { name: /^Codex/ }));
-    expect(onChooseProvider).toHaveBeenCalledWith("codex");
-  });
-
-  it("Codex on: the identity is named, honest or the codex-cli fallback, in words", () => {
-    const { rerender } = render(<SpeechCards {...props({ host: HOST_CODEX_ON })} />);
-    expect(detail("Provider")).toHaveTextContent("Codex (ChatGPT sign-in)");
-    expect(detail("Identity")).toHaveTextContent("honest Collie names itself to the endpoint.");
-    rerender(<SpeechCards {...props({ host: { ...HOST_CODEX_ON, identity: "codex-cli" } })} />);
-    expect(detail("Identity")).toHaveTextContent("codex-cli Collie wears the Codex CLI's headers");
-    expect(within(group()).getByRole("radio", { name: /^Codex/ })).toHaveAttribute("aria-checked", "true");
-  });
-
-  it("an unavailable provider shows the host's own reason", () => {
-    render(<SpeechCards {...props({ host: { ...HOST_CODEX_ON, available: false, reason: "Codex is not signed in — run `codex login`" } })} />);
-    expect(detail("Status")).toHaveTextContent("Codex is not signed in — run `codex login`");
-  });
-
-  it("a provider set up in a terminal is shown, not offered: the commands that change it, no choice", () => {
-    render(<SpeechCards {...props({ host: HOST_KEYED })} />);
-    expect(detail("Provider")).toHaveTextContent("OpenAI-compatible endpoint");
-    expect(screen.queryByRole("radiogroup", { name: "Host speech provider" })).toBeNull();
-    expect(screen.getByText(/This provider was set up in a terminal on the host/)).toBeInTheDocument();
-    expect(screen.getByText("collie stt setup")).toBeInTheDocument();
-    expect(screen.getByText("collie stt off")).toBeInTheDocument();
-  });
-
-  it("a local command and the environment are shown the same way, with their own command", () => {
-    const { unmount } = render(<SpeechCards {...props({ host: { ...HOST_KEYED, provider: "local-cli" } })} />);
-    expect(detail("Provider")).toHaveTextContent("A command on the host");
-    unmount();
-    render(<SpeechCards {...props({ host: { ...HOST_WHISTLE_ON, configuredBy: "env", switchable: LOCKED("env") } })} />);
-    expect(screen.queryByRole("radiogroup", { name: "Host speech provider" })).toBeNull();
-    expect(screen.getByText(/The host's environment sets the speech provider/)).toBeInTheDocument();
-    expect(screen.getByText("collie stt status")).toBeInTheDocument();
-  });
-
-  it("a read-only device sees the status only", () => {
-    render(<SpeechCards {...props({ host: HOST_CODEX_ON, canWrite: false })} />);
-    expect(detail("Provider")).toHaveTextContent("Codex (ChatGPT sign-in)");
-    expect(screen.queryByRole("radiogroup", { name: "Host speech provider" })).toBeNull();
-    expect(screen.queryByText("collie stt setup")).toBeNull();
-    expect(screen.getByText("A device with write access can change this.")).toBeInTheDocument();
-  });
-
-  it("while a choice is in flight, no other choice can be tapped", () => {
-    render(<SpeechCards {...props({ host: HOST_WHISTLE_ON, switching: "off" })} />);
-    for (const radio of within(group()).getAllByRole("radio")) expect(radio).toBeDisabled();
-  });
-
-  it("the consent sheet: the CLI's words with the endpoint and the binary, then Cancel or I accept", async () => {
-    const onAcceptConsent = vi.fn();
-    const onCancelConsent = vi.fn();
-    render(<SpeechCards {...props({ host: HOST_WHISTLE_ON, consentOpen: true, onAcceptConsent, onCancelConsent })} />);
-    const sheet = screen.getByRole("dialog", { name: "Use Codex for speech?" });
-    expect(within(sheet).getByText(/Recordings would be sent to https:\/\/chatgpt\.com\/backend-api\/transcribe\./)).toBeInTheDocument();
-    expect(within(sheet).getByText(/That endpoint is PRIVATE and UNSUPPORTED\./)).toBeInTheDocument();
-    expect(within(sheet).getByText(new RegExp(`YOUR sign-in at ${CODEX_BIN.replaceAll(".", "\\.")}\\.`))).toBeInTheDocument();
-    expect(within(sheet).getByText(/That is impersonation, and accepting here is what permits it\./)).toBeInTheDocument();
-    expect(within(sheet).getByText("Nothing has run yet. Nothing is written unless you accept.")).toBeInTheDocument();
-    await userEvent.click(within(sheet).getByRole("button", { name: "Cancel" }));
-    expect(onCancelConsent).toHaveBeenCalledTimes(1);
-    expect(onAcceptConsent).not.toHaveBeenCalled();
-    await userEvent.click(within(sheet).getByRole("button", { name: "I accept" }));
-    expect(onAcceptConsent).toHaveBeenCalledTimes(1);
-  });
-
-  it("the consent sheet while the host probes: both buttons wait; a refusal is written in the sheet", () => {
-    const { rerender } = render(<SpeechCards {...props({ host: HOST_WHISTLE_ON, consentOpen: true, switching: "codex" })} />);
-    const sheet = screen.getByRole("dialog", { name: "Use Codex for speech?" });
-    expect(within(sheet).getByRole("button", { name: "I accept" })).toBeDisabled();
-    expect(within(sheet).getByRole("button", { name: "Cancel" })).toBeDisabled();
-    rerender(<SpeechCards {...props({ host: HOST_WHISTLE_ON, consentOpen: true, consentError: "Codex is not signed in on your host. Run codex login there." })} />);
-    expect(within(screen.getByRole("dialog")).getByText("Codex is not signed in on your host. Run codex login there.")).toBeInTheDocument();
-  });
-});
-
-describe("SpeechCards, the phone step", () => {
-  it("is not drawn before the host has a model or the phone a copy", () => {
-    render(<SpeechCards {...props({ whistle: ABSENT })} />);
-    expect(screen.queryByRole("heading", { name: "On this phone" })).toBeNull();
-    expect(screen.queryByRole("button", { name: /Set up on this phone/ })).toBeNull();
-  });
-
-  it("once the host is ready: a primary button with the size and one line, and a tap on it", async () => {
-    const onPhoneDownload = vi.fn();
-    render(<SpeechCards {...props({ whistle: READY, onPhoneDownload })} />);
-    expect(screen.getByText("Copies the model from your host to this phone. Your recordings then stay on this phone.")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Set up on this phone (16.9 MB)" }));
-    expect(onPhoneDownload).toHaveBeenCalledTimes(1);
-  });
-
-  it("where this browser cannot run the engine: the reason stands in place of the button, and is said once on the page", () => {
-    render(<SpeechCards {...props({ whistle: READY, block: "insecure" })} />);
-    expect(screen.queryByRole("button", { name: /Set up on this phone/ })).toBeNull();
+  it("this phone: Copy, then a bar while it copies, then the copy with its version and what the browser promised", async () => {
+    const p = model({ whistle: READY });
+    const { rerender } = render(<SpeechCards {...p} />);
     const phone = screen.getByRole("region", { name: "On this phone" });
-    expect(within(phone).getByText("This phone needs a secure connection (HTTPS) to run speech.")).toBeInTheDocument();
-    expect(screen.getAllByText("This phone needs a secure connection (HTTPS) to run speech.")).toHaveLength(1);
-  });
-
-  it("copying: a bar in place of the button", () => {
-    render(<SpeechCards {...props({ whistle: READY, copy: { received: BYTES / 4, total: BYTES } })} />);
-    expect(screen.getByText("Copying to this phone")).toBeInTheDocument();
-    expect(screen.getAllByRole("progressbar").some((b) => b.getAttribute("aria-valuenow") === "25")).toBe(true);
-    expect(screen.queryByRole("button", { name: /Set up on this phone/ })).toBeNull();
-  });
-
-  it("with a copy: says it is set up, names the version, says what the browser promised, and removes", async () => {
-    const onPhoneRemove = vi.fn();
-    const { rerender } = render(<SpeechCards {...props({ whistle: READY, local: COPY, persisted: true, onPhoneRemove })} />);
-    const phone = screen.getByRole("region", { name: "On this phone" });
-    expect(within(phone).getByText("Set up on this phone")).toBeInTheDocument();
-    const version = within(phone).getByRole("link", { name: "Version ca52876 on Hugging Face" });
-    expect(version).toHaveAttribute("href", `https://huggingface.co/Cactus-Compute/whistle/tree/${REVISION}`);
+    expect(within(phone).getByText("Not set up")).toBeInTheDocument();
+    await userEvent.click(within(phone).getByRole("button", { name: "Copy to this phone (16.9 MB)" }));
+    expect(p.onPhoneDownload).toHaveBeenCalledTimes(1);
+    rerender(<SpeechCards {...p} copy={{ received: BYTES / 2, total: BYTES }} />);
+    expect(within(phone).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "50");
+    rerender(<SpeechCards {...p} local={COPY} persisted />);
+    expect(within(phone).getByText("Ready")).toBeInTheDocument();
+    expect(within(phone).getByRole("link", { name: "Version ca52876 on Hugging Face" })).toBeInTheDocument();
     expect(within(phone).getByText("Kept. This browser will not clear it to free space.")).toBeInTheDocument();
+    expect(within(phone).getByText("Frees 16.9 MB on this phone.")).toBeInTheDocument();
     await userEvent.click(within(phone).getByRole("button", { name: "Remove from this phone" }));
-    expect(onPhoneRemove).toHaveBeenCalledTimes(1);
-    rerender(<SpeechCards {...props({ whistle: READY, local: COPY, persisted: false })} />);
-    expect(screen.getByText("This browser may clear it when space runs low.")).toBeInTheDocument();
+    expect(p.onPhoneRemove).toHaveBeenCalledTimes(1);
   });
 
-  it("a copy stored before revisions were recorded shows the hash prefix, not a link", () => {
-    render(<SpeechCards {...props({ whistle: READY, local: { sha256: SHA, bytes: BYTES } })} />);
-    const phone = screen.getByRole("region", { name: "On this phone" });
-    expect(within(phone).getByText("Version").nextElementSibling).toHaveTextContent("b6e02f0");
-    expect(within(phone).queryByRole("link")).toBeNull();
-  });
-
-  it("a newer model on the host: says so and offers Update; the same hash says nothing", async () => {
-    const onPhoneDownload = vi.fn();
-    const stale = { sha256: "a".repeat(64), bytes: BYTES, revision: "1f0e2d3c4b5a69788796a5b4c3d2e1f001122334" };
-    const { rerender } = render(<SpeechCards {...props({ whistle: READY, local: stale, onPhoneDownload })} />);
-    expect(screen.getByText("A newer model is on your host.")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Version 1f0e2d3 on Hugging Face" })).toBeInTheDocument();
+  it("this phone: a newer model on the host offers Update; a gone copy offers Restore", async () => {
+    const p = model({ whistle: READY, local: { ...COPY, sha256: "a".repeat(64) } });
+    render(<SpeechCards {...p} />);
+    expect(screen.getByText("Older copy")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Update" }));
-    expect(onPhoneDownload).toHaveBeenCalledTimes(1);
-    rerender(<SpeechCards {...props({ whistle: READY, local: COPY })} />);
-    expect(screen.queryByText("A newer model is on your host.")).toBeNull();
+    expect(p.onPhoneDownload).toHaveBeenCalledTimes(1);
+    cleanup();
+    render(<SpeechCards {...model({ whistle: READY, engine: "phone", local: null })} />);
+    expect(screen.getByText("Gone")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Restore (16.9 MB)" })).toBeInTheDocument();
   });
 
-  it("Update is off while this browser cannot run the engine", () => {
-    render(<SpeechCards {...props({ whistle: READY, local: { sha256: "a".repeat(64), bytes: BYTES }, block: "wasm-csp" })} />);
-    expect(screen.getByRole("button", { name: "Update" })).toBeDisabled();
+  it("this phone: a browser that cannot run the engine says so where the button would be", () => {
+    render(<SpeechCards {...model({ whistle: READY, block: "wasm-csp" })} />);
+    expect(screen.getByText("This browser blocked the speech engine.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Copy to this phone/ })).toBeNull();
   });
 
-  it("keeps the phone's copy visible when the host has none or no Whistle at all", () => {
-    const { rerender } = render(<SpeechCards {...props({ whistle: ABSENT, local: COPY })} />);
-    expect(screen.getByText("Set up on this phone")).toBeInTheDocument();
-    rerender(<SpeechCards {...props({ whistle: null, local: COPY })} />);
-    expect(screen.getByText("Set up on this phone")).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "On your host" })).toBeNull();
-  });
-
-  it("shows a failed copy in words", () => {
-    render(<SpeechCards {...props({ whistle: READY, phoneError: "The model did not match, so nothing was kept." })} />);
-    expect(screen.getByText("The model did not match, so nothing was kept.")).toBeInTheDocument();
+  it("shows a failed host action and a failed copy in words", () => {
+    render(<SpeechCards {...model({ hostError: "The host could not start the download.", phoneError: "Download stopped. Try again." })} />);
+    expect(screen.getByText("The host could not start the download.")).toBeInTheDocument();
+    expect(screen.getByText("Download stopped. Try again.")).toBeInTheDocument();
   });
 });
 
-describe("SpeechCards, the engine choice", () => {
-  const group = () => screen.getByRole("radiogroup", { name: "Speech engine" });
+// ── The controller ──────────────────────────────────────────────────────────────────────────────
 
-  it("offers This phone and Host, and reports the choice", async () => {
-    const onEngine = vi.fn();
-    render(<SpeechCards {...props({ whistle: READY, hostStt: HOST_WHISTLE, local: COPY, onEngine })} />);
-    expect(within(group()).getByRole("radio", { name: "Host" })).toHaveAttribute("aria-checked", "true");
-    await userEvent.click(within(group()).getByRole("radio", { name: "This phone" }));
-    expect(onEngine).toHaveBeenCalledWith("phone");
-  });
-
-  it("names what the host uses when it runs Whistle", () => {
-    render(<SpeechCards {...props({ whistle: { ...READY, hostEngine: true }, hostStt: HOST_WHISTLE })} />);
-    expect(screen.getByText("Your host uses Whistle.")).toBeInTheDocument();
-  });
-
-  it("names the host's provider when it is another one", () => {
-    render(<SpeechCards {...props({ whistle: READY, hostStt: { provider: "openai-compatible", available: true } })} />);
-    expect(screen.getByText("Your host uses openai-compatible.")).toBeInTheDocument();
-    expect(within(group()).getByRole("radio", { name: "Host" })).toBeEnabled();
-  });
-
-  it("disables Host, with the reason, when the host has no speech provider", () => {
-    render(<SpeechCards {...props({ whistle: READY, hostStt: null })} />);
-    expect(within(group()).getByRole("radio", { name: "Host" })).toBeDisabled();
-    expect(
-      screen.getByText("Your host has no speech provider. Choose one under Host speech provider above, or run collie stt setup."),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/Your host uses/)).toBeNull();
-  });
-
-  it("disables Host when the provider exists but cannot serve", () => {
-    render(<SpeechCards {...props({ whistle: READY, hostStt: { provider: "whistle", available: false, reason: "engine files missing" } })} />);
-    expect(within(group()).getByRole("radio", { name: "Host" })).toBeDisabled();
-  });
-
-  it("disables This phone until it is set up, and says so once", () => {
-    render(<SpeechCards {...props({ whistle: READY, hostStt: HOST_WHISTLE })} />);
-    expect(within(group()).getByRole("radio", { name: "This phone" })).toBeDisabled();
-    expect(screen.getAllByText("Set up Whistle on this phone first.")).toHaveLength(1);
-  });
-
-  it("sends the person to the host first when neither has the model", () => {
-    render(<SpeechCards {...props({ whistle: ABSENT, block: "host-not-ready" })} />);
-    expect(within(group()).getByRole("radio", { name: "This phone" })).toBeDisabled();
-    expect(screen.getByText("Download Whistle to your host first, then set it up on this phone.")).toBeInTheDocument();
-  });
-
-  it("with a copy but a browser that blocks the engine: This phone is off, the reason is under the choice, and Host shows", () => {
-    render(<SpeechCards {...props({ whistle: READY, hostStt: HOST_WHISTLE, engine: "phone", local: COPY, block: "wasm-csp" })} />);
-    expect(within(group()).getByRole("radio", { name: "This phone" })).toBeDisabled();
-    expect(within(group()).getByRole("radio", { name: "Host" })).toHaveAttribute("aria-checked", "true");
-    expect(screen.getAllByText("This browser blocked the speech engine.")).toHaveLength(1);
-  });
-
-  it("shows This phone selected when it is chosen and can run", () => {
-    render(<SpeechCards {...props({ whistle: READY, hostStt: HOST_WHISTLE, engine: "phone", local: COPY })} />);
-    expect(within(group()).getByRole("radio", { name: "This phone" })).toHaveAttribute("aria-checked", "true");
-  });
-});
-
-describe("SpeechCards does not move on a state", () => {
-  it("keeps every button at 44px on every host state", () => {
-    for (const whistle of [ABSENT, { ...ABSENT, state: "failed" as const }, READY]) {
-      const { unmount } = render(<SpeechCards {...props({ whistle })} />);
-      for (const button of screen.getAllByRole("button")) expect(button.className).toMatch(/\bh-11\b|\bmin-h-11\b/);
-      unmount();
-    }
-  });
-});
-
-// ── The controller ────────────────────────────────────────────────────────────────────────────────
-
-function renderControl() {
-  const router = createMemoryRouter([{ path: "/", element: <SpeechControl /> }]);
-  return render(<RouterProvider router={router} />);
+function renderControl(page: VoiceView = "hub") {
+  const paths = { hub: "/settings/voice", host: "/settings/voice/host", model: "/settings/voice/model" } as const;
+  const router = createMemoryRouter(
+    [
+      { path: "/settings/voice", element: <SpeechControl page="hub" /> },
+      { path: "/settings/voice/host", element: <SpeechControl page="host" /> },
+      { path: "/settings/voice/model", element: <SpeechControl page="model" /> },
+    ],
+    { initialEntries: [paths[page]] },
+  );
+  return { router, ...render(<RouterProvider router={router} />) };
 }
 
 function config(whistle: WhistleStatus | undefined, stt?: SttCapability) {
   return http.get("/api/config", () => HttpResponse.json({ push: false, vapidPublicKey: "", whistle, stt }));
 }
 
-/** jsdom is neither a secure context nor a browser with Workers and Cache Storage; a phone is. */
+/** jsdom can neither record nor run a worker; a phone can. */
 function stubPhoneBrowser() {
   vi.stubGlobal("isSecureContext", true);
   vi.stubGlobal("Worker", vi.fn());
   vi.stubGlobal("caches", {});
+  vi.stubGlobal("MediaRecorder", { isTypeSupported: () => true });
+  vi.stubGlobal("navigator", { ...navigator, mediaDevices: { getUserMedia: vi.fn() } });
 }
 
-/** The host's provider, as GET /api/stt/host answers it. */
+/** The host's option, as GET /api/stt/host answers it. `null`: an older bridge's 404. */
 function hostStatus(body: SttHostStatus | null) {
   return http.get("/api/stt/host", () => (body === null ? new HttpResponse("not found", { status: 404 }) : HttpResponse.json(body)));
+}
+
+/** The host's option read fresh on every GET, for a case that changes it under the page. */
+function hostStatusLive(now: () => SttHostStatus) {
+  return http.get("/api/stt/host", () => HttpResponse.json(now()));
 }
 
 beforeEach(() => {
@@ -565,26 +646,27 @@ beforeEach(() => {
   stubPhoneBrowser();
   __resetOperatorCommands();
   __resetSttEngine();
+  __resetHandsFree();
   localStorage.clear();
   vi.mocked(sttModel.storedModel).mockResolvedValue(null);
   vi.mocked(sttModel.downloadModel).mockReset();
 });
 
 describe("SpeechControl", () => {
-  it("draws the Whistle block from /api/config, and nothing on a host without the field", async () => {
+  it("draws the hub from /api/config, and says why it is empty on a host that offers nothing", async () => {
     server.use(config(ABSENT));
     renderControl();
-    expect(await screen.findByRole("button", { name: "Download to host (16.9 MB)" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Set up (16.9 MB)" })).toBeInTheDocument();
     cleanup();
 
     __resetOperatorCommands();
     server.use(config(undefined));
-    const { container } = renderControl();
-    await new Promise((r) => setTimeout(r, 50));
-    expect(container).toBeEmptyDOMElement();
+    renderControl();
+    expect(await screen.findByText(/Nothing to set up here yet\./)).toBeInTheDocument();
+    expect(screen.queryByRole("radio")).toBeNull();
   });
 
-  it("taps the setup: POSTs, shows the download, then follows the host's progress once a second", async () => {
+  it("Set up on the hub: the host downloads, the page follows it once a second, then this phone copies it", async () => {
     let polls = 0;
     server.use(
       config(ABSENT),
@@ -594,11 +676,15 @@ describe("SpeechControl", () => {
         return HttpResponse.json(polls < 2 ? { ...ABSENT, state: "downloading", received: BYTES / 2 } : READY);
       }),
     );
+    vi.mocked(sttModel.downloadModel).mockImplementation(async () => {
+      vi.mocked(sttModel.storedModel).mockResolvedValue(COPY);
+      return { ...COPY, persisted: true };
+    });
     renderControl();
-    await userEvent.click(await screen.findByRole("button", { name: "Download to host (16.9 MB)" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Set up (16.9 MB)" }));
     expect(await screen.findByRole("progressbar", { name: "Model download progress" })).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "50"), { timeout: 3000 });
-    expect(await screen.findByText("sha256 b6e02f04…", {}, { timeout: 4000 })).toBeInTheDocument();
+    await waitFor(() => expect(sttModel.downloadModel).toHaveBeenCalledTimes(1), { timeout: 5000 });
+    expect(vi.mocked(sttModel.downloadModel).mock.calls[0]![0]).toMatchObject({ state: "ready", sha256: SHA });
     const stopped = polls;
     await new Promise((r) => setTimeout(r, 1300));
     expect(polls).toBe(stopped); // ready: the polling ended with the download
@@ -613,98 +699,158 @@ describe("SpeechControl", () => {
         return HttpResponse.json(READY);
       }),
     );
-    renderControl();
-    await screen.findByText("sha256 b6e02f04…");
+    renderControl("model");
+    await screen.findByRole("link", { name: "Version ca52876 on Hugging Face" });
     await new Promise((r) => setTimeout(r, 1300));
     expect(polls).toBe(0);
   });
 
-  it("reads the host's provider and switches to Whistle with one PUT, then shows the host's answer", async () => {
+  it("the host's row opens Host speech, and the model's row opens Whistle model", async () => {
+    server.use(config(READY, STT_WHISTLE), hostStatus(HOST_WHISTLE));
+    const { router } = renderControl();
+    await userEvent.click(await screen.findByRole("button", { name: /^Whistle on your host/ }));
+    expect(router.state.location.pathname).toBe("/settings/voice/host");
+    await router.navigate("/settings/voice");
+    await userEvent.click(await screen.findByRole("button", { name: /Whistle model/ }));
+    expect(router.state.location.pathname).toBe("/settings/voice/model");
+  });
+
+  it("Off to Whistle asks first, for every device, and sends one PUT only after the confirm", async () => {
     const bodies: unknown[] = [];
     server.use(
       config(READY),
-      hostStatus({ ...HOST_NONE, switchable: { ...HOST_NONE.switchable, whistle: { ok: true } } }),
+      hostStatus(HOST_NONE_OPEN),
       http.put("/api/stt/host", async ({ request }) => {
         bodies.push(await request.json());
-        return HttpResponse.json(HOST_WHISTLE_ON);
+        return HttpResponse.json(HOST_WHISTLE);
       }),
     );
-    renderControl();
-    const group = await screen.findByRole("radiogroup", { name: "Host speech provider" });
-    await userEvent.click(within(group).getByRole("radio", { name: /^Whistle/ }));
-    expect(bodies).toEqual([{ provider: "whistle" }]);
-    await waitFor(() => expect(within(group).getByRole("radio", { name: /^Whistle/ })).toHaveAttribute("aria-checked", "true"));
-  });
-
-  it("says a refused switch in words, in the operator's language", async () => {
-    server.use(
-      config(READY),
-      hostStatus(HOST_WHISTLE_ON),
-      http.put("/api/stt/host", () =>
-        HttpResponse.json({ error: "changed", code: "stt.host_changed" }, { status: 409 }),
-      ),
-    );
-    renderControl();
-    const group = await screen.findByRole("radiogroup", { name: "Host speech provider" });
-    await userEvent.click(within(group).getByRole("radio", { name: /^Off/ }));
-    expect(await screen.findByText("The speech settings on your host changed meanwhile. Nothing was changed.")).toBeInTheDocument();
-  });
-
-  it("Codex: the tap opens the consent and sends nothing; I accept sends the consent's id", async () => {
-    const bodies: unknown[] = [];
-    server.use(
-      config(READY),
-      hostStatus(HOST_WHISTLE_ON),
-      http.put("/api/stt/host", async ({ request }) => {
-        bodies.push(await request.json());
-        return HttpResponse.json(HOST_CODEX_ON);
-      }),
-    );
-    renderControl();
-    const group = await screen.findByRole("radiogroup", { name: "Host speech provider" });
-    await userEvent.click(within(group).getByRole("radio", { name: /^Codex/ }));
-    const sheet = await screen.findByRole("dialog", { name: "Use Codex for speech?" });
+    renderControl("host");
+    const group = await screen.findByRole("radiogroup", { name: "What your host uses" });
+    await userEvent.click(within(group).getByRole("radio", { name: /^Whistle on your host/ }));
+    const sheet = await screen.findByRole("dialog", { name: "Use Whistle on your host?" });
     expect(bodies).toEqual([]);
     await userEvent.click(within(sheet).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(bodies).toEqual([]);
 
-    await userEvent.click(within(group).getByRole("radio", { name: /^Codex/ }));
+    await userEvent.click(within(group).getByRole("radio", { name: /^Whistle on your host/ }));
+    await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Change for every device" }));
+    await waitFor(() => expect(bodies).toEqual([{ provider: "whistle" }]));
+    await waitFor(() =>
+      expect(within(group).getByRole("radio", { name: /^Whistle on your host/ })).toHaveAttribute("aria-checked", "true"),
+    );
+  });
+
+  it("a step back toward the host is sent on the tap: Whistle to Off, and ChatGPT to Whistle, with no sheet", async () => {
+    const bodies: unknown[] = [];
+    let now: SttHostStatus = HOST_WHISTLE;
+    server.use(
+      config(READY),
+      hostStatusLive(() => now),
+      http.put("/api/stt/host", async ({ request }) => {
+        // SAFETY: the page under test sends `{ provider }` (lib/api.ts setSttHost); a wrong shape fails the
+        // `bodies` assertion below.
+        const body = (await request.json()) as { provider: string };
+        bodies.push(body);
+        now = body.provider === "off" ? HOST_NONE_OPEN : HOST_WHISTLE;
+        return HttpResponse.json(now);
+      }),
+    );
+    renderControl("host");
+    const group = await screen.findByRole("radiogroup", { name: "What your host uses" });
+    await userEvent.click(within(group).getByRole("radio", { name: /^Off/ }));
+    await waitFor(() => expect(bodies).toEqual([{ provider: "off" }]));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    cleanup();
+
+    bodies.length = 0;
+    now = HOST_CODEX;
+    renderControl("host");
+    const again = await screen.findByRole("radiogroup", { name: "What your host uses" });
+    await waitFor(() => expect(within(again).getByRole("radio", { name: /^ChatGPT subscription/ })).toHaveAttribute("aria-checked", "true"));
+    await userEvent.click(within(again).getByRole("radio", { name: /^Whistle on your host/ }));
+    await waitFor(() => expect(bodies).toEqual([{ provider: "whistle" }]));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("says a refused switch in words, in the operator's language", async () => {
+    server.use(
+      config(READY),
+      hostStatus(HOST_WHISTLE),
+      http.put("/api/stt/host", () => HttpResponse.json({ error: "changed", code: "stt.host_changed" }, { status: 409 })),
+    );
+    renderControl("host");
+    const group = await screen.findByRole("radiogroup", { name: "What your host uses" });
+    await userEvent.click(within(group).getByRole("radio", { name: /^Off/ }));
+    expect(await screen.findByText("The speech settings on your host changed meanwhile. Nothing was changed.")).toBeInTheDocument();
+  });
+
+  it("ChatGPT: the tap opens the consent and sends nothing; I accept sends the consent's id", async () => {
+    const bodies: unknown[] = [];
+    server.use(
+      config(READY),
+      hostStatus(HOST_WHISTLE),
+      http.put("/api/stt/host", async ({ request }) => {
+        bodies.push(await request.json());
+        return HttpResponse.json(HOST_CODEX);
+      }),
+    );
+    renderControl("host");
+    const group = await screen.findByRole("radiogroup", { name: "What your host uses" });
+    await userEvent.click(within(group).getByRole("radio", { name: /^ChatGPT subscription/ }));
+    const sheet = await screen.findByRole("dialog", { name: "Use your ChatGPT subscription?" });
+    expect(bodies).toEqual([]);
+    await userEvent.click(within(sheet).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(bodies).toEqual([]);
+
+    await userEvent.click(within(group).getByRole("radio", { name: /^ChatGPT subscription/ }));
     await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "I accept" }));
     await waitFor(() => expect(bodies).toEqual([{ provider: "codex", consent: CODEX_CONSENT_ID }]));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(await screen.findByText("Collie names itself to the endpoint.", { exact: false })).toBeInTheDocument();
   });
 
-  it("Codex refused: the reason is written in the open sheet", async () => {
+  it("ChatGPT refused: the reason is written in the open sheet", async () => {
     server.use(
       config(READY),
-      hostStatus(HOST_WHISTLE_ON),
+      hostStatus(HOST_WHISTLE),
       http.put("/api/stt/host", () =>
         HttpResponse.json({ error: "probe", code: "stt.codex_probe_failed", detail: { reason: "both identities were refused" } }, { status: 502 }),
       ),
     );
-    renderControl();
-    const group = await screen.findByRole("radiogroup", { name: "Host speech provider" });
-    await userEvent.click(within(group).getByRole("radio", { name: /^Codex/ }));
+    renderControl("host");
+    const group = await screen.findByRole("radiogroup", { name: "What your host uses" });
+    await userEvent.click(within(group).getByRole("radio", { name: /^ChatGPT subscription/ }));
     await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "I accept" }));
     const sheet = screen.getByRole("dialog");
     expect(await within(sheet).findByText("The Codex endpoint did not accept Collie: both identities were refused")).toBeInTheDocument();
+  });
+
+  it("Check again reads the host once more, so a command run in its terminal shows up", async () => {
+    let now: SttHostStatus = HOST_WHISTLE;
+    server.use(config(READY), hostStatusLive(() => now));
+    renderControl("host");
+    await userEvent.click(await screen.findByRole("button", { name: /^Your own command/ }));
+    now = { provider: "local-cli", available: true, configuredBy: "file", switchable: LOCKED("terminal") };
+    await userEvent.click(await screen.findByRole("button", { name: "Check again" }));
+    await waitFor(() =>
+      expect(screen.getByRole("radio", { name: /^Your own command/ })).toHaveAttribute("aria-checked", "true"),
+    );
   });
 
   it("removes the model from the host after the second tap", async () => {
     let deleted = 0;
     server.use(
       // The config is read again after a removal, and must then tell the truth.
-      http.get("/api/config", () =>
-        HttpResponse.json({ push: false, vapidPublicKey: "", whistle: deleted === 0 ? READY : ABSENT }),
-      ),
+      http.get("/api/config", () => HttpResponse.json({ push: false, vapidPublicKey: "", whistle: deleted === 0 ? READY : ABSENT })),
       http.delete("/api/stt/whistle", () => {
         deleted += 1;
         return HttpResponse.json(ABSENT);
       }),
     );
-    renderControl();
+    renderControl("model");
     await userEvent.click(await screen.findByRole("button", { name: "Remove from host" }));
     expect(deleted).toBe(0);
     await userEvent.click(screen.getByRole("button", { name: "Remove" }));
@@ -717,58 +863,46 @@ describe("SpeechControl", () => {
     vi.mocked(sttModel.downloadModel).mockImplementation(async (_status, onProgress) => {
       onProgress(BYTES / 2, BYTES);
       await new Promise((r) => setTimeout(r, 30));
-      vi.mocked(sttModel.storedModel).mockResolvedValue({ sha256: SHA, bytes: BYTES, revision: REVISION });
-      return { sha256: SHA, bytes: BYTES, revision: REVISION, persisted: true };
+      vi.mocked(sttModel.storedModel).mockResolvedValue(COPY);
+      return { ...COPY, persisted: true };
     });
-    renderControl();
-    await userEvent.click(await screen.findByRole("button", { name: "Set up on this phone (16.9 MB)" }));
+    renderControl("model");
+    await userEvent.click(await screen.findByRole("button", { name: "Copy to this phone (16.9 MB)" }));
     expect(sttModel.downloadModel).toHaveBeenCalledTimes(1);
     expect(await screen.findByText("Copying to this phone")).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByText("Copying to this phone")).toBeNull());
-    // The copy is on the phone now: the step says so and names the version it holds.
-    expect(await screen.findByRole("link", { name: "Version ca52876 on Hugging Face" })).toBeInTheDocument();
+    // The real download sends the store's change notice; the mock does not, so the copy's own row is
+    // pinned by the view case above, and here the page only has to come back whole.
+    expect(screen.getByRole("button", { name: "Copy to this phone (16.9 MB)" })).toBeEnabled();
   });
 
-  it("says a busy host in words and leaves the download button to tap again", async () => {
+  it("says a busy host in words and leaves the copy button to tap again", async () => {
     server.use(config(READY));
     vi.mocked(sttModel.downloadModel).mockRejectedValue(new sttModel.SttModelError("busy"));
-    renderControl();
-    await userEvent.click(await screen.findByRole("button", { name: "Set up on this phone (16.9 MB)" }));
+    renderControl("model");
+    await userEvent.click(await screen.findByRole("button", { name: "Copy to this phone (16.9 MB)" }));
     expect(await screen.findByText("The host is busy copying the model to other phones. Try again shortly.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Set up on this phone (16.9 MB)" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Copy to this phone (16.9 MB)" })).toBeEnabled();
   });
 
-  it("says a failed copy in words", async () => {
-    server.use(config(READY));
-    vi.mocked(sttModel.downloadModel).mockRejectedValue(new sttModel.SttModelError("hash-mismatch"));
+  it("stores this phone's choice on the device", async () => {
+    server.use(config({ ...READY, hostEngine: true }, STT_WHISTLE), hostStatus(HOST_WHISTLE));
+    vi.mocked(sttModel.storedModel).mockResolvedValue(COPY);
     renderControl();
-    await userEvent.click(await screen.findByRole("button", { name: "Set up on this phone (16.9 MB)" }));
-    expect(await screen.findByText("The model did not match, so nothing was kept.")).toBeInTheDocument();
-  });
-
-  it("reads the host's speech provider from the config, and names it under the choice", async () => {
-    server.use(config({ ...READY, hostEngine: true }, { provider: "whistle", available: true }));
-    renderControl();
-    expect(await screen.findByText("Your host uses Whistle.")).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "Host" })).toBeEnabled();
-    cleanup();
-
-    __resetOperatorCommands();
-    server.use(config(READY));
-    renderControl();
-    expect(
-      await screen.findByText("Your host has no speech provider. Choose one under Host speech provider above, or run collie stt setup."),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "Host" })).toBeDisabled();
-  });
-
-  it("stores the engine choice on the device", async () => {
-    server.use(config(READY));
-    renderControl();
-    await screen.findByText("sha256 b6e02f04…");
-    // jsdom has no WebAssembly Worker or Cache Storage, so This phone is off here; the choice itself
-    // is the preference store's, covered in stt.test.ts. The row must at least not claim it is on.
-    expect(screen.getByRole("radio", { name: "Host" })).toHaveAttribute("aria-checked", "true");
+    const phone = await screen.findByRole("radio", { name: /^On this phone/ });
+    await waitFor(() => expect(phone).toBeEnabled());
+    await userEvent.click(phone);
+    expect(sttEnginePreference()).toBe("phone");
+    await userEvent.click(screen.getByRole("radio", { name: /^On your host/ }));
     expect(sttEnginePreference()).toBe("host");
+  });
+
+  it("a phone that chose On this phone and lost its copy is paused, not moved to the host", async () => {
+    setSttEnginePreference("phone");
+    server.use(config({ ...READY, hostEngine: true }, STT_WHISTLE), hostStatus(HOST_WHISTLE));
+    renderControl();
+    expect(await screen.findByText("Dictation is paused. This phone's copy of Whistle is gone.")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /^On this phone/ })).toHaveAttribute("aria-checked", "true");
+    expect(sttEnginePreference()).toBe("phone");
   });
 });

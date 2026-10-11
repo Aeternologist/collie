@@ -64,7 +64,7 @@ import { OfflineDraftNote, TerminalDraftPreview } from "@/components/terminal-dr
 import { scopeKey, type Scope } from "@/lib/scope";
 import { DirectTypingStrip } from "@/components/direct-typing-strip";
 import { VoiceTakeover } from "@/components/voice-takeover";
-import { usePhoneEngineUsable } from "@/hooks/use-phone-engine";
+import { usePhoneEngineUse } from "@/hooks/use-phone-engine";
 import { useSttRecorder } from "@/hooks/use-stt-recorder";
 import { useHandsFree, useSttCapability } from "@/lib/stt";
 import { NoEchoNotice } from "@/components/no-echo-notice";
@@ -626,11 +626,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   // is the feature being off: no button at all, not a disabled one.
   const stt = useSttCapability();
   // THE TWO ENGINES (ADR 0096). The microphone exists when the host has a provider, or when this
-  // device chose "This phone" and the phone can run it. It is ENABLED when the host's provider can
+  // device chose "On this phone" and the phone can run it. It is ENABLED when the host's provider can
   // serve, or the phone engine is the one that will run: a phone-only device has no host provider
-  // to be unavailable. The engine is the phone's whenever it is usable; the recorder reads that once,
-  // as the clip starts.
-  const phoneUsable = usePhoneEngineUsable();
+  // to be unavailable. The engine is the phone's whenever the device chose it and the browser can run
+  // it; the recorder reads that once, as the clip starts. A phone whose copy is gone stays on the
+  // phone engine (`paused`): the clip fails there with the reason and offers Send to host as a tap,
+  // and never reaches the host by itself (ADR 0096 Decision 12).
+  const phoneUse = usePhoneEngineUse();
+  const phoneUsable = phoneUse === "phone";
   const micShown = stt !== null || phoneUsable;
   const micAvailable = phoneUsable || stt?.available === true;
   const handsFree = useHandsFree();
@@ -640,7 +643,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   // is worse than no transcript.
   const recorder = useSttRecorder({
     enabled: micAvailable && !locked && !direct.active,
-    engine: phoneUsable ? "phone" : "host",
+    engine: phoneUse === "host" ? "host" : "phone",
     host: stt,
     paneKey: `${scopeId}\0${paneId}`,
     suspended: locked || direct.active,

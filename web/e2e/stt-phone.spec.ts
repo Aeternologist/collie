@@ -383,31 +383,41 @@ async function dictate(page: Page): Promise<void> {
   await ok.click();
 }
 
-/** Open Settings → Voice and wait for the Whistle card to have read the config. */
+/** Open the Voice hub and wait for it to have read the config. */
 async function openSpeechSettings(page: Page): Promise<void> {
   await page.goto("/settings/voice");
+  await expect(page.getByText(en["settings.voice.status.label"])).toBeVisible();
+}
+
+/** Open Settings → Voice → Whistle model and wait for the credit. */
+async function openModelPage(page: Page): Promise<void> {
+  await page.goto("/settings/voice/model");
   await expect(page.getByRole("link", { name: en["settings.speech.credit.maker"] })).toBeVisible();
 }
 
-/** The phone step's button. The size in its name is the stub's, so it is matched by its first words. */
-const setUpOnPhoneButton = (page: Page) => page.getByRole("button", { name: /^Set up on this phone/ });
+/** This phone's two choices on the hub. Their names carry a line under the title, so the title leads. */
+const phoneChoice = (page: Page) => page.getByRole("radio", { name: new RegExp(`^${en["settings.speech.phone.heading"]}`) });
+const hostChoice = (page: Page) => page.getByRole("radio", { name: new RegExp(`^${en["settings.speech.host.heading"]}`) });
 
-/** The phone step's status line, once the copy is kept. */
-const phoneIsSetUp = (page: Page) => page.getByText(en["settings.speech.phone.ready"], { exact: true });
+/** The hub's copy button. The size in its name is the stub's, so it is matched by its first words. */
+const setUpOnPhoneButton = (page: Page) => page.getByRole("button", { name: /^Copy to this phone/ });
 
-/** Tap Set up on this phone and wait for the copy to be kept. */
+/** The hub's line under On this phone, once the copy is kept. */
+const phoneIsSetUp = (page: Page) => page.getByText(en["settings.voice.copy.ready"].replace("{version}", "ca52876"), { exact: true });
+
+/** Tap Copy to this phone on the hub and wait for the copy to be kept. */
 async function setUpOnPhone(page: Page, timeout = 30_000): Promise<void> {
   await setUpOnPhoneButton(page).click();
   await expect(phoneIsSetUp(page)).toBeVisible({ timeout });
 }
 
-// ── SETTINGS: THE HOST'S MODEL ──────────────────────────────────────────────────────────────────
+// ── SETTINGS: THE HOST'S MODEL AND THE HOST'S OPTION ────────────────────────────────────────────
 
-test("Download to host walks absent, downloading, ready; Whistle under Host speech provider turns the provider on", async ({ page }) => {
+test("Download to host walks absent, downloading, ready; Whistle on Host speech asks for every device, then turns it on", async ({ page }) => {
   const world = freshWorld({ whistle: absent() });
   await installSpeechBridge(page, world);
   await serveUnderBridgePolicies(page);
-  await openSpeechSettings(page);
+  await openModelPage(page);
 
   // Absent: the tap, not a download by itself.
   expect(world.writes).toEqual([]);
@@ -417,61 +427,75 @@ test("Download to host walks absent, downloading, ready; Whistle under Host spee
   expect(world.writes).toEqual([{ method: "POST", path: "/api/stt/whistle", body: null }]);
 
   // The poll (once a second) reads it through to ready.
-  await expect(page.getByText(/^sha256 /)).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByRole("button", { name: en["settings.speech.host.remove"] })).toBeVisible();
+  await expect(page.getByRole("button", { name: en["settings.speech.host.remove"] })).toBeVisible({ timeout: 10_000 });
   // The version is the revision's first seven characters, linked to that revision on Hugging Face.
-  const version = page.getByRole("link", { name: "Version ca52876 on Hugging Face" });
+  const version = page.getByRole("link", { name: "Version ca52876 on Hugging Face" }).first();
   await expect(version).toHaveAttribute("href", `https://huggingface.co/Cactus-Compute/whistle/tree/${REVISION}`);
   await expect(version).toHaveAttribute("target", "_blank");
+  // Details unfolds the checksum.
+  await page.getByRole("button", { name: en["settings.voice.details"] }).click();
+  await expect(page.getByText(/^sha256 /)).toBeVisible();
 
-  // The Whistle card has no switch any more: the host's provider is chosen in its own card (ADR 0097).
-  await expect(page.getByRole("switch")).toHaveCount(0);
-  const providers = page.getByRole("radiogroup", { name: en["settings.speech.provider.title"] });
-  const off = providers.getByRole("radio", { name: en["settings.speech.provider.option.off"], exact: true });
-  const whistle = providers.getByRole("radio", { name: en["settings.speech.provider.name.whistle"], exact: true });
+  // Host speech, one level up and one down: Off is chosen, ChatGPT is closed and says what to run.
+  await page.getByRole("button", { name: "Back" }).click();
+  await expect(page).toHaveURL(/\/settings\/voice$/);
+  await page.getByRole("button", { name: new RegExp(`^${en["settings.speech.provider.option.off"]}`) }).first().click();
+  await expect(page).toHaveURL(/\/settings\/voice\/host$/);
+  const options = page.getByRole("radiogroup", { name: en["settings.voice.hostPage.group"] });
+  const off = options.getByRole("radio", { name: new RegExp(`^${en["settings.speech.provider.option.off"]}`) });
+  const whistle = options.getByRole("radio", { name: new RegExp(`^${en["settings.voice.option.whistle"]}`) });
   await expect(off).toHaveAttribute("aria-checked", "true");
-  // Codex is not installed on this host: the row is off and says what to run there.
-  await expect(providers.getByRole("radio", { name: en["settings.speech.provider.name.codex"], exact: true })).toBeDisabled();
+  await expect(options.getByRole("radio", { name: new RegExp(`^${en["settings.voice.option.chatgpt"]}`) })).toBeDisabled();
   await expect(page.getByText(en["settings.speech.provider.why.codexMissing"])).toBeVisible();
-  // The model is ready, so the poll's end re-read the host and Whistle is open: one tap, one PUT.
+
+  // Whistle sends audio further than Off: the tap asks first, for every device, and sends nothing.
   await expect(whistle).toBeEnabled();
   await whistle.click();
+  const sheet = page.getByRole("dialog", { name: en["settings.voice.confirm.title"].replace("{option}", en["settings.voice.option.whistle"]) });
+  await expect(sheet).toBeVisible();
+  expect(world.writes.at(-1)?.method).toBe("POST");
+  await sheet.getByRole("button", { name: en["settings.voice.confirm.action"] }).click();
   await expect(whistle).toHaveAttribute("aria-checked", "true");
   expect(world.writes.at(-1)).toEqual({ method: "PUT", path: "/api/stt/host", body: { provider: "whistle" } });
   expect(world.stt?.provider).toBe("whistle");
-  // The microphone follows the provider: the config re-read names Whistle under the engine choice.
-  await expect(page.getByText(en["settings.speech.engine.hostUses"].replace("{provider}", "Whistle"))).toBeVisible();
+
+  // The microphone follows the option: back on the hub, On your host names Whistle.
+  await page.getByRole("button", { name: "Back" }).click();
+  await expect(page.getByText(en["settings.voice.choice.host.what"].replace("{option}", "Whistle"))).toBeVisible();
 });
 
-test("the phone engine: set up on this phone, then choose This phone, and the copy is kept", async ({ page }) => {
+test("the phone engine: copy to this phone, then choose On this phone, and the copy is kept", async ({ page }) => {
   const world = freshWorld({ whistle: ready() });
   await installSpeechBridge(page, world);
   await installDigestShim(page);
+  // Headless WebKit cannot record; the hub would rightly say so instead of "works".
+  await installFakeMicrophone(page);
   await serveUnderBridgePolicies(page);
   await openSpeechSettings(page);
 
-  // This phone needs its own copy first: the choice is off, and the reason is written once.
-  const phone = page.getByRole("radio", { name: en["settings.speech.engine.phone"] });
+  // This phone needs its own copy first: the choice is off.
+  const phone = phoneChoice(page);
   await expect(phone).toBeDisabled();
-  await expect(page.getByText(en["settings.speech.engine.why.setupFirst"])).toHaveCount(1);
 
   // Nothing came down by itself.
   expect(world.modelGets).toBe(0);
   await setUpOnPhone(page);
   expect(world.modelGets).toBe(1);
-  await expect(page.getByText(en["settings.speech.engine.why.setupFirst"])).toHaveCount(0);
-  // The phone's copy names the version the host named, kept beside the entry.
-  const phoneStep = page.getByRole("region", { name: en["settings.speech.phone.heading"] });
-  await expect(phoneStep.getByRole("link", { name: "Version ca52876 on Hugging Face" })).toBeVisible();
   await expect(phone).toBeEnabled();
   await phone.click();
   await expect(phone).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByText(en["settings.voice.status.phone"])).toBeVisible();
 
   // The copy is under the pinned hash in the speech cache, with the engine files beside it.
   const keys = await page.evaluate(async () => (await (await caches.open("collie-stt")).keys()).map((r) => new URL(r.url).pathname));
   expect(keys).toContain(`/api/stt/model/${PINNED_SHA}`);
   expect(keys.some((k) => k.endsWith("/needle.wasm"))).toBe(true);
   expect(keys.some((k) => k.endsWith("/needle.js"))).toBe(true);
+
+  // Whistle model names the phone's copy by the version the host named.
+  await goInApp(page, "/settings/voice/model");
+  const phoneStep = page.getByRole("region", { name: en["settings.speech.phone.heading"] });
+  await expect(phoneStep.getByRole("link", { name: "Version ca52876 on Hugging Face" })).toBeVisible();
 });
 
 test("the phone's copy survives a reload, and the engine runs from it", async ({ page, browserName }) => {
@@ -492,11 +516,33 @@ test("the phone's copy survives a reload, and the engine runs from it", async ({
   await page.reload();
   await expect(phoneIsSetUp(page)).toBeVisible();
   expect(world.modelGets).toBe(1);
-  await page.getByRole("radio", { name: en["settings.speech.engine.phone"] }).click();
+  await phoneChoice(page).click();
   await goInApp(page, "/pane/w1:p1");
   await dictate(page);
   await expect(replyBox(page)).toHaveValue(TRANSCRIPT, { timeout: 30_000 });
   expect(world.modelGets).toBe(1);
+  expect(world.uploads).toEqual([]);
+});
+
+test("a phone that chose itself and lost its copy is paused, says so, and does not move to the host", async ({ page }) => {
+  const world = freshWorld({ whistle: ready({ hostEngine: true }), stt: WHISTLE_HOST_STT });
+  await installSpeechBridge(page, world);
+  await installFakeMicrophone(page);
+  await serveUnderBridgePolicies(page);
+  // The device chose On this phone earlier, and its copy is gone, as an eviction leaves it.
+  await page.addInitScript(() => localStorage.setItem("collie:stt-engine:v1", "phone"));
+  await openSpeechSettings(page);
+
+  await expect(page.getByText(en["settings.voice.status.paused"])).toBeVisible();
+  await expect(phoneChoice(page)).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("button", { name: /^Restore/ })).toBeVisible();
+
+  // The mic does not fall back to the host: the clip stays on this phone, which says what is wrong.
+  await goInApp(page, "/pane/w1:p1");
+  await dictate(page);
+  const voice = page.getByRole("group", { name: en["composer.voice.regionAria"] });
+  await expect(voice.getByRole("alert")).toHaveText(en["stt.model.error.missing"], { timeout: 30_000 });
+  await expect(voice.getByRole("button", { name: en["composer.voice.sendToHostAria"] })).toBeVisible();
   expect(world.uploads).toEqual([]);
 });
 
@@ -520,7 +566,7 @@ test("a model that is not the pinned file is refused and nothing is kept", async
   expect(modelKeys).toEqual([]);
 });
 
-test("a browser that refuses wasm to the worker takes This phone away, with the reason, and never widens the page", async ({ page }) => {
+test("a browser that refuses wasm to the worker takes On this phone away, with the reason, and never widens the page", async ({ page }) => {
   // The real worker, served under a policy that has no `'wasm-unsafe-eval'`: what a browser that gave the
   // worker the document's policy would do. The worker's probe fails closed (Decision 8).
   const world = freshWorld({ whistle: ready() });
@@ -532,11 +578,13 @@ test("a browser that refuses wasm to the worker takes This phone away, with the 
   });
   await openSpeechSettings(page);
 
-  // The reason stands where the phone step's button would be, and is not said a second time under the choice.
+  // The reason stands where the copy button would be, once.
   await expect(page.getByText(en["settings.speech.engine.why.wasmCsp"])).toHaveCount(1);
   await expect(setUpOnPhoneButton(page)).toHaveCount(0);
-  await expect(page.getByRole("radio", { name: en["settings.speech.engine.phone"] })).toBeDisabled();
-  await expect(page.getByRole("radio", { name: en["settings.speech.engine.host"] })).toHaveAttribute("aria-checked", "true");
+  await expect(phoneChoice(page)).toBeDisabled();
+  await expect(hostChoice(page)).toHaveAttribute("aria-checked", "true");
+  const widths = await page.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth]);
+  expect(widths[0]).toBeLessThanOrEqual(widths[1]!);
 });
 
 // ── DICTATION ───────────────────────────────────────────────────────────────────────────────────
@@ -553,7 +601,7 @@ test("dictation on the phone engine lands the transcript in the composer and nev
   // Put the model on the phone through the real Settings flow, then leave for a pane.
   await openSpeechSettings(page);
   await setUpOnPhone(page);
-  await page.getByRole("radio", { name: en["settings.speech.engine.phone"] }).click();
+  await phoneChoice(page).click();
 
   // In the app, not a reload: Playwright's WebKit forgets Cache Storage records on a navigation (the
   // reload case below is Chromium's), and the point here is the dictation.
@@ -637,7 +685,7 @@ async function realEngineCase(page: Page): Promise<void> {
 
   await openSpeechSettings(page);
   await setUpOnPhone(page, 60_000);
-  await page.getByRole("radio", { name: en["settings.speech.engine.phone"] }).click();
+  await phoneChoice(page).click();
 
   await page.goto("/pane/w1:p1");
   await page.getByRole("button", { name: en["composer.mic.recordAria"] }).click();

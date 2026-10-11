@@ -1,30 +1,21 @@
 import { Mic } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
-import { useStoredModel } from "@/hooks/use-stored-model";
 import { useLocale } from "@/hooks/use-locale";
 import { t } from "@/lib/i18n";
-import { useOperatorConfigRead, useSttCapability, useWhistleStatus } from "@/lib/stt";
 
 /**
  * What Settings → Voice says when it has nothing to show. The index always offers the Voice row (a
  * row that comes and goes teaches nobody where to look), so the page owes an answer to "why is it
- * empty": this host offers no Whistle, this phone holds no model, and this browser has no speech
- * provider it can record for (none is configured, or it cannot record), so neither the Whistle
- * cards nor the hands-free switch has anything to draw.
+ * empty": this host offers no Whistle and no speech option, and this phone holds no model.
  *
- * It waits for the first read of the host's config before it speaks. Until then "nothing is offered"
- * and "not asked yet" look the same, and a sentence that appears and is replaced by two cards a
- * moment later would move everything under it (DESIGN.md §2).
+ * The controller (components/speech-control.tsx) draws it only once the host's config and its speech
+ * option have both been read and this phone has looked for its own copy. Until then "nothing is
+ * offered" and "not asked yet" look the same, and a sentence that appears and is replaced by the
+ * hub a moment later would move everything under it (DESIGN.md §2).
  */
 export function VoiceEmpty() {
   useLocale();
-  const read = useOperatorConfigRead();
-  const whistle = useWhistleStatus();
-  const recording = useSttCapability();
-  const { model } = useStoredModel();
-  if (!read || model === undefined) return null;
-  if (whistle !== null || recording !== null || model !== null) return null;
   return (
     <Card className="gap-0 py-0">
       <div className="flex items-start gap-3 p-4">

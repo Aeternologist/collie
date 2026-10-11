@@ -1,0 +1,366 @@
+import { useId, type ReactNode } from "react";
+import { CircleCheck, CircleDashed, CirclePause, CircleX, Globe, Info, Loader2, Lock, RefreshCw } from "lucide-react";
+
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { CopyableBlock } from "@/components/ui/copyable-block";
+import { Notice } from "@/components/ui/notice";
+import { SectionLabel } from "@/components/ui/section-label";
+import { BottomSheet } from "@/components/ui/sheet";
+import { useLocale } from "@/hooks/use-locale";
+import { t, type MessageKey } from "@/lib/i18n";
+import { cn } from "@/lib/utils";
+import { leavesNetwork, reachOf, type HostOption, type Reach, type VoiceState } from "@/lib/voice";
+
+// ── THE PIECES SETTINGS → VOICE IS BUILT FROM ───────────────────────────────────────────────────
+//
+// Small views with every fact handed in, shared by the three Voice pages (components/speech-control.tsx)
+// and the playground. The rules they keep, so every page keeps them the same way:
+//
+//  · The audio line is ONE component. Every option, the status card, the confirm sheet and the facts
+//    sheet print it, with the same label ("Audio") in the same column, so the eye finds it in the
+//    same place.
+//  · Audio that leaves the host's network carries an icon and the words, in neutral ink, never a
+//    colour alone.
+//  · A state is an icon in its status ink beside a word in the foreground ink.
+//  · Every control is at least 44px tall (DESIGN.md §6). A selected card recolours the border it
+//    always reserves (§2). No accent border on one side.
+
+/** One zone of a page: a section label naming WHO a setting reaches, and one plain line under it. */
+export function Zone({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+  const id = useId();
+  return (
+    <section aria-labelledby={id} className="space-y-2">
+      <div>
+        <h2 id={id}>
+          <SectionLabel>{label}</SectionLabel>
+        </h2>
+        {hint !== undefined && <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p>}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+/** A sub-label inside a zone: the two tiers of the host's options. Quieter than the zone's label. */
+export function TierLabel({ children }: { children: ReactNode }) {
+  return <h3 className="pt-1 text-xs font-medium text-muted-foreground">{children}</h3>;
+}
+
+/**
+ * The one banner a device without the write grant sees. It covers the host's settings only: this
+ * phone's own choice and hands-free stay live, because they are this device's and change nothing on
+ * the host.
+ */
+export function ReadOnlyHostBanner() {
+  useLocale();
+  return (
+    <Notice tone="info" variant="box" icon={<Lock />}>
+      {t("settings.voice.readOnly")}
+    </Notice>
+  );
+}
+
+/** The marker for audio that leaves the host's network: an icon and the words, in neutral ink. */
+export function LeavesMarker() {
+  return (
+    <Badge variant="outline" className="mt-1 gap-1 rounded-sm font-medium">
+      <Globe aria-hidden />
+      {t("settings.voice.leaves")}
+    </Badge>
+  );
+}
+
+const AUDIO_KEYS = {
+  phone: "settings.voice.audio.phone",
+  host: "settings.voice.audio.host",
+  command: "settings.voice.audio.command",
+  service: "settings.voice.audio.service",
+  chatgpt: "settings.voice.audio.chatgpt",
+  nowhere: "settings.voice.audio.nowhere",
+} as const satisfies Record<Reach, MessageKey>;
+
+/** The fixed sentence for where audio goes. */
+export function audioSentence(reach: Reach): string {
+  return t(AUDIO_KEYS[reach]);
+}
+
+/**
+ * The fixed audio line. Same label, same column, same sentence for the same destination. `text`
+ * replaces the sentence only where no destination exists (nothing recorded, nothing to send to yet,
+ * a provider this build does not know); the label and the column stay.
+ */
+export function AudioLine({ reach, text }: { reach: Reach | null; text?: string }) {
+  const sentence = text ?? (reach === null ? t("settings.voice.audio.none") : audioSentence(reach));
+  return (
+    <span className="flex gap-2 text-xs leading-relaxed">
+      <span className="w-12 shrink-0 text-muted-foreground">{t("settings.voice.audio.label")}</span>
+      <span className="min-w-0">
+        <span className="block">{sentence}</span>
+        {reach !== null && leavesNetwork(reach) && <LeavesMarker />}
+      </span>
+    </span>
+  );
+}
+
+const STATE_LOOK = {
+  works: { icon: CircleCheck, ink: "text-status-done" },
+  setup: { icon: CircleDashed, ink: "text-status-working" },
+  paused: { icon: CirclePause, ink: "text-status-blocked" },
+  broken: { icon: CircleX, ink: "text-status-blocked" },
+} satisfies Record<VoiceState, { icon: typeof CircleCheck; ink: string }>;
+
+/** A state as an icon in its status ink and a word in the foreground ink: never colour alone. */
+export function StateWord({ state, word }: { state: VoiceState; word: string }) {
+  const { icon: Icon, ink } = STATE_LOOK[state];
+  return (
+    <span className="inline-flex items-center gap-1.5 text-sm font-medium">
+      <Icon aria-hidden className={cn("size-4 shrink-0", ink)} />
+      {word}
+    </span>
+  );
+}
+
+/** A radio's ring. The border is always there; choosing fills the dot, so nothing moves (§2). */
+export function Ring({ checked, busy = false }: { checked: boolean; busy?: boolean }) {
+  return (
+    <span
+      aria-hidden
+      className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border-2 border-muted-foreground"
+    >
+      {busy ? (
+        <Loader2 className="size-3 animate-spin" />
+      ) : (
+        <span className={cn("size-2.5 rounded-full", checked ? "bg-primary" : "bg-transparent")} />
+      )}
+    </span>
+  );
+}
+
+/**
+ * The small info button beside an option's title. It sits OUTSIDE the option's own button (a button
+ * cannot hold a button), laid over the row's top-right corner, so a tap on it never chooses the
+ * option or opens a page. 44px of reach around a 16px icon; the negative inset keeps the row's height.
+ */
+export function InfoButton({ name, onClick, className }: { name: string; onClick: () => void; className?: string }) {
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      aria-label={t("settings.voice.about.aria", { option: name })}
+      className={cn("absolute top-1.5 right-1.5 size-11 text-muted-foreground", className)}
+      onClick={onClick}
+    >
+      <Info className="size-4" />
+    </Button>
+  );
+}
+
+/** A two-column list of facts: label, value. */
+export function Facts({ rows, className }: { rows: readonly { label: string; value: ReactNode }[]; className?: string }) {
+  return (
+    <dl className={cn("grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-xs", className)}>
+      {rows.map((row) => (
+        <div key={row.label} className="contents">
+          <dt className="text-muted-foreground">{row.label}</dt>
+          <dd className="min-w-0 break-words">{row.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+// ── THE FIVE FACTS ──────────────────────────────────────────────────────────────────────────────
+
+/** What an info button is about: this phone's two choices, or one of the host's five options. */
+export type AboutId = "phone" | "host" | HostOption;
+
+interface FactSet {
+  /** The audio line's destination, or `null` for "it depends on the host's option". */
+  readonly reach: Reach | null;
+  readonly offline: MessageKey;
+  readonly cost: MessageKey;
+  readonly setup: MessageKey;
+  readonly speed: MessageKey;
+}
+
+/**
+ * The same five facts for every option, in the same order, so they can be compared down the column.
+ * A fact that depends on a provider Collie does not run (a speech service, your own command) says so
+ * in general terms; nothing here names a price or a speed Collie has not measured.
+ */
+const FACTS = {
+  phone: {
+    reach: "phone",
+    offline: "settings.voice.facts.yes",
+    cost: "settings.voice.facts.free",
+    setup: "settings.voice.facts.phone.setup",
+    speed: "settings.voice.facts.phone.speed",
+  },
+  whistle: {
+    reach: "host",
+    offline: "settings.voice.facts.whistle.offline",
+    cost: "settings.voice.facts.free",
+    setup: "settings.voice.facts.whistle.setup",
+    speed: "settings.voice.facts.whistle.speed",
+  },
+  command: {
+    reach: "command",
+    offline: "settings.voice.facts.dependsCommand",
+    cost: "settings.voice.facts.dependsCommand",
+    setup: "settings.voice.facts.terminal",
+    speed: "settings.voice.facts.dependsCommand",
+  },
+  service: {
+    reach: "service",
+    offline: "settings.voice.facts.no",
+    cost: "settings.voice.facts.service.cost",
+    setup: "settings.voice.facts.service.setup",
+    speed: "settings.voice.facts.service.speed",
+  },
+  chatgpt: {
+    reach: "chatgpt",
+    offline: "settings.voice.facts.no",
+    cost: "settings.voice.facts.chatgpt.cost",
+    setup: "settings.voice.facts.chatgpt.setup",
+    speed: "settings.voice.facts.internet",
+  },
+  off: {
+    reach: "nowhere",
+    offline: "settings.voice.facts.off.offline",
+    cost: "settings.voice.facts.free",
+    setup: "settings.voice.facts.off.setup",
+    speed: "settings.voice.facts.off.speed",
+  },
+  /** "On your host" while the host has no option this build can describe. */
+  hostAny: {
+    reach: null,
+    offline: "settings.voice.facts.dependsHost",
+    cost: "settings.voice.facts.dependsHost",
+    setup: "settings.voice.facts.hostAny.setup",
+    speed: "settings.voice.facts.hostAny.speed",
+  },
+} as const satisfies Record<HostOption | "phone" | "hostAny", FactSet>;
+
+const OPTION_NAMES = {
+  whistle: "settings.voice.option.whistle",
+  command: "settings.voice.option.command",
+  service: "settings.voice.option.service",
+  chatgpt: "settings.voice.option.chatgpt",
+  off: "settings.speech.provider.option.off",
+} as const satisfies Record<HostOption, MessageKey>;
+
+/** An option's name on the Host speech page. */
+export function optionName(option: HostOption): string {
+  return t(OPTION_NAMES[option]);
+}
+
+/** The name an info button and its sheet carry. */
+export function aboutName(about: AboutId): string {
+  if (about === "phone") return t("settings.speech.phone.heading");
+  if (about === "host") return t("settings.speech.host.heading");
+  return optionName(about);
+}
+
+/**
+ * The facts sheet an info button opens: the option's name as the title, then the five facts as a
+ * two-column list. `hostOption` is what the host uses now; "On your host" shows that option's facts,
+ * or the general ones while the host has none.
+ */
+export function FactsSheet({
+  about,
+  hostOption,
+  size,
+  onClose,
+}: {
+  about: AboutId | null;
+  hostOption: HostOption | null;
+  /** The model's size, already formatted ("16.9 MB"). */
+  size: string;
+  onClose: () => void;
+}) {
+  useLocale();
+  const key = about === null ? null : about === "host" ? (hostOption === null || hostOption === "off" ? "hostAny" : hostOption) : about;
+  const facts = key === null ? null : FACTS[key];
+  return (
+    <BottomSheet open={about !== null} onClose={onClose} title={about === null ? undefined : aboutName(about)}>
+      {facts !== null && (
+        <dl className="grid grid-cols-[3.5rem_minmax(0,1fr)] gap-x-2 gap-y-2 text-sm leading-relaxed">
+          <dt className="text-muted-foreground">{t("settings.voice.audio.label")}</dt>
+          <dd className="min-w-0">
+            <span className="block">{facts.reach === null ? t("settings.voice.audio.hostAny") : audioSentence(facts.reach)}</span>
+            {facts.reach !== null && leavesNetwork(facts.reach) && <LeavesMarker />}
+          </dd>
+          <dt className="text-muted-foreground">{t("settings.voice.facts.offline")}</dt>
+          <dd className="min-w-0">{t(facts.offline, { size })}</dd>
+          <dt className="text-muted-foreground">{t("settings.voice.facts.cost")}</dt>
+          <dd className="min-w-0">{t(facts.cost, { size })}</dd>
+          <dt className="text-muted-foreground">{t("settings.voice.facts.setup")}</dt>
+          <dd className="min-w-0">{t(facts.setup, { size })}</dd>
+          <dt className="text-muted-foreground">{t("settings.voice.facts.speed")}</dt>
+          <dd className="min-w-0">{t(facts.speed, { size })}</dd>
+        </dl>
+      )}
+    </BottomSheet>
+  );
+}
+
+// ── COMMANDS FOR THE HOST'S TERMINAL ────────────────────────────────────────────────────────────
+
+/** A command to run on the host, with the Copy icon. Never translated: it is what the terminal takes. */
+export function HostCommand({ command }: { command: string }) {
+  return (
+    <CopyableBlock text={command} label={t("copyable.command")}>
+      <p className="break-all rounded-sm border border-border bg-background py-2 pr-10 pl-3 font-mono text-xs">{command}</p>
+    </CopyableBlock>
+  );
+}
+
+/**
+ * A fixed command for the host's terminal: the line to copy, a "Check again" that reads the host
+ * once more, and the reminder to read a command before running it. Never a field to edit: a key or
+ * a command the operator chose stays on the host's keyboard (ADR 0029).
+ */
+export function TerminalSetup({
+  command,
+  note,
+  checking,
+  onCheckAgain,
+}: {
+  command: string;
+  note?: string;
+  checking: boolean;
+  onCheckAgain: () => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <p className="text-xs">{t("settings.voice.terminal.run")}</p>
+      <HostCommand command={command} />
+      <Button type="button" variant="outline" className="h-11" disabled={checking} onClick={onCheckAgain}>
+        {checking ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+        {t("settings.voice.checkAgain")}
+      </Button>
+      <p className="text-xs text-muted-foreground">
+        {t("settings.voice.terminal.check")}
+        {note === undefined ? "" : ` ${note}`}
+      </p>
+    </div>
+  );
+}
+
+/** The terminal command each terminal-only option is set up with. The same line on Linux, macOS and Windows. */
+export const TERMINAL_COMMANDS = {
+  command: "collie stt setup --provider local-cli",
+  service: "collie stt setup --provider openai-compatible",
+} as const satisfies Partial<Record<HostOption, string>>;
+
+/** Whether an option is set up only in a terminal on the host. */
+export function terminalOnly(option: HostOption): option is keyof typeof TERMINAL_COMMANDS {
+  return option === "command" || option === "service";
+}
+
+/** The audio line's reach for an option. */
+export function optionReach(option: HostOption): Reach {
+  return reachOf(option);
+}

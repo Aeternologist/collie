@@ -94,7 +94,7 @@ describe("SettingsRoute — the index", () => {
     expect(rows[1]).toContain("Device");
     // Voice sits between Device and Alerts, and is always offered: a host with no speech gets a page that says so.
     expect(rows[2]).toContain("Voice");
-    expect(rows[2]).toContain("Dictation, the speech engine and hands-free.");
+    expect(rows[2]).toContain("Where your speech becomes text, and hands-free.");
     expect(rows[3]).toContain("Alerts");
     expect(rows[4]).toContain("System");
   });

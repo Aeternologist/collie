@@ -151,6 +151,26 @@ describe("Composer — the microphone with the phone engine", () => {
   });
 });
 
+describe("Composer — paused: this phone was chosen and its copy is gone", () => {
+  // ADR 0096 Decision 12: no silent switch. The clip goes to the phone engine, which says the copy is
+  // gone; the host is offered as a tap, and nothing is uploaded before it.
+  it("keeps the clip on this phone, says so, and uploads nothing until Send to host", async () => {
+    const user = userEvent.setup();
+    model.held = false;
+    const posts: (string | null)[] = [];
+    phone.transcribeOnPhone.mockResolvedValue({ ok: false, message: t("stt.model.error.missing") });
+    server.use(configHandler(HOST_CONFIG), hostStt("from the host", posts));
+    renderComposer();
+    const recorder = await startRecording(user);
+    act(() => recorder.finish());
+    expect(await screen.findByRole("alert")).toHaveTextContent("This phone has no model yet.");
+    expect(phone.transcribeOnPhone).toHaveBeenCalledTimes(1);
+    await act(async () => {});
+    expect(posts).toHaveLength(0);
+    expect(screen.getByRole("button", { name: t("composer.voice.sendToHostAria") })).toBeInTheDocument();
+  });
+});
+
 describe("Composer — a clip on the phone engine", () => {
   it("lands at the caret through the usual insert, and never calls POST /api/stt", async () => {
     const user = userEvent.setup();
