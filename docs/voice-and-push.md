@@ -133,16 +133,21 @@ write access can set this up." and cannot start the download.
 
 **Settings → Voice** is one page with two pages below it:
 
-- **Voice** shows what happens when you press the mic, as five facts: the **Engine**, where it
-  **Runs on**, how it was **Set up** (from Settings by which device and when, or in a terminal on
-  the host), where the **Audio** goes, and the **Status**. The status says what it rests on, for
-  example "Ready. Whistle ca52876 is on this phone." or "Not ready. Codex is signed out on your
-  host.". Then this phone's own choice, **On this phone** or **On your host**, which is kept per
-  device. The choice in use has a bold edge, a tint and an **In use** badge, and switching between
-  the two moves nothing on the page. Then one row for what the host uses, a row that opens all five
-  options, the hands-free switch, and one row for the model. Each choice has an info button that
-  lists five facts about it: where the audio goes, whether it works offline, what it costs, what
-  setup it needs, and how fast it is. A tap on the info button chooses nothing.
+- **Voice** puts what is in use first. The top card is titled with the engine itself, for example
+  **Whistle by Cactus Compute** with **On this phone** under it, or **ChatGPT subscription (OpenAI)**
+  with **On your host**. Then the status, which says what it rests on, for example "Ready. Whistle
+  ca52876 is on this phone." or "Not ready. Codex is signed out on your host.", where the **Audio**
+  goes, and how it was **Set up** (from Settings by which device and when, or in a terminal on the
+  host). Under the card is the hands-free switch. Everything else sits behind one row, **Change how
+  speech works**. While speech works, that row is closed on every visit. While it does not (nothing
+  set up, a paused phone, a host option that does not answer), it stands open, and the top card
+  carries the one action: **Set up speech on this phone**, **Restore** or **Fix**. Opened, it shows
+  this phone's own choice, **On this phone** (marked **Recommended**) or **On your host** (the
+  computer running your agents), which is kept per device. The choice in use has a bold edge, a tint
+  and an **In use** badge, and switching between the two moves nothing on the page. Then one row for
+  what the host uses, a row that opens all five options, and one row for the model. Each choice has
+  an info button that lists five facts about it: where the audio goes, whether it works offline,
+  what it costs, what setup it needs, and how fast it is. A tap on the info button chooses nothing.
 - **Host speech** lists the host's five options. Whistle and your own command keep the audio on
   your machines. A speech service and the ChatGPT subscription send it off your host. Off stands on
   its own below them. A change here is for every device paired to the host. A choice that sends
@@ -155,9 +160,14 @@ write access can set this up." and cannot start the download.
 
 To set Whistle up:
 
-1. On a phone with no copy, tap **Set up (16.9 MB)** on **Voice**. The host downloads the model
-   once, and then this phone copies it from the host. When the host already has the model, the
-   button says **Copy to this phone**. A read-only device may copy, because copying is a read.
+1. On a phone where speech does not work yet, tap **Set up speech on this phone** in the top card
+   on **Voice**. One tap does the whole way: the host downloads the model if it lacks it, this phone
+   copies it from the host, and **On this phone** is chosen. One bar shows the progress and says
+   which step runs, "Downloading to your host…" or "Copying to this phone…". If a step fails, it
+   stops there, says why, and offers **Try again**. A read-only device may copy, because copying is a
+   read, but it cannot ask the host for the download. The same two steps are also under **Change how
+   speech works**: **Set up (16.9 MB)** on a phone with no copy, or **Copy to this phone** when the
+   host already has the model.
 2. Or open **Whistle model** and tap **Download to host (16.9 MB)**. A bar shows the progress. If it
    fails, the page says why. Tap **Try again**. When the model is there, the page lists its version
    (the first seven characters of the Hugging Face revision, a link to that revision) and its size.
@@ -170,7 +180,7 @@ To set Whistle up:
 4. On this phone's copy, **Whistle model** names the version, and offers **Remove from this phone**.
    It also says whether the browser agreed to keep the copy ("Kept") or may clear it when space runs
    low. If the host later gets a newer model, the copy says so and offers **Update**.
-5. On **Voice**, choose **On this phone** or **On your host**. **On this phone** is off until the
+5. On **Voice**, open **Change how speech works** and choose **On this phone** or **On your host**. **On this phone** is off until the
    phone has a copy. **On your host** is off while the host has no speech option. The line under
    the choice says what the host uses.
 6. To remove the model from the host, tap **Remove from host** on **Whistle model** and confirm. If

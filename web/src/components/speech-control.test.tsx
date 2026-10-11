@@ -105,6 +105,8 @@ function props(over: Partial<SpeechCardsProps> = {}): SpeechCardsProps {
     onPhoneRemove: vi.fn(),
     onCheckAgain: vi.fn(),
     onOpenPage: vi.fn(),
+    guided: { kind: "idle" },
+    onGuidedSetup: vi.fn(),
     ...over,
   };
 }
@@ -116,20 +118,39 @@ const follows = (a: Node, b: Node) => Boolean(a.compareDocumentPosition(b) & Nod
 const phoneGroup = () => screen.getByRole("radiogroup", { name: "Where this phone's speech becomes text." });
 const hostGroup = () => screen.getByRole("radiogroup", { name: "What your host uses" });
 
-/** The status card. It holds the words of both choices; the ones shown now are in `[data-active]` layers. */
+/** The in-use card. It holds the words of both choices; the ones shown now are in `[data-active]` layers. */
 const statusCard = () => screen.getByRole("region", { name: "When you press the mic" });
-/** One fact of the status card as it reads now: the front layer of the row named `label`. */
-function fact(label: "Engine" | "Runs on" | "Set up" | "Audio" | "Status"): string {
-  const dt = within(statusCard()).getByText(label, { selector: "dt" });
-  return dt.nextElementSibling?.querySelector("[data-active]")?.textContent ?? "";
+/** The front layer of a `OneOf` slot, as it reads now. */
+const front = (slot: Element | null | undefined) => slot?.querySelector("[data-active]")?.textContent ?? "";
+/** One labelled line of the in-use card (Audio, Set up), as it reads now. Empty when the card has no such line. */
+function line(label: "Audio" | "Set up"): string {
+  const dt = within(statusCard()).queryByText(label, { selector: "dt" });
+  return dt === null ? "" : front(dt.nextElementSibling);
 }
-/** The five facts, as they read now. */
-const facts = () => ({ engine: fact("Engine"), runsOn: fact("Runs on"), setUp: fact("Set up"), audio: fact("Audio"), status: fact("Status") });
-/** The status card's note and action as they read now. */
+/** The in-use card as it reads now: the title, the line under it, the status, Audio and Set up. */
+function inUse() {
+  const heading = within(statusCard()).getByRole("heading", { level: 2 });
+  return {
+    title: front(heading),
+    where: front(heading.nextElementSibling),
+    status: front(heading.parentElement?.nextElementSibling),
+    audio: line("Audio"),
+    setUp: line("Set up"),
+  };
+}
+/** The in-use card's note and action as they read now (the status line leads). */
 const statusExtra = () =>
   Array.from(statusCard().querySelectorAll(":scope > div > [data-active]"))
     .map((layer) => layer.textContent)
     .join(" | ");
+/** The one row that folds away everything that changes how speech works. */
+const changeRow = () => screen.getByRole("button", { name: "Change how speech works" });
+/** Everything behind the fold, by what each part is called. `null` while it is folded away. */
+const folded = () => ({
+  phone: screen.queryByRole("heading", { name: "Only this phone" }),
+  host: screen.queryByRole("heading", { name: "Every device on your host" }),
+  model: screen.queryByRole("button", { name: /Whistle model/ }),
+});
 
 afterEach(() => {
   cleanup();
@@ -138,31 +159,111 @@ afterEach(() => {
 
 // ── The hub ─────────────────────────────────────────────────────────────────────────────────────
 
+/** Whistle on this phone, from a copy of the model the host runs too: the state Altan's phone is in. */
+const PHONE_HUB: Partial<SpeechCardsProps> = { ...WHISTLE_HUB, engine: "phone", local: COPY };
+
 describe("the hub", () => {
-  it("reads top to bottom: the mic's status, this phone, every device on the host, after you speak, the model", () => {
-    render(<SpeechCards {...props(WHISTLE_HUB)} />);
-    const status = screen.getByText("When you press the mic");
-    const phone = screen.getByRole("heading", { name: "Only this phone" });
-    const host = screen.getByRole("heading", { name: "Every device on your host" });
-    const after = screen.getByRole("heading", { name: "After you speak" });
-    const model = screen.getByRole("button", { name: /Whistle model/ });
-    expect(follows(status, phone)).toBe(true);
-    expect(follows(phone, host)).toBe(true);
-    expect(follows(host, after)).toBe(true);
-    expect(follows(after, model)).toBe(true);
+  it("ready: only the card for what is in use, hands-free and a closed Change how speech works", () => {
+    render(<SpeechCards {...props(PHONE_HUB)} />);
+    expect(inUse()).toEqual({
+      title: "Whistle by Cactus Compute",
+      where: "On this phone",
+      status: "Ready. Whistle ca52876 is on this phone.",
+      audio: "Stays on this phone.",
+      setUp: "Copied to this phone from your host",
+    });
+    const handsFree = screen.getByRole("switch", { name: "Hands-free voice: send transcript immediately" });
+    expect(follows(statusCard(), handsFree)).toBe(true);
+    expect(follows(handsFree, changeRow())).toBe(true);
+    expect(changeRow()).toHaveAttribute("aria-expanded", "false");
+    expect(folded()).toEqual({ phone: null, host: null, model: null });
+    expect(screen.queryByRole("radiogroup")).toBeNull();
+    expect(screen.queryByRole("button", { name: "See all five options and how to set them up" })).toBeNull();
   });
 
-  it("nothing set up: the facts say Nothing and Not set up, and On your host cannot be chosen", () => {
+  it("Change how speech works opens in place: this phone, every device on the host, the model, in that order; a second tap folds it", async () => {
+    render(<SpeechCards {...props(PHONE_HUB)} />);
+    await userEvent.click(changeRow());
+    expect(changeRow()).toHaveAttribute("aria-expanded", "true");
+    const { phone, host, model } = folded();
+    expect(follows(changeRow(), phone!)).toBe(true);
+    expect(follows(phone!, host!)).toBe(true);
+    expect(follows(host!, model!)).toBe(true);
+    expect(within(phoneGroup()).getByRole("radio", { name: /^On this phone/ })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("button", { name: "See all five options and how to set them up" })).toBeInTheDocument();
+    await userEvent.click(changeRow());
+    expect(changeRow()).toHaveAttribute("aria-expanded", "false");
+    await waitFor(() => expect(folded().phone).toBeNull());
+  });
+
+  const READY_TITLES: { name: string; over: Partial<SpeechCardsProps>; expected: Partial<ReturnType<typeof inUse>> }[] = [
+    { name: "Whistle on this phone", over: PHONE_HUB, expected: { title: "Whistle by Cactus Compute", where: "On this phone" } },
+    { name: "Whistle on the host", over: WHISTLE_HUB, expected: { title: "Whistle by Cactus Compute", where: "On your host", status: "Ready. Whistle ca52876 is on your host." } },
+    { name: "Whistle on a crew's lead", over: { ...WHISTLE_HUB, hostName: "bluefin" }, expected: { title: "Whistle by Cactus Compute", where: "On your host, bluefin" } },
+    {
+      name: "your own command",
+      over: { whistle: READY, host: { provider: "local-cli", available: true, configuredBy: "file", switchable: LOCKED("terminal") } },
+      expected: { title: "Your own command", where: "On your host", status: "Ready. Your host found the command and can run it." },
+    },
+    {
+      name: "the ChatGPT subscription",
+      over: { whistle: READY, host: HOST_CODEX, hostStt: { provider: "codex", available: true } },
+      expected: { title: "ChatGPT subscription (OpenAI)", where: "On your host", status: "Ready. Codex on your host is signed in with ChatGPT." },
+    },
+    { name: "a speech service", over: { whistle: READY, host: HOST_SERVICE }, expected: { title: "A speech service", where: "On your host" } },
+  ];
+
+  it.each(READY_TITLES)("ready with $name: the card's title names it, and the rest is folded away", ({ over, expected }) => {
+    render(<SpeechCards {...props(over)} />);
+    expect(inUse()).toMatchObject(expected);
+    expect(changeRow()).toHaveAttribute("aria-expanded", "false");
+    expect(folded().phone).toBeNull();
+  });
+
+  it("nothing set up: the card says so, with no Set up line, and Change how speech works stands open", () => {
     render(<SpeechCards {...props()} />);
-    expect(facts()).toEqual({
-      engine: "Nothing",
-      runsOn: "Nothing",
-      setUp: "Not set up",
-      audio: "Nothing is recorded.",
+    expect(inUse()).toEqual({
+      title: "Speech is not set up",
+      where: "",
       status: "Not set up. Nothing turns your speech into text yet.",
+      audio: "Nothing is recorded.",
+      setUp: "",
     });
+    expect(changeRow()).toHaveAttribute("aria-expanded", "true");
     expect(within(phoneGroup()).getByRole("radio", { name: /^On your host/ })).toBeDisabled();
     expect(screen.getByText("Your host has no speech option yet. Choose one below.")).toBeInTheDocument();
+  });
+
+  it("not ready stands open, and a person may still fold it", async () => {
+    render(<SpeechCards {...props()} />);
+    await userEvent.click(changeRow());
+    expect(changeRow()).toHaveAttribute("aria-expanded", "false");
+    await waitFor(() => expect(folded().phone).toBeNull());
+  });
+
+  it("a read-only device with nothing ready: the banner, and the fold stands open", () => {
+    render(<SpeechCards {...props({ canWrite: false })} />);
+    expect(screen.getByText("This device can look but not change host settings. Ask the owner of your host.")).toBeInTheDocument();
+    expect(changeRow()).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("a browser that cannot record: the title still names the engine, the status says why, and the fold stands open", () => {
+    render(<SpeechCards {...props({ ...WHISTLE_HUB, recording: false })} />);
+    expect(inUse()).toMatchObject({ title: "Whistle by Cactus Compute", where: "On your host", status: "Not ready. This browser cannot record." });
+    expect(changeRow()).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("waits for the facts before it opens, and once open stays open when speech starts to work", () => {
+    const base = props({ ...WHISTLE_HUB, hostStt: null, host: HOST_NONE_OPEN, local: COPY, hostRead: false });
+    const { rerender } = render(<SpeechCards {...base} />);
+    // The host has not answered yet: nothing is decided, so nothing opens.
+    expect(changeRow()).toHaveAttribute("aria-expanded", "false");
+    rerender(<SpeechCards {...base} hostRead />);
+    expect(changeRow()).toHaveAttribute("aria-expanded", "true");
+    // The person chooses On this phone: speech works now, and the page does not fold under the finger.
+    rerender(<SpeechCards {...base} hostRead engine="phone" />);
+    expect(inUse().status).toBe("Ready. Whistle ca52876 is on this phone.");
+    expect(changeRow()).toHaveAttribute("aria-expanded", "true");
   });
 
   it("nothing on the host: Set up does both steps, and says so", async () => {
@@ -177,47 +278,42 @@ describe("the hub", () => {
   it("the host holds the model: Copy to this phone, and a read-only device may copy too", async () => {
     const p = props({ ...WHISTLE_HUB, canWrite: false });
     render(<SpeechCards {...p} />);
+    await userEvent.click(changeRow());
     await userEvent.click(screen.getByRole("button", { name: "Copy to this phone (16.9 MB)" }));
     expect(p.onPhoneDownload).toHaveBeenCalledTimes(1);
   });
 
-  it("the host runs Whistle: the facts name the engine, the host, who set it up, and the model the status rests on", () => {
+  it("the host runs Whistle: the card names it, the host, who set it up, and the model the status rests on", async () => {
     render(<SpeechCards {...props(WHISTLE_HUB)} />);
-    expect(facts()).toEqual({
-      engine: "Whistle on your host",
-      runsOn: "Your host",
-      setUp: "In a terminal on your host",
-      audio: "Goes to your host and stays there.",
+    expect(inUse()).toEqual({
+      title: "Whistle by Cactus Compute",
+      where: "On your host",
       status: "Ready. Whistle ca52876 is on your host.",
+      audio: "Goes to your host and stays there.",
+      setUp: "In a terminal on your host",
     });
     expect(within(statusCard()).queryByText("Works")).toBeNull();
+    await userEvent.click(changeRow());
     expect(within(phoneGroup()).getByRole("radio", { name: /^On your host/ })).toHaveAttribute("aria-checked", "true");
     expect(screen.getByText("Uses what your host uses: Whistle.")).toBeInTheDocument();
   });
 
-  it("this phone runs Whistle: the facts name this phone and the copy the status rests on", () => {
-    render(<SpeechCards {...props({ ...WHISTLE_HUB, engine: "phone", local: COPY })} />);
-    expect(facts()).toEqual({
-      engine: "Whistle on this phone",
-      runsOn: "This phone",
-      setUp: "Copied to this phone from your host",
-      audio: "Stays on this phone.",
-      status: "Ready. Whistle ca52876 is on this phone.",
-    });
+  it("this phone runs Whistle: the open fold shows the copy under On this phone", () => {
+    render(<SpeechCards {...props({ ...PHONE_HUB, initialOpen: true })} />);
     expect(within(phoneGroup()).getByRole("radio", { name: /^On this phone/ })).toHaveAttribute("aria-checked", "true");
     expect(screen.getByText("Ready. Version ca52876.")).toBeInTheDocument();
   });
 
-  it("paused: the phone's copy is gone, the choice stays, Collie does not switch, and Restore is the one action", async () => {
+  it("paused: the phone's copy is gone, the choice stays, Collie does not switch, and Restore is in the card", async () => {
     const p = props({ ...WHISTLE_HUB, engine: "phone", local: null });
     render(<SpeechCards {...p} />);
-    expect(fact("Status")).toBe("Paused. This phone's copy of Whistle is gone.");
-    expect(fact("Set up")).toBe("Not set up");
+    expect(inUse()).toMatchObject({ title: "Whistle by Cactus Compute", where: "On this phone", status: "Paused. This phone's copy of Whistle is gone.", setUp: "" });
     expect(statusExtra()).toMatch(/Collie does not switch to your host by itself\. Restore the copy/);
+    expect(changeRow()).toHaveAttribute("aria-expanded", "true");
     expect(within(phoneGroup()).getByRole("radio", { name: /^On this phone/ })).toHaveAttribute("aria-checked", "true");
     // The phone's card offers the copy as it would unchosen: its rows do not follow the choice.
     expect(screen.getByRole("button", { name: "Copy to this phone (16.9 MB)" })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Restore (16.9 MB)" }));
+    await userEvent.click(within(statusCard()).getByRole("button", { name: "Restore (16.9 MB)" }));
     expect(p.onPhoneDownload).toHaveBeenCalledTimes(1);
     // Choosing the host is the person's other way out, and it is theirs to take.
     await userEvent.click(within(phoneGroup()).getByRole("radio", { name: /^On your host/ }));
@@ -230,58 +326,58 @@ describe("the hub", () => {
     expect(screen.queryByRole("button", { name: /^Restore/ })).toBeNull();
   });
 
-  it("the host's option does not work: what the host found, and Fix opens Host speech", async () => {
+  it("the host's option does not work: what the host found, Fix in the card, and the fold stands open", async () => {
     const p = props({
       ...WHISTLE_HUB,
       host: { ...HOST_CODEX, available: false, reason: "codex is not signed in", switchable: { ...OPEN_ALL, codex: { ok: false, reason: "codex-signed-out" } } },
     });
     render(<SpeechCards {...p} />);
-    expect(fact("Status")).toBe("Not ready. Codex is signed out on your host.");
+    expect(inUse()).toMatchObject({ title: "ChatGPT subscription (OpenAI)", status: "Not ready. Codex is signed out on your host." });
+    expect(changeRow()).toHaveAttribute("aria-expanded", "true");
     expect(screen.getAllByText("Not working").length).toBeGreaterThan(0);
-    await userEvent.click(screen.getByRole("button", { name: "Fix" }));
+    await userEvent.click(within(statusCard()).getByRole("button", { name: "Fix" }));
     expect(p.onOpenPage).toHaveBeenCalledWith("host");
   });
 
-  const STATUS_CASES: { name: string; host: SttHostStatus; expected: Partial<ReturnType<typeof facts>> }[] = [
-    { name: "your own command, found", host: { provider: "local-cli", available: true, configuredBy: "file", switchable: LOCKED("terminal") }, expected: { engine: "Your own command", setUp: "In a terminal on your host", status: "Ready. Your host found the command and can run it." } },
-    { name: "your own command, not found", host: { provider: "local-cli", available: false, reason: "the local transcription command was not found", configuredBy: "file", switchable: LOCKED("terminal") }, expected: { engine: "Your own command", setUp: "In a terminal on your host", status: "Not ready. Your host cannot find or run the command." } },
-    { name: "a speech service", host: HOST_SERVICE, expected: { engine: "A speech service", setUp: "In a terminal on your host", status: "Set up. Your host has the service's address. Collie tries the service only when you speak." } },
-    { name: "ChatGPT, signed in", host: HOST_CODEX, expected: { engine: "ChatGPT subscription", setUp: "In a terminal on your host", status: "Ready. Codex on your host is signed in with ChatGPT." } },
-    { name: "a provider this build does not know", host: { ...HOST_SERVICE, provider: "future-stt", available: false, reason: "it is resting" }, expected: { engine: "future-stt", setUp: "In a terminal on your host", status: "Not ready. Your host says: it is resting" } },
-    { name: "Whistle named by the environment", host: { ...HOST_WHISTLE, configuredBy: "env", switchable: LOCKED("env") }, expected: { engine: "Whistle on your host", setUp: "By your host's environment", status: "Ready. Whistle ca52876 is on your host." } },
+  const STATUS_CASES: { name: string; host: SttHostStatus; expected: Partial<ReturnType<typeof inUse>> }[] = [
+    { name: "your own command, found", host: { provider: "local-cli", available: true, configuredBy: "file", switchable: LOCKED("terminal") }, expected: { title: "Your own command", setUp: "In a terminal on your host", status: "Ready. Your host found the command and can run it." } },
+    { name: "your own command, not found", host: { provider: "local-cli", available: false, reason: "the local transcription command was not found", configuredBy: "file", switchable: LOCKED("terminal") }, expected: { title: "Your own command", setUp: "In a terminal on your host", status: "Not ready. Your host cannot find or run the command." } },
+    { name: "a speech service", host: HOST_SERVICE, expected: { title: "A speech service", setUp: "In a terminal on your host", status: "Set up. Your host has the service's address. Collie tries the service only when you speak." } },
+    { name: "ChatGPT, signed in", host: HOST_CODEX, expected: { title: "ChatGPT subscription (OpenAI)", setUp: "In a terminal on your host", status: "Ready. Codex on your host is signed in with ChatGPT." } },
+    { name: "a provider this build does not know", host: { ...HOST_SERVICE, provider: "future-stt", available: false, reason: "it is resting" }, expected: { title: "future-stt", setUp: "In a terminal on your host", status: "Not ready. Your host says: it is resting" } },
+    { name: "Whistle named by the environment", host: { ...HOST_WHISTLE, configuredBy: "env", switchable: LOCKED("env") }, expected: { title: "Whistle by Cactus Compute", setUp: "By your host's environment", status: "Ready. Whistle ca52876 is on your host." } },
   ];
 
-  it.each(STATUS_CASES)("the status card for $name says what it rests on, never a bare Works", ({ host, expected }) => {
+  it.each(STATUS_CASES)("the card for $name says what its status rests on, never a bare Works", ({ host, expected }) => {
     render(<SpeechCards {...props({ whistle: READY, host })} />);
-    expect(facts()).toMatchObject({ runsOn: "Your host", ...expected });
+    expect(inUse()).toMatchObject({ where: "On your host", ...expected });
   });
 
   it("names the device and the time when the host's option was set from Settings, and the host by name in a crew", () => {
     const changedAt = "2026-10-11T09:41:00.000Z";
     render(<SpeechCards {...props({ ...WHISTLE_HUB, host: { ...HOST_WHISTLE, changedBy: "Pixel 8", changedAt }, hostName: "bluefin" })} />);
-    expect(fact("Set up")).toBe(`From Settings by Pixel 8, ${dateTime(Date.parse(changedAt))}`);
-    expect(fact("Runs on")).toBe("Your host, bluefin");
+    expect(inUse()).toMatchObject({ where: "On your host, bluefin", setUp: `From Settings by Pixel 8, ${dateTime(Date.parse(changedAt))}` });
   });
 
-  it("a tap between the two choices changes words and paint, never the rows: both cards and the status card keep their content", () => {
-    const base = props({ ...WHISTLE_HUB, local: COPY });
+  it("a tap between the two choices changes words and paint, never the rows: both cards and the in-use card keep their content", () => {
+    const base = props({ ...WHISTLE_HUB, local: COPY, initialOpen: true });
     const { rerender } = render(<SpeechCards {...base} />);
     const phoneCard = () => within(phoneGroup()).getByRole("radio", { name: /^On this phone/ }).closest<HTMLElement>('[data-slot="card"]')!;
     const hostCard = () => within(phoneGroup()).getByRole("radio", { name: /^On your host/ }).closest<HTMLElement>('[data-slot="card"]')!;
     const content = (el: HTMLElement) => ({ text: el.textContent, nodes: el.querySelectorAll("*").length });
     const before = { status: content(statusCard()), phone: content(phoneCard()), host: content(hostCard()) };
-    expect(fact("Engine")).toBe("Whistle on your host");
+    expect(inUse().where).toBe("On your host");
     expect(hostCard()).toHaveAttribute("data-selected");
 
     rerender(<SpeechCards {...base} engine="phone" />);
-    expect(fact("Engine")).toBe("Whistle on this phone");
+    expect(inUse().where).toBe("On this phone");
     expect(phoneCard()).toHaveAttribute("data-selected");
     expect(hostCard()).not.toHaveAttribute("data-selected");
     expect({ status: content(statusCard()), phone: content(phoneCard()), host: content(hostCard()) }).toEqual(before);
   });
 
   it("the host's zone opens all five options and their steps from one clear row", async () => {
-    const p = props(WHISTLE_HUB);
+    const p = props({ ...WHISTLE_HUB, initialOpen: true });
     render(<SpeechCards {...p} />);
     expect(screen.queryByText(/^Options: /)).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "See all five options and how to set them up" }));
@@ -289,13 +385,14 @@ describe("the hub", () => {
   });
 
   it("a browser that cannot run Whistle: On this phone is off with the reason, and the host is in force", () => {
-    render(<SpeechCards {...props({ ...WHISTLE_HUB, engine: "phone", local: COPY, block: "insecure" })} />);
+    render(<SpeechCards {...props({ ...WHISTLE_HUB, engine: "phone", local: COPY, block: "insecure", initialOpen: true })} />);
+    expect(inUse().where).toBe("On your host");
     expect(within(phoneGroup()).getByRole("radio", { name: /^On this phone/ })).toBeDisabled();
     expect(within(phoneGroup()).getByRole("radio", { name: /^On your host/ })).toHaveAttribute("aria-checked", "true");
   });
 
   it("a tap on a choice reports it; a tap on the chosen one does nothing", async () => {
-    const p = props({ ...WHISTLE_HUB, local: COPY });
+    const p = props({ ...WHISTLE_HUB, local: COPY, initialOpen: true });
     render(<SpeechCards {...p} />);
     await userEvent.click(within(phoneGroup()).getByRole("radio", { name: /^On your host/ }));
     expect(p.onEngine).not.toHaveBeenCalled();
@@ -304,7 +401,7 @@ describe("the hub", () => {
   });
 
   it("an info button opens the five facts, titled with the option, and does not choose it", async () => {
-    const p = props({ ...WHISTLE_HUB, local: COPY });
+    const p = props({ ...WHISTLE_HUB, local: COPY, initialOpen: true });
     render(<SpeechCards {...p} />);
     await userEvent.click(screen.getByRole("button", { name: "About On this phone" }));
     const sheet = await screen.findByRole("dialog", { name: "On this phone" });
@@ -316,7 +413,7 @@ describe("the hub", () => {
   });
 
   it("On your host's facts are those of what the host uses: ChatGPT leaves the network, and says so in words", async () => {
-    render(<SpeechCards {...props({ host: HOST_CODEX, hostStt: { provider: "codex", available: true } })} />);
+    render(<SpeechCards {...props({ host: HOST_CODEX, hostStt: { provider: "codex", available: true }, initialOpen: true })} />);
     await userEvent.click(screen.getByRole("button", { name: "About On your host" }));
     const sheet = await screen.findByRole("dialog", { name: "On your host" });
     expect(within(sheet).getByText("Goes to your host, then to ChatGPT (OpenAI).")).toBeInTheDocument();
@@ -326,7 +423,7 @@ describe("the hub", () => {
 
   it("the host's row names the option, where audio goes and who changed it, and opens Host speech", async () => {
     const changedAt = "2026-10-11T09:41:00.000Z";
-    const p = props({ ...WHISTLE_HUB, host: { ...HOST_WHISTLE, changedBy: "Pixel 8", changedAt } });
+    const p = props({ ...WHISTLE_HUB, host: { ...HOST_WHISTLE, changedBy: "Pixel 8", changedAt }, initialOpen: true });
     render(<SpeechCards {...p} />);
     const row = screen.getByRole("button", { name: /^Whistle on your host/ });
     expect(within(row).getByText("Goes to your host and stays there.")).toBeInTheDocument();
@@ -336,7 +433,7 @@ describe("the hub", () => {
   });
 
   it("says nothing about who changed it when the host recorded nobody", () => {
-    render(<SpeechCards {...props(WHISTLE_HUB)} />);
+    render(<SpeechCards {...props({ ...WHISTLE_HUB, initialOpen: true })} />);
     expect(screen.queryByText(/Last changed by/)).toBeNull();
   });
 
@@ -344,10 +441,11 @@ describe("the hub", () => {
     const p = props({ ...WHISTLE_HUB, local: COPY, canWrite: false });
     render(<SpeechCards {...p} />);
     expect(screen.getByText("This device can look but not change host settings. Ask the owner of your host.")).toBeInTheDocument();
-    await userEvent.click(within(phoneGroup()).getByRole("radio", { name: /^On this phone/ }));
-    expect(p.onEngine).toHaveBeenCalledWith("phone");
     await userEvent.click(screen.getByRole("switch", { name: "Hands-free voice: send transcript immediately" }));
     expect(p.onHandsFree).toHaveBeenCalledWith(true);
+    await userEvent.click(changeRow());
+    await userEvent.click(within(phoneGroup()).getByRole("radio", { name: /^On this phone/ }));
+    expect(p.onEngine).toHaveBeenCalledWith("phone");
   });
 
   it("hands-free with ChatGPT names the provider the unread text comes back from", () => {
@@ -363,7 +461,7 @@ describe("the hub", () => {
   });
 
   it("the model's row carries its state in words, and opens Whistle model", async () => {
-    const p = props({ ...WHISTLE_HUB, local: COPY });
+    const p = props({ ...PHONE_HUB, initialOpen: true });
     render(<SpeechCards {...p} />);
     const row = screen.getByRole("button", { name: /Whistle model/ });
     expect(within(row).getByText("Both ready")).toBeInTheDocument();
@@ -372,15 +470,95 @@ describe("the hub", () => {
     expect(p.onOpenPage).toHaveBeenCalledWith("model");
   });
 
-  it("keeps every button at least 44px tall", () => {
-    for (const over of [{}, WHISTLE_HUB, { ...WHISTLE_HUB, engine: "phone" as const }]) {
+  it("keeps every button at least 44px tall, folded and open", () => {
+    for (const over of [{}, WHISTLE_HUB, PHONE_HUB, { ...PHONE_HUB, initialOpen: true }, { ...WHISTLE_HUB, engine: "phone" as const }]) {
       const { unmount } = render(<SpeechCards {...props(over)} />);
       for (const button of screen.getAllByRole("button")) expect(button.className).toMatch(/\bh-11\b|\bmin-h-11\b|\bsize-11\b/);
-      for (const radio of screen.getAllByRole("radio")) expect(radio.className).toMatch(/\bmin-h-11\b/);
+      for (const radio of screen.queryAllByRole("radio")) expect(radio.className).toMatch(/\bmin-h-11\b/);
       unmount();
     }
   });
 });
+
+// ── Set up speech on this phone ─────────────────────────────────────────────────────────────────
+
+describe("the hub's guided setup", () => {
+  const guidedButton = () => within(statusCard()).queryByRole("button", { name: "Set up speech on this phone" });
+
+  it("not set up on a device that can run the engine: the card's action is Set up speech on this phone", async () => {
+    const p = props();
+    render(<SpeechCards {...p} />);
+    await userEvent.click(guidedButton()!);
+    expect(p.onGuidedSetup).toHaveBeenCalledTimes(1);
+  });
+
+  it("is not offered while speech works, on a paused phone (Restore owns it), or where the browser cannot run the engine", () => {
+    for (const over of [PHONE_HUB, WHISTLE_HUB, { ...WHISTLE_HUB, engine: "phone" as const }, { block: "insecure" as const }, { recording: false }]) {
+      const { unmount } = render(<SpeechCards {...props(over)} />);
+      expect(guidedButton()).toBeNull();
+      unmount();
+    }
+  });
+
+  it("a host option that does not work: Set up speech on this phone, and Fix beside it", () => {
+    render(
+      <SpeechCards
+        {...props({ ...WHISTLE_HUB, host: { ...HOST_CODEX, available: false, switchable: { ...OPEN_ALL, codex: { ok: false, reason: "codex-signed-out" } } } })}
+      />,
+    );
+    expect(guidedButton()).toBeInTheDocument();
+    expect(within(statusCard()).getByRole("button", { name: "Fix" })).toBeInTheDocument();
+  });
+
+  it("the host's phase: one display that names it, with the host's bytes", () => {
+    render(<SpeechCards {...props({ whistle: { ...ABSENT, state: "downloading", received: 7_400_000 }, guided: { kind: "running" } })} />);
+    const card = statusCard();
+    expect(within(card).getByText("Downloading to your host…", { selector: "[data-active] p" })).toBeInTheDocument();
+    expect(within(card).getByRole("progressbar", { name: "Downloading to your host…" })).toHaveAttribute("aria-valuenow", "44");
+    expect(within(card).getByText("7.4 MB of 16.9 MB")).toBeInTheDocument();
+  });
+
+  it("this phone's phase: the same display names the copy, with this phone's bytes", () => {
+    render(<SpeechCards {...props({ whistle: READY, guided: { kind: "running" }, copy: { received: BYTES / 4, total: BYTES } })} />);
+    expect(within(statusCard()).getByRole("progressbar", { name: "Copying to this phone…" })).toHaveAttribute("aria-valuenow", "25");
+  });
+
+  it("a failure stops the run: the phase's own words stand in the card, and Try again runs it again", async () => {
+    const p = props({ whistle: READY, guided: { kind: "failed", phase: "copy", message: "The host is busy copying the model to other phones. Try again shortly." } });
+    render(<SpeechCards {...p} />);
+    expect(within(statusCard()).getByText("The host is busy copying the model to other phones. Try again shortly.")).toBeInTheDocument();
+    expect(guidedButton()).toBeNull();
+    await userEvent.click(within(statusCard()).getByRole("button", { name: "Try again" }));
+    expect(p.onGuidedSetup).toHaveBeenCalledTimes(1);
+  });
+
+  it("a read-only device: copies when the host holds the model, and reads the one sentence when it does not", () => {
+    const { unmount } = render(<SpeechCards {...props({ whistle: READY, host: HOST_NONE_OPEN, canWrite: false })} />);
+    expect(guidedButton()).toBeInTheDocument();
+    unmount();
+    render(<SpeechCards {...props({ canWrite: false })} />);
+    expect(guidedButton()).toBeNull();
+    expect(within(statusCard()).getByText("Needs Whistle on your host first. Ask the owner of your host.")).toBeInTheDocument();
+  });
+
+  it("On this phone is Recommended, beside In use when chosen; On your host is not", () => {
+    render(<SpeechCards {...props({ ...PHONE_HUB, initialOpen: true })} />);
+    const phone = within(phoneGroup()).getByRole("radio", { name: /^On this phone/ });
+    expect(within(phone).getByText("Recommended")).toBeInTheDocument();
+    expect(within(phone).getByText("In use")).toBeInTheDocument();
+    expect(within(within(phoneGroup()).getByRole("radio", { name: /^On your host/ })).queryByText("Recommended")).toBeNull();
+  });
+
+  it("says what a host is where the hub first names it, and as Host speech's first sentence", () => {
+    const { unmount } = render(<SpeechCards {...props()} />);
+    const host = within(phoneGroup()).getByRole("radio", { name: /^On your host/ });
+    expect(within(host).getByText("Your host is the computer running your agents.")).toBeInTheDocument();
+    unmount();
+    render(<SpeechCards {...props({ page: "host" })} />);
+    expect(screen.getByText(/^Your host is the computer running your agents\. Your host turns audio into text/)).toBeInTheDocument();
+  });
+});
+
 
 // ── Host speech ─────────────────────────────────────────────────────────────────────────────────
 
@@ -883,9 +1061,17 @@ describe("SpeechControl", () => {
   it("the host's row opens Host speech, and the model's row opens Whistle model", async () => {
     server.use(config(READY, STT_WHISTLE), hostStatus(HOST_WHISTLE));
     const { router } = renderControl();
+    // Whistle works on the host, so the rows wait behind Change how speech works, closed on every visit.
+    const change = await screen.findByRole("button", { name: "Change how speech works" });
+    await waitFor(() => expect(screen.getByRole("heading", { level: 2, name: "Whistle by Cactus Compute" })).toBeInTheDocument());
+    expect(change).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(change);
     await userEvent.click(await screen.findByRole("button", { name: /^Whistle on your host/ }));
     expect(router.state.location.pathname).toBe("/settings/voice/host");
     await router.navigate("/settings/voice");
+    const again = await screen.findByRole("button", { name: "Change how speech works" });
+    expect(again).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(again);
     await userEvent.click(await screen.findByRole("button", { name: /Whistle model/ }));
     expect(router.state.location.pathname).toBe("/settings/voice/model");
   });
@@ -1061,10 +1247,68 @@ describe("SpeechControl", () => {
     expect(screen.getByRole("button", { name: "Copy to this phone (16.9 MB)" })).toBeEnabled();
   });
 
+  it("Set up speech on this phone: the host's download, then this phone's copy, then On this phone chosen", async () => {
+    let polls = 0;
+    server.use(
+      config(ABSENT),
+      hostStatus(HOST_NONE),
+      http.post("/api/stt/whistle", () => HttpResponse.json({ ...ABSENT, state: "downloading", received: 0 }, { status: 202 })),
+      http.get("/api/stt/whistle", () => {
+        polls += 1;
+        return HttpResponse.json(polls < 2 ? { ...ABSENT, state: "downloading", received: BYTES / 2 } : READY);
+      }),
+    );
+    vi.mocked(sttModel.downloadModel).mockImplementation(async (_status, onProgress) => {
+      onProgress(BYTES / 2, BYTES);
+      await new Promise((r) => setTimeout(r, 30));
+      return { ...COPY, persisted: true };
+    });
+    renderControl();
+    await userEvent.click(await screen.findByRole("button", { name: "Set up speech on this phone" }));
+    expect(await screen.findByRole("progressbar", { name: "Downloading to your host…" })).toBeInTheDocument();
+    expect(sttEnginePreference()).toBe("host");
+    await waitFor(() => expect(sttModel.downloadModel).toHaveBeenCalledTimes(1), { timeout: 5000 });
+    await waitFor(() => expect(sttEnginePreference()).toBe("phone"));
+    // The copy it made is in force at once: the card says Ready, never Paused in between.
+    expect(await screen.findByText("Ready. Whistle ca52876 is on this phone.")).toBeInTheDocument();
+    expect(screen.queryByText(/^Paused\./)).toBeNull();
+  }, 12000);
+
+  it("Set up speech on this phone stops where the copy fails, says why, and Try again finishes it", async () => {
+    server.use(config(READY), hostStatus(HOST_NONE_OPEN));
+    vi.mocked(sttModel.downloadModel)
+      .mockRejectedValueOnce(new sttModel.SttModelError("busy"))
+      .mockResolvedValueOnce({ ...COPY, persisted: true });
+    renderControl();
+    await userEvent.click(await screen.findByRole("button", { name: "Set up speech on this phone" }));
+    const card = screen.getByRole("region", { name: "When you press the mic" });
+    expect(await within(card).findByText("The host is busy copying the model to other phones. Try again shortly.")).toBeInTheDocument();
+    expect(sttEnginePreference()).toBe("host");
+    await userEvent.click(within(card).getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(sttEnginePreference()).toBe("phone"));
+    expect(sttModel.downloadModel).toHaveBeenCalledTimes(2);
+  });
+
+  it("Set up speech on this phone stops where the host's download is refused, and never copies", async () => {
+    server.use(
+      config(ABSENT),
+      hostStatus(HOST_NONE),
+      http.post("/api/stt/whistle", () => HttpResponse.json({ error: "busy", code: "stt.whistle_busy" }, { status: 409 })),
+    );
+    renderControl();
+    await userEvent.click(await screen.findByRole("button", { name: "Set up speech on this phone" }));
+    const card = screen.getByRole("region", { name: "When you press the mic" });
+    expect(await within(card).findByRole("button", { name: "Try again" })).toBeInTheDocument();
+    expect(within(card).queryByRole("progressbar")).toBeNull();
+    expect(sttModel.downloadModel).not.toHaveBeenCalled();
+    expect(sttEnginePreference()).toBe("host");
+  });
+
   it("stores this phone's choice on the device", async () => {
     server.use(config({ ...READY, hostEngine: true }, STT_WHISTLE), hostStatus(HOST_WHISTLE));
     vi.mocked(sttModel.storedModel).mockResolvedValue(COPY);
     renderControl();
+    await userEvent.click(await screen.findByRole("button", { name: "Change how speech works" }));
     const phone = await screen.findByRole("radio", { name: /^On this phone/ });
     await waitFor(() => expect(phone).toBeEnabled());
     await userEvent.click(phone);
@@ -1078,7 +1322,8 @@ describe("SpeechControl", () => {
     server.use(config({ ...READY, hostEngine: true }, STT_WHISTLE), hostStatus(HOST_WHISTLE));
     renderControl();
     expect(await screen.findByText("Paused. This phone's copy of Whistle is gone.")).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: /^On this phone/ })).toHaveAttribute("aria-checked", "true");
+    // Paused is something to do, so the fold stands open on its own.
+    expect(await screen.findByRole("radio", { name: /^On this phone/ })).toHaveAttribute("aria-checked", "true");
     expect(sttEnginePreference()).toBe("phone");
   });
 });

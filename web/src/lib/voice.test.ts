@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { SttHostStatus, WhistleStatus } from "@/lib/types";
 import {
+  guidedPlan,
   askFor,
   codexStateOf,
   hostOptionOf,
@@ -207,5 +208,31 @@ describe("setupSteps: how to set up each host option, and which step is next", (
     expect(codexStateOf(sw({ ok: false, reason: "codex-missing" }))).toBe("missing");
     expect(codexStateOf(sw({ ok: false, reason: "terminal" }))).toBeNull();
     expect(codexStateOf(null)).toBeNull();
+  });
+});
+
+describe("guidedPlan: what one tap of Set up speech on this phone does", () => {
+  const NOT_SET_UP = { kind: "setup", state: "setup", reach: null } as const;
+  const base = { status: NOT_SET_UP, block: null, recording: true, whistle: READY, local: null, canWrite: true };
+  const ABSENT: WhistleStatus = { ...READY, state: "absent", sha256: undefined };
+
+  it("walks from where things are: choose, copy, or download then copy", () => {
+    expect(guidedPlan({ ...base, local: COPY })).toBe("select");
+    expect(guidedPlan(base)).toBe("copy");
+    expect(guidedPlan({ ...base, whistle: ABSENT })).toBe("both");
+  });
+
+  it("a device that may not write copies a model the host holds, and only reads a sentence when it does not", () => {
+    expect(guidedPlan({ ...base, canWrite: false })).toBe("copy");
+    expect(guidedPlan({ ...base, whistle: ABSENT, canWrite: false })).toBe("needs-host");
+  });
+
+  it("is not offered while speech works, while paused, where the engine cannot run, or before the copy is looked for", () => {
+    expect(guidedPlan({ ...base, status: { kind: "phone", state: "works", reach: "phone" } })).toBeNull();
+    expect(guidedPlan({ ...base, status: { kind: "paused", state: "paused", reach: null, action: "restore" } })).toBeNull();
+    expect(guidedPlan({ ...base, block: "insecure" })).toBeNull();
+    expect(guidedPlan({ ...base, recording: false })).toBeNull();
+    expect(guidedPlan({ ...base, local: undefined })).toBeNull();
+    expect(guidedPlan({ ...base, whistle: null })).toBeNull();
   });
 });

@@ -406,13 +406,35 @@ const setUpOnPhoneButton = (page: Page) => page.getByRole("button", { name: /^Co
 const phoneIsSetUp = (page: Page) => page.getByText(en["settings.voice.copy.ready"].replace("{version}", "ca52876"), { exact: true });
 
 /**
- * The status card's words as they read now. The card holds the words of both choices in `OneOf`
+ * The in-use card's words as they read now. The card holds the words of both choices in `OneOf`
  * slots and fades the other one to opacity 0, which Playwright still counts as visible, so a check
  * of what the card SAYS reads the front layers only.
  */
 const statusShown = (page: Page) => page.getByRole("region", { name: en["settings.voice.status.label"] }).locator("[data-active]");
 
-/** The Status row while this phone runs Whistle from the copy the host named. */
+/** The in-use card's title while Whistle is in use, on this phone or on the host. */
+const whistleTitle = (page: Page) =>
+  page.getByRole("region", { name: en["settings.voice.status.label"] }).getByRole("heading", { level: 2, name: en["settings.voice.inUse.whistle"] });
+
+/** The one row that folds away everything that changes how speech works. */
+const changeRow = (page: Page) => page.getByRole("button", { name: en["settings.voice.change"] });
+
+/**
+ * Open "Change how speech works" on a hub where speech works, so it starts closed. Only for that
+ * case: a hub with something to do opens by itself once the host has answered, and a tap racing
+ * that would fold it again.
+ */
+async function openChange(page: Page): Promise<void> {
+  await expect(changeRow(page)).toHaveAttribute("aria-expanded", "false");
+  await changeRow(page).click();
+  await expect(changeRow(page)).toHaveAttribute("aria-expanded", "true");
+  // Wait for the fold to finish opening. While it glides its box clips, and a click that scrolls a
+  // control inside into view would scroll the clipping box itself, leaving the rows offset after.
+  const fold = page.locator('[data-slot="collapse"]', { has: page.getByRole("heading", { name: en["settings.voice.phone.label"] }) });
+  await expect(fold).toHaveCSS("overflow-y", "visible");
+}
+
+/** The status line while this phone runs Whistle from the copy the host named. */
 const phoneReady = en["settings.voice.state.ready"].replace("{detail}", en["settings.voice.ok.phone"].replace("{version}", "ca52876"));
 
 /** Tap Copy to this phone on the hub and wait for the copy to be kept. */
@@ -426,6 +448,8 @@ async function setUpOnPhone(page: Page, timeout = 30_000): Promise<void> {
 test("Download to host walks absent, downloading, ready; Whistle on Host speech asks for every device, then turns it on", async ({ page }) => {
   const world = freshWorld({ whistle: absent() });
   await installSpeechBridge(page, world);
+  // Headless WebKit cannot record; the hub would rightly stand open with that to do, at the end.
+  await installFakeMicrophone(page);
   await serveUnderBridgePolicies(page);
   await openModelPage(page);
 
@@ -469,8 +493,11 @@ test("Download to host walks absent, downloading, ready; Whistle on Host speech 
   expect(world.writes.at(-1)).toEqual({ method: "PUT", path: "/api/stt/host", body: { provider: "whistle" } });
   expect(world.stt?.provider).toBe("whistle");
 
-  // The microphone follows the option: back on the hub, On your host names Whistle.
+  // The microphone follows the option: back on the hub, the card names Whistle and speech works, so
+  // the rest is folded away; opened, On your host names Whistle.
   await page.getByRole("button", { name: "Back" }).click();
+  await expect(whistleTitle(page)).toBeVisible();
+  await openChange(page);
   await expect(page.getByText(en["settings.voice.choice.host.what"].replace("{option}", "Whistle"))).toBeVisible();
 });
 
@@ -508,6 +535,28 @@ test("the phone engine: copy to this phone, then choose On this phone, and the c
   await expect(phoneStep.getByRole("link", { name: "Version ca52876 on Hugging Face" })).toBeVisible();
 });
 
+test("Set up speech on this phone: one tap copies the model and chooses On this phone", async ({ page }) => {
+  // The host holds the model and has no option yet: speech does not work, and this phone can run it.
+  const world = freshWorld({ whistle: ready() });
+  await installSpeechBridge(page, world);
+  await installDigestShim(page);
+  await installFakeMicrophone(page);
+  await serveUnderBridgePolicies(page);
+  await openSpeechSettings(page);
+
+  const card = page.getByRole("region", { name: en["settings.voice.status.label"] });
+  await expect(card.getByRole("heading", { level: 2, name: en["settings.voice.inUse.none"] })).toBeVisible();
+  expect(world.modelGets).toBe(0);
+  await card.getByRole("button", { name: en["settings.voice.guided.action"] }).click();
+
+  // The copy, then the choice: the card names Whistle on this phone, ready, with no second tap.
+  await expect(statusShown(page).getByText(phoneReady)).toBeVisible({ timeout: 30_000 });
+  await expect(whistleTitle(page)).toBeVisible();
+  expect(world.modelGets).toBe(1);
+  await expect(phoneChoice(page)).toHaveAttribute("aria-checked", "true");
+  expect(await page.evaluate(() => localStorage.getItem("collie:stt-engine:v1"))).toBe("phone");
+});
+
 test("a tap between On this phone and On your host moves nothing on the hub", async ({ page }) => {
   // Both choices open: the host runs Whistle, and this phone holds its own copy.
   const world = freshWorld({ whistle: ready({ hostEngine: true }), stt: WHISTLE_HOST_STT });
@@ -516,14 +565,22 @@ test("a tap between On this phone and On your host moves nothing on the hub", as
   await installFakeMicrophone(page);
   await serveUnderBridgePolicies(page);
   await openSpeechSettings(page);
+  // The host's Whistle works, so the hub starts folded: the card, hands-free, and one closed row.
+  await expect(whistleTitle(page)).toBeVisible();
+  await expect(phoneChoice(page)).toHaveCount(0);
+  await openChange(page);
   await setUpOnPhone(page);
   const phone = phoneChoice(page);
   const host = hostChoice(page);
   await expect(phone).toBeEnabled();
   await expect(host).toHaveAttribute("aria-checked", "true");
 
-  // The top and the height of what sits below the status card: the host's zone heading, and each of
-  // this phone's two option cards. Read after two frames, so a late layout would be caught too.
+  // The top and the height of what sits behind Change how speech works: the host's zone heading, and
+  // each of this phone's two option cards. Read after two frames, so a late layout would be caught
+  // too. Each top is read from the in-use card's top, the first box on the page: the open fold makes
+  // the page taller than a phone, and a tap scrolls its radio into view first, which moves every box
+  // on screen alike and is not a shift. A box that grew above a mark still moves it from there.
+  const anchor = page.getByRole("region", { name: en["settings.voice.status.label"] });
   const marks = {
     heading: page.getByRole("heading", { name: en["settings.voice.host.label"] }),
     phoneCard: page.locator('[data-slot="card"]', { has: phone }),
@@ -532,10 +589,12 @@ test("a tap between On this phone and On your host moves nothing on the hub", as
   const measure = async () => {
     await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
     const out: Record<string, { top: number; height: number }> = {};
+    const origin = await anchor.boundingBox();
+    if (origin === null) throw new Error("the in-use card has no box");
     for (const [name, locator] of Object.entries(marks)) {
       const box = await locator.boundingBox();
       if (box === null) throw new Error(`${name} has no box`);
-      out[name] = { top: box.y, height: box.height };
+      out[name] = { top: box.y - origin.y, height: box.height };
     }
     return out;
   };

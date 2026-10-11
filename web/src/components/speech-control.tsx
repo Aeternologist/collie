@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import {
   AudioLines,
   ChevronDown,
@@ -10,6 +10,7 @@ import {
   Mic,
   RefreshCw,
   Server,
+  SlidersHorizontal,
   Smartphone,
   Trash2,
   TriangleAlert,
@@ -35,6 +36,7 @@ import {
   InfoButton,
   InUseBadge,
   OptionCard,
+  RecommendedBadge,
   optionName,
   ReadOnlyHostBanner,
   Ring,
@@ -90,6 +92,7 @@ import {
   choiceOf,
   codexStateOf,
   currentHostProvider,
+  guidedPlan,
   HOST_OPTIONS,
   hostNotReady,
   hostOptionOf,
@@ -102,6 +105,7 @@ import {
   tierOf,
   voiceStatus,
   type EngineFact,
+  type GuidedPlan,
   type HostLock,
   type HostOption,
   type ModelChip,
@@ -117,10 +121,12 @@ import { WHISTLE_MODEL_BYTES } from "@/stt/pins";
 // SETTINGS → VOICE: WHERE YOUR SPEECH BECOMES TEXT (ADR 0096, ADR 0097).
 //
 // A hub and two pages below it. The hub answers the question a person opens Voice to ask, "what
-// happens when I press the mic", and holds this phone's own choice in full: On this phone or On
-// your host. The host's option reaches every device, so it is ONE row on the hub with a way in; its
-// five options live on Host speech, one level down, where a change is a deliberate trip. The model's
-// two copies (on the host, on this phone) live on Whistle model, the other page.
+// happens when I press the mic", with the engine in use as the title of its first card. Under it,
+// hands-free, then "Change how speech works", which folds away the rest while speech works and
+// stands open while it does not: this phone's own choice in full (On this phone or On your host),
+// the host's option, and the model. The host's option reaches every device, so it is ONE row with a
+// way in; its five options live on Host speech, one level down, where a change is a deliberate
+// trip. The model's two copies (on the host, on this phone) live on Whistle model, the other page.
 //
 // THE TWO SCOPES ARE THE STRUCTURE. "Only this phone" and "Every device on your host" are the two
 // section labels the hub has, so a person always knows which of the two a tap reaches. A device
@@ -147,10 +153,10 @@ import { WHISTLE_MODEL_BYTES } from "@/stt/pins";
 // both halves share are in components/voice-parts.tsx; the rules behind the words in lib/voice.ts.
 //
 // THE BOX DOES NOT MOVE ON A STATE (DESIGN.md §2). A download's bar takes the place of the button
-// that started it, and "How to set up" opens through `Collapse`. A tap between this phone's two
-// choices repaints and never re-lays-out: both cards render the same rows either way, the selected
-// look is paint (`OptionCard`), and the status card holds the words of both choices in `OneOf`
-// slots. web/e2e/stt-phone.spec.ts measures it.
+// that started it, and "How to set up" and "Change how speech works" open through `Collapse`. A tap
+// between this phone's two choices repaints and never re-lays-out: both cards render the same rows
+// either way, the selected look is paint (`OptionCard`), and the in-use card holds the words of both
+// choices in `OneOf` slots. web/e2e/stt-phone.spec.ts measures it.
 
 /** Cactus Compute made Whistle. The credit names them and links to them. */
 export const CACTUS_URL = "https://cactuscompute.com";
@@ -170,6 +176,9 @@ const BLOCK_KEYS = {
 
 /** The phone's own download, if one is under way. */
 export type PhoneCopy = { received: number; total: number } | null;
+
+/** "Set up speech on this phone" as it stands. A failure names its phase: the host's download or this phone's copy. */
+export type GuidedRun = { kind: "idle" } | { kind: "running" } | { kind: "failed"; phase: "host" | "copy"; message: string };
 
 /** Which Voice page is drawn: the hub, Host speech, or Whistle model. */
 export type VoiceView = "hub" | VoicePage;
@@ -220,6 +229,8 @@ export interface SpeechCardsProps {
   confirmingRemove: boolean;
   /** Hands-free is on for this device. */
   handsFree: boolean;
+  /** "Set up speech on this phone": idle, running, or stopped at a phase with that phase's words. */
+  guided: GuidedRun;
   /** The info sheet open at first paint. The playground opens one; the page starts with none. */
   initialAbout?: AboutId | null;
   /** The option whose "How to set up" is open at first paint, on Host speech. */
@@ -228,6 +239,8 @@ export interface SpeechCardsProps {
   hostName?: string | null;
   /** The model's details open at first paint, on Whistle model. */
   initialDetails?: boolean;
+  /** "Change how speech works" open (or closed) at first paint, on the hub. The playground sets it; the page decides from the status. */
+  initialOpen?: boolean;
   onEngine: (choice: SttEngineChoice) => void;
   onHandsFree: (on: boolean) => void;
   /** Download the model to the host. */
@@ -249,6 +262,8 @@ export interface SpeechCardsProps {
   /** Read the host's option again, after a step in its terminal. */
   onCheckAgain: () => void;
   onOpenPage: (page: VoicePage) => void;
+  /** "Set up speech on this phone", or Try again after it stopped. */
+  onGuidedSetup: () => void;
 }
 
 /** A thin determinate bar. `fraction` is 0..1. The same bar the update screen draws. */
@@ -470,17 +485,33 @@ function notReadyDetail(readiness: Readiness, props: Pick<SpeechCardsProps, "hos
   return key === null ? t("settings.voice.why.hostSays", { reason: hostReason(props) }) : t(key);
 }
 
-function engineWords(engine: EngineFact, props: SpeechCardsProps): string {
-  if (engine === "phone") return t("settings.voice.option.phone");
-  if (engine === "off") return t("settings.voice.fact.nothing");
-  if (engine === "other") return currentHostProvider(props.host, props.hostStt);
-  return optionName(engine);
+/**
+ * The card's title: the engine itself, by name, with its maker where the name alone would not say
+ * who made it. Nothing set up is said as such. A provider this build does not know is shown as the
+ * host sent it.
+ */
+function titleWords(engine: EngineFact, props: SpeechCardsProps): string {
+  switch (engine) {
+    case "phone":
+    case "whistle":
+      return t("settings.voice.inUse.whistle");
+    case "chatgpt":
+      return t("settings.voice.inUse.chatgpt");
+    case "command":
+    case "service":
+      return optionName(engine);
+    case "other":
+      return currentHostProvider(props.host, props.hostStt);
+    case "off":
+      return t("settings.voice.inUse.none");
+  }
 }
 
-function runsOnWords(runsOn: RunsOnFact, hostName: string | null | undefined): string {
-  if (runsOn === "phone") return t("settings.voice.fact.runsOn.phone");
-  if (runsOn === "nothing") return t("settings.voice.fact.nothing");
-  return hostName ? t("settings.voice.fact.runsOn.hostNamed", { name: hostName }) : t("settings.voice.fact.runsOn.host");
+/** The line under the title: where the engine runs. Nothing when no engine runs. */
+function whereWords(runsOn: RunsOnFact, hostName: string | null | undefined): string | null {
+  if (runsOn === "phone") return t("settings.speech.phone.heading");
+  if (runsOn === "nothing") return null;
+  return hostName ? t("settings.voice.inUse.hostNamed", { name: hostName }) : t("settings.speech.host.heading");
 }
 
 function setUpWords(setUp: SetUpFact): string {
@@ -507,15 +538,91 @@ function statusNote(status: VoiceStatus, props: SpeechCardsProps): string | null
   return null;
 }
 
-/** One way the card can read: for this phone's choice `key`, the status it leads to and its facts. */
+/**
+ * One way the card can read: for this phone's choice `key`, the status it leads to and its facts.
+ * `lead` names the engine the choice would run: the same facts, except that a browser that cannot
+ * record still names the engine it would use, and the status line says why it cannot.
+ */
 interface StatusView {
   key: SttEngineChoice;
   status: VoiceStatus;
   facts: StatusFacts;
+  lead: StatusFacts;
+  /** What "Set up speech on this phone" would do from this view, or `null` when it is not offered. */
+  plan: GuidedPlan | null;
 }
 
-/** The one action that fixes a state (Restore, Fix), or nothing. Never a second way to change a setting. */
-function StatusAction({ status, props }: { status: VoiceStatus; props: SpeechCardsProps }) {
+/** Whether a view of the card carries an action: Restore, Fix, or "Set up speech on this phone". */
+function hasAction(view: StatusView): boolean {
+  if (view.plan !== null) return true;
+  if (view.status.kind === "paused") return view.status.action === "restore";
+  return view.status.kind === "host" && view.status.action === "fix";
+}
+
+/**
+ * The progress of "Set up speech on this phone", one display for both phases: which phase runs,
+ * in words, and its bytes. The host's phase reads the host's own count (polled once a second); the
+ * copy's phase reads this phone's.
+ */
+function GuidedProgress({ whistle, copy, local }: Pick<SpeechCardsProps, "whistle" | "copy" | "local">) {
+  const hostPhase = copy === null && whistle?.state !== "ready";
+  const label = t(hostPhase ? "settings.voice.guided.host" : "settings.voice.guided.copy");
+  const total = copy?.total ?? whistle?.bytes ?? local?.bytes ?? WHISTLE_MODEL_BYTES;
+  const received = copy !== null ? copy.received : hostPhase ? (whistle?.received ?? 0) : 0;
+  return (
+    <div className="space-y-1.5">
+      <p className="flex items-center gap-1.5 text-xs font-medium">
+        <Loader2 aria-hidden className="size-3.5 animate-spin" />
+        {label}
+      </p>
+      <Progress received={received} total={total} label={label} />
+    </div>
+  );
+}
+
+/**
+ * "Set up speech on this phone": one button for the whole way, and in its place while it runs, the
+ * progress of both phases. A failure stops the run: the phase's own words stand above the button,
+ * which then reads Try again. A device that may not ask the host for the model reads the one
+ * sentence it reads under On this phone, and has no button.
+ */
+function GuidedAction({ plan, props }: { plan: GuidedPlan; props: SpeechCardsProps }) {
+  if (plan === "needs-host") return <p className="text-xs text-muted-foreground">{t("settings.voice.copy.needsHost")}</p>;
+  const { guided } = props;
+  const failed = guided.kind === "failed" ? guided : null;
+  return (
+    <div className="space-y-2">
+      <Collapse open={failed !== null}>
+        <p role="status" className="text-xs text-status-blocked">
+          {failed?.message}
+        </p>
+      </Collapse>
+      <OneOf
+        active={guided.kind === "running" ? "running" : "idle"}
+        options={[
+          {
+            key: "idle",
+            node: (
+              <Button className="h-11" onClick={props.onGuidedSetup}>
+                {failed !== null ? <RefreshCw className="size-4" /> : <Smartphone className="size-4" />}
+                {t(failed !== null ? "settings.speech.host.retry" : "settings.voice.guided.action")}
+              </Button>
+            ),
+          },
+          { key: "running", node: <GuidedProgress whistle={props.whistle} copy={props.copy} local={props.local} /> },
+        ]}
+      />
+    </div>
+  );
+}
+
+/**
+ * The action a state owes, in the card: Restore for a paused phone; "Set up speech on this phone"
+ * while speech does not work and this device can run the engine; Fix for a host option that does
+ * not answer, beside it. Never a second way to change a setting.
+ */
+function StatusAction({ view, props }: { view: StatusView; props: SpeechCardsProps }) {
+  const { status, plan } = view;
   if (status.kind === "paused" && status.action === "restore") {
     return (
       <Button className="h-11" disabled={props.copy !== null || browserBlock(props.block) !== null} onClick={props.onPhoneDownload}>
@@ -524,32 +631,39 @@ function StatusAction({ status, props }: { status: VoiceStatus; props: SpeechCar
       </Button>
     );
   }
-  if (status.kind === "host" && status.action === "fix") {
-    return (
-      <Button variant="outline" className="h-11" onClick={() => props.onOpenPage("host")}>
-        <Wrench className="size-4" />
-        {t("settings.voice.fix")}
-      </Button>
-    );
-  }
-  return null;
+  const fix = status.kind === "host" && status.action === "fix" && (
+    <Button variant="outline" className="h-11" onClick={() => props.onOpenPage("host")}>
+      <Wrench className="size-4" />
+      {t("settings.voice.fix")}
+    </Button>
+  );
+  if (plan === null) return fix || null;
+  return (
+    <div className="space-y-2">
+      <GuidedAction plan={plan} props={props} />
+      {fix}
+    </div>
+  );
 }
 
 /**
- * "When you press the mic": five labelled facts (the engine, where it runs, how it was set up, where
- * audio goes, and whether it is ready, with what that rests on), then the one action that fixes the
- * state. The rows always render; only their values change.
+ * The card for what is in use. Its title is the engine itself ("Whistle by Cactus Compute"), the
+ * line under it where the engine runs, then the status sentence with what it rests on, where audio
+ * goes, and, quietly, who set it up. Then the one action that fixes the state. A small "When you
+ * press the mic" names the card above its title.
  *
  * A TAP ON THIS PHONE'S CHOICE MOVES NOTHING BELOW (DESIGN.md §2). Every value sits in a `OneOf` that
- * holds the words of BOTH choices, the one in force and the one a tap would make, so each row is
+ * holds the words of BOTH choices, the one in force and the one a tap would make, so each line is
  * already as tall as the taller of the two. `views` lists both while both can be chosen.
  */
-function StatusCard({ views, active, props }: { views: readonly StatusView[]; active: SttEngineChoice; props: SpeechCardsProps }) {
+function InUseCard({ views, active, props }: { views: readonly StatusView[]; active: SttEngineChoice; props: SpeechCardsProps }) {
   const slot = (key: string, render: (view: StatusView) => ReactNode) => (
     <OneOf key={key} active={active} options={views.map((view) => ({ key: view.key, node: render(view) }))} />
   );
+  const anyWhere = views.some((view) => whereWords(view.lead.runsOn, props.hostName) !== null);
+  const anySetUp = views.some((view) => view.facts.setUp.kind !== "none");
   const anyNote = views.some((view) => statusNote(view.status, props) !== null);
-  const anyAction = views.some((view) => view.status.kind === "paused" ? view.status.action === "restore" : view.status.kind === "host" && view.status.action === "fix");
+  const anyAction = views.some(hasAction);
   const row = (label: string, render: (view: StatusView) => ReactNode) => (
     <div key={label} className="contents">
       <dt className="text-muted-foreground">{label}</dt>
@@ -559,23 +673,28 @@ function StatusCard({ views, active, props }: { views: readonly StatusView[]; ac
   return (
     <Card className="gap-0 py-0">
       <section aria-label={t("settings.voice.status.label")} className="space-y-3 p-4">
-        <SectionLabel>{t("settings.voice.status.label")}</SectionLabel>
+        <div className="space-y-1">
+          <SectionLabel>{t("settings.voice.status.label")}</SectionLabel>
+          <div role="heading" aria-level={2} className="text-base leading-snug font-semibold break-words">
+            {slot("title", (view) => titleWords(view.lead.engine, props))}
+          </div>
+          {anyWhere && <div className="text-sm text-muted-foreground">{slot("where", (view) => whereWords(view.lead.runsOn, props.hostName))}</div>}
+        </div>
+        {slot("status", (view) => <StateLine state={view.status.state}>{readinessWords(view.facts.readiness, props)}</StateLine>)}
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-xs leading-relaxed">
-          {row(t("settings.voice.fact.engine"), (view) => <span className="font-medium">{engineWords(view.facts.engine, props)}</span>)}
-          {row(t("settings.voice.fact.runsOn"), (view) => runsOnWords(view.facts.runsOn, props.hostName))}
-          {row(t("settings.voice.fact.setUp"), (view) => setUpWords(view.facts.setUp))}
           {row(t("settings.voice.audio.label"), (view) => (
             <AudioValue
               reach={view.status.reach}
               text={view.status.kind === "host" && view.status.option === null ? t("settings.voice.audio.unknown") : undefined}
             />
           ))}
-          {row(t("settings.voice.fact.status"), (view) => (
-            <StateLine state={view.status.state}>{readinessWords(view.facts.readiness, props)}</StateLine>
-          ))}
+          {anySetUp &&
+            row(t("settings.voice.fact.setUp"), (view) =>
+              view.facts.setUp.kind === "none" ? null : <span className="text-muted-foreground">{setUpWords(view.facts.setUp)}</span>,
+            )}
         </dl>
         {anyNote && slot("note", (view) => <p className="text-xs text-muted-foreground">{statusNote(view.status, props)}</p>)}
-        {anyAction && slot("action", (view) => <StatusAction status={view.status} props={props} />)}
+        {anyAction && slot("action", (view) => <StatusAction view={view} props={props} />)}
       </section>
     </Card>
   );
@@ -592,6 +711,7 @@ function ChoiceCard({
   icon: Icon,
   title,
   what,
+  recommended = false,
   reach,
   audioText,
   onChoose,
@@ -602,7 +722,9 @@ function ChoiceCard({
   disabled: boolean;
   icon: typeof Smartphone;
   title: string;
-  what: string;
+  what: ReactNode;
+  /** The "Recommended" badge beside the title. It may stand with "In use". */
+  recommended?: boolean;
   reach: VoiceStatus["reach"];
   audioText?: string;
   onChoose: () => void;
@@ -627,8 +749,11 @@ function ChoiceCard({
             <span className="text-sm font-medium">{title}</span>
             <Icon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
             <InUseBadge shown={checked} />
+            {/* After In use, whose slot is held while hidden: on a narrow phone Recommended wraps
+                below, rather than pushing the empty slot onto a line of its own. */}
+            {recommended && <RecommendedBadge />}
           </span>
-          <span className="block text-xs text-muted-foreground">{what}</span>
+          <span className="block space-y-0.5 text-xs text-muted-foreground">{what}</span>
           <span className="block pt-1">
             <AudioLine reach={reach} text={audioText} />
           </span>
@@ -682,6 +807,7 @@ function PhoneChoices(props: WithAbout) {
         icon={Smartphone}
         title={t("settings.speech.phone.heading")}
         what={t("settings.voice.choice.phone.what")}
+        recommended
         reach="phone"
         onChoose={() => onEngine("phone")}
         onAbout={() => onAbout("phone")}
@@ -693,7 +819,13 @@ function PhoneChoices(props: WithAbout) {
         disabled={!open.host}
         icon={Server}
         title={t("settings.speech.host.heading")}
-        what={hostWhat}
+        what={
+          <>
+            {/* The first place a newcomer meets "host" on the hub, so it says what a host is, once. */}
+            <span className="block">{t("settings.voice.host.means")}</span>
+            <span className="block">{hostWhat}</span>
+          </>
+        }
         reach={hostOff || option === null ? null : reachOf(option)}
         audioText={hostOff ? t("settings.voice.audio.nothingYet") : option === null ? t("settings.voice.audio.unknown") : undefined}
         onChoose={() => onEngine("host")}
@@ -895,7 +1027,51 @@ function ModelHubRow(props: SpeechCardsProps) {
   );
 }
 
+/**
+ * "Change how speech works": one row that folds away everything a person needs only to set speech
+ * up or change it, this phone's two choices, the host's option and the model. It opens in place,
+ * through `Collapse`, on the person's own tap, so the page may grow then.
+ */
+function ChangeDisclosure({ open, onToggle, children }: { open: boolean; onToggle: () => void; children: ReactNode }) {
+  const id = useId();
+  return (
+    // shrink-0: a direct child of the settings scroller, which is a flex column (see LockedNote).
+    <div className="shrink-0">
+      <Card className="gap-0 py-0">
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-controls={id}
+          onClick={onToggle}
+          className="flex min-h-11 w-full items-center gap-3 px-4 py-3 text-left transition-colors active:bg-muted/60"
+        >
+          <SlidersHorizontal aria-hidden className="size-5 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 text-sm font-medium">{t("settings.voice.change")}</span>
+          <ChevronDown aria-hidden className={cn("size-5 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} />
+        </button>
+      </Card>
+      <div id={id}>
+        <Collapse open={open}>
+          <div className="space-y-4 pt-4">{children}</div>
+        </Collapse>
+      </div>
+    </div>
+  );
+}
 
+/**
+ * THE HUB PUTS WHAT IS IN USE FIRST. The card names the engine; under it, hands-free, a daily
+ * behaviour rather than setup; then "Change how speech works", which holds this phone's choice, the
+ * host's option and the model. While speech works it starts closed on every visit: what is set up
+ * needs nothing more. While it does not (nothing set up, paused, a host option that does not
+ * answer, a browser that cannot record) it starts open, because the person has something to do,
+ * and the card carries the one action as before.
+ *
+ * The decision waits for the facts: the host's first read and this phone's look for its own copy.
+ * Until both have settled it stays closed, so a page that turns out ready never opens and folds on
+ * its own. Once open, by the page or by a tap, it stays open for the visit until the person closes
+ * it: a tap that makes speech work (choosing On this phone) does not fold the page under the finger.
+ */
 function VoiceHub(props: WithAbout) {
   const input = {
     local: props.local,
@@ -913,12 +1089,23 @@ function VoiceHub(props: WithAbout) {
   const held = useRef(new Set<SttEngineChoice>());
   held.current.add(inForce);
   for (const choice of ["phone", "host"] as const) if (open[choice]) held.current.add(choice);
+  const factsInput = { host: props.host, whistle: props.whistle };
   const views: StatusView[] = (["phone", "host"] as const)
     .filter((choice) => held.current.has(choice))
     .map((choice) => {
       const status = voiceStatus({ ...input, engine: choice });
-      return { key: choice, status, facts: statusFacts(status, { host: props.host, whistle: props.whistle }) };
+      const facts = statusFacts(status, factsInput);
+      const lead = props.recording ? facts : statusFacts(voiceStatus({ ...input, engine: choice, recording: true }), factsInput);
+      const plan = guidedPlan({ status, block: props.block, recording: props.recording, whistle: props.whistle, local: props.local, canWrite: props.canWrite });
+      return { key: choice, status, facts, lead, plan };
     });
+  const works = views.find((view) => view.key === inForce)?.status.state === "works";
+  const settled = props.hostRead && props.local !== undefined;
+  // Something to do, seen once the facts settled: the fold opens, and stays open for the visit.
+  const [needsWork, setNeedsWork] = useState(false);
+  if (settled && !works && !needsWork) setNeedsWork(true);
+  const [tapped, setTapped] = useState<boolean | null>(props.initialOpen ?? null);
+  const changeOpen = tapped ?? needsWork;
   // Hands-free decides what happens to text a microphone made, so it is shown wherever there is one:
   // a host provider, or this phone's own copy, in a browser that records. It does not follow which
   // choice is in force, so a tap between the two does not bring it or take it away.
@@ -926,20 +1113,22 @@ function VoiceHub(props: WithAbout) {
   return (
     <>
       {!props.canWrite && <ReadOnlyHostBanner />}
-      <StatusCard views={views} active={inForce} props={props} />
-      <Zone label={t("settings.voice.phone.label")} hint={t("settings.voice.phone.hint")}>
-        <PhoneChoices {...props} />
-      </Zone>
-      <Zone label={t("settings.voice.host.label")} hint={t("settings.voice.host.hint")}>
-        <HostSummaryRow {...props} />
-        <AllOptionsRow onOpenPage={props.onOpenPage} />
-      </Zone>
+      <InUseCard views={views} active={inForce} props={props} />
       {handsFreeShown && (
         <Zone label={t("settings.voice.after.label")}>
           <HandsFreeCard {...props} />
         </Zone>
       )}
-      {(props.whistle !== null || Boolean(props.local)) && <ModelHubRow {...props} />}
+      <ChangeDisclosure open={changeOpen} onToggle={() => setTapped(!changeOpen)}>
+        <Zone label={t("settings.voice.phone.label")} hint={t("settings.voice.phone.hint")}>
+          <PhoneChoices {...props} />
+        </Zone>
+        <Zone label={t("settings.voice.host.label")} hint={t("settings.voice.host.hint")}>
+          <HostSummaryRow {...props} />
+          <AllOptionsRow onOpenPage={props.onOpenPage} />
+        </Zone>
+        {(props.whistle !== null || Boolean(props.local)) && <ModelHubRow {...props} />}
+      </ChangeDisclosure>
     </>
   );
 }
@@ -1309,7 +1498,9 @@ function HostSpeechPage(props: WithAbout) {
     <>
       {!canWrite && <ReadOnlyHostBanner />}
       <div className="space-y-1">
-        <p className="text-sm">{t("settings.voice.hostPage.intro")}</p>
+        <p className="text-sm">
+          {t("settings.voice.host.means")} {t("settings.voice.hostPage.intro")}
+        </p>
         <LastChanged host={host} />
       </div>
       {!readOnlyRow && lock !== null && <LockedNote lock={lock} />}
@@ -1749,7 +1940,13 @@ export function SpeechControl({ page = "hub" }: { page?: VoiceView }) {
   const engine = useSttEnginePreference();
   const probe = useSttProbeState();
   const handsFree = useHandsFree();
-  const { model: local, persisted } = useStoredModel();
+  const { model: stored, persisted } = useStoredModel();
+  // The copy a guided run just made, held until the store's own look answers. The store learns of a
+  // new copy a moment after the download resolves; without this, the run would choose On this phone
+  // over a store that still says "no copy", and the card would read Paused for that moment. `over`
+  // is the store's answer the copy was held against: any newer answer replaces it.
+  const [justCopied, setJustCopied] = useState<{ model: StoredModel; over: StoredModel | null | undefined } | null>(null);
+  const local = justCopied !== null && justCopied.over === stored ? (stored ?? justCopied.model) : stored;
 
   const [copy, setCopy] = useState<PhoneCopy>(null);
   const [hostError, setHostError] = useState<string | null>(null);
@@ -1767,6 +1964,10 @@ export function SpeechControl({ page = "hub" }: { page?: VoiceView }) {
   const [consentError, setConsentError] = useState<string | null>(null);
   // "Set up" on the hub: once the host's download is ready, this phone copies it.
   const copyWhenReady = useRef(false);
+  // "Set up speech on this phone": the run in words for the card, and whether a run is under way,
+  // read by the steps that end it (the copy chooses On this phone; a failure stops it).
+  const [guided, setGuided] = useState<GuidedRun>({ kind: "idle" });
+  const guiding = useRef(false);
 
   // THE HOST'S OPTION, read when the page opens and again whenever the model changes state, because
   // a ready model is what opens the Whistle row and a removed one may take the option with it. An
@@ -1842,6 +2043,7 @@ export function SpeechControl({ page = "hub" }: { page?: VoiceView }) {
       const message = describeThrownError(error);
       setHostError(message);
       if (page === "hub") setPhoneError(message);
+      stopGuided("host", message);
     } finally {
       setHostBusy(false);
       setConfirmingRemove(false);
@@ -1884,6 +2086,22 @@ export function SpeechControl({ page = "hub" }: { page?: VoiceView }) {
     }
   }
 
+  /** A guided run stops at `phase`, with that phase's own words, and offers Try again. */
+  function stopGuided(phase: "host" | "copy", message: string): void {
+    if (!guiding.current) return;
+    guiding.current = false;
+    setGuided({ kind: "failed", phase, message });
+  }
+
+  /** A guided run ends where it set out to: On this phone, chosen. `copied`: the copy it just made. */
+  function finishGuided(copied?: StoredModel): void {
+    if (!guiding.current) return;
+    guiding.current = false;
+    if (copied !== undefined) setJustCopied({ model: copied, over: stored });
+    setSttEnginePreference("phone");
+    setGuided({ kind: "idle" });
+  }
+
   async function phoneDownload(): Promise<void> {
     if (whistle === null) return;
     const controller = new AbortController();
@@ -1891,12 +2109,19 @@ export function SpeechControl({ page = "hub" }: { page?: VoiceView }) {
     setPhoneError(null);
     setCopy({ received: 0, total: whistle.bytes });
     try {
-      await downloadModel(whistle, (received, total) => setCopy({ received, total }), controller.signal);
+      const copied = await downloadModel(whistle, (received, total) => setCopy({ received, total }), controller.signal);
       // The first worker to load once the copy exists is stored by the service worker, so the engine
       // also starts offline. A probe is a worker load.
       void runSttProbe();
+      finishGuided(copied);
     } catch (error) {
-      if (!(error instanceof SttModelError && error.code === "aborted")) setPhoneError(sttModelErrorMessage(error));
+      if (!(error instanceof SttModelError && error.code === "aborted")) {
+        const message = sttModelErrorMessage(error);
+        setPhoneError(message);
+        stopGuided("copy", message);
+      } else {
+        guiding.current = false;
+      }
     } finally {
       setCopy(null);
       copyAbort.current = null;
@@ -1908,7 +2133,10 @@ export function SpeechControl({ page = "hub" }: { page?: VoiceView }) {
   const hostFailed = whistle?.state === "failed";
   useEffect(() => {
     if (!copyWhenReady.current) return;
-    if (hostFailed) copyWhenReady.current = false;
+    if (hostFailed) {
+      copyWhenReady.current = false;
+      stopGuided("host", t("settings.speech.host.failed"));
+    }
     if (!hostReady || copy !== null) return;
     copyWhenReady.current = false;
     void phoneDownload();
@@ -1978,6 +2206,26 @@ export function SpeechControl({ page = "hub" }: { page?: VoiceView }) {
       void removeModel();
     },
     onCheckAgain: () => void checkAgain(),
+    guided,
+    onGuidedSetup: () => {
+      // One tap, the whole way: the host's download if it lacks the model (this device may write, or
+      // the card offers no button), then this phone's copy, then On this phone. Each step is the one
+      // its own row runs, with the same error handling; a failure stops the run where it failed.
+      if (guiding.current) return;
+      guiding.current = true;
+      setGuided({ kind: "running" });
+      setPhoneError(null);
+      if (local) {
+        finishGuided();
+      } else if (whistle?.state === "ready") {
+        void phoneDownload();
+      } else if (whistle?.state === "downloading") {
+        copyWhenReady.current = true;
+      } else {
+        copyWhenReady.current = true;
+        void hostAction(startWhistleSetup);
+      }
+    },
     onOpenPage: (to) => nav.down(voicePagePath(to, scope)),
     hostName: leadName(root?.servers),
   };

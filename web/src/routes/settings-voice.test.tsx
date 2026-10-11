@@ -96,24 +96,33 @@ afterEach(() => {
 const follows = (a: Node, b: Node) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
 
 describe("Settings → Voice, the hub", () => {
-  it("is titled Voice and reads: the mic's status, this phone, the host, hands-free, the model", async () => {
+  it("is titled Voice and reads: what is in use, hands-free, then Change how speech works, folded while it works", async () => {
     server.use(config({ whistle: READY, stt: STT }), hostStatus(HOST_WHISTLE));
     renderRoute("voice");
     expect(await screen.findByRole("heading", { name: "Voice" })).toBeInTheDocument();
     const status = await screen.findByText("When you press the mic");
+    const title = await screen.findByRole("heading", { level: 2, name: "Whistle by Cactus Compute" });
+    const handsFree = await screen.findByRole("switch", { name: "Hands-free voice: send transcript immediately" });
+    const change = screen.getByRole("button", { name: "Change how speech works" });
+    expect(follows(status, title)).toBe(true);
+    expect(follows(title, handsFree)).toBe(true);
+    expect(follows(handsFree, change)).toBe(true);
+    expect(change).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("radiogroup")).toBeNull();
+
+    await userEvent.click(change);
     const phone = await screen.findByRole("radiogroup", { name: "Where this phone's speech becomes text." });
     const host = await screen.findByRole("button", { name: /^Whistle on your host/ });
-    const handsFree = await screen.findByRole("switch", { name: "Hands-free voice: send transcript immediately" });
     const model = screen.getByRole("button", { name: /Whistle model/ });
-    expect(follows(status, phone)).toBe(true);
+    expect(follows(change, phone)).toBe(true);
     expect(follows(phone, host)).toBe(true);
-    expect(follows(host, handsFree)).toBe(true);
-    expect(follows(handsFree, model)).toBe(true);
+    expect(follows(host, model)).toBe(true);
   });
 
   it("names what the host uses under On your host, from the config", async () => {
     server.use(config({ whistle: { ...READY, hostEngine: true }, stt: STT }));
     renderRoute("voice");
+    await userEvent.click(await screen.findByRole("button", { name: "Change how speech works" }));
     expect(await screen.findByText("Uses what your host uses: Whistle.")).toBeInTheDocument();
   });
 
@@ -128,6 +137,7 @@ describe("Settings → Voice, the hub", () => {
     server.use(config({ whistle: READY, stt: STT }), hostStatus(HOST_WHISTLE));
     vi.mocked(sttModel.storedModel).mockResolvedValue({ sha256: READY.sha256!, bytes: BYTES });
     renderRoute("voice");
+    await userEvent.click(await screen.findByRole("button", { name: "Change how speech works" }));
     await userEvent.click(await screen.findByRole("button", { name: "About On this phone" }));
     const sheet = await screen.findByRole("dialog", { name: "On this phone" });
     for (const label of ["Audio", "Offline", "Cost", "Setup", "Speed"]) expect(within(sheet).getByText(label)).toBeInTheDocument();
@@ -187,6 +197,7 @@ describe("Settings → Voice → Host speech", () => {
   it("is one tap from the hub's row for all five options, where every option says how to set it up", async () => {
     server.use(config({ whistle: READY, stt: STT }), hostStatus(HOST_WHISTLE));
     const { router } = renderRoute("voice");
+    await userEvent.click(await screen.findByRole("button", { name: "Change how speech works" }));
     await userEvent.click(await screen.findByRole("button", { name: "See all five options and how to set them up" }));
     expect(router.state.location.pathname).toBe("/settings/voice/host");
     expect(await screen.findByRole("heading", { name: "Host speech" })).toBeInTheDocument();

@@ -18,7 +18,7 @@ import { leavesNetwork, reachOf, type HostOption, type Reach, type StepMark, typ
 // Small views with every fact handed in, shared by the three Voice pages (components/speech-control.tsx)
 // and the playground. The rules they keep, so every page keeps them the same way:
 //
-//  · The audio line is ONE component. Every option, the status card, the confirm sheet and the facts
+//  · The audio line is ONE component. Every option, the in-use card, the confirm sheet and the facts
 //    sheet print it, with the same label ("Audio") in the same column, so the eye finds it in the
 //    same place.
 //  · Audio that leaves the host's network carries an icon and the words, in neutral ink, never a
@@ -168,6 +168,18 @@ export function InUseBadge({ shown }: { shown: boolean }) {
   return (
     <Badge aria-hidden={shown ? undefined : true} className={cn("rounded-sm", !shown && "invisible")}>
       {t("settings.voice.inUse")}
+    </Badge>
+  );
+}
+
+/**
+ * "Recommended", beside On this phone's title. Neutral, an outline with no fill, so it never reads as
+ * the selected look or as "In use"; both may stand at once.
+ */
+export function RecommendedBadge() {
+  return (
+    <Badge variant="outline" className="rounded-sm">
+      {t("settings.voice.recommended")}
     </Badge>
   );
 }

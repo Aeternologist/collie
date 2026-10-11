@@ -108,7 +108,7 @@ export function askFor(from: HostOption | null, to: SttHostChoice): "none" | "co
 export type VoiceState = "works" | "setup" | "paused" | "broken";
 
 /**
- * What the status card says, as codes. `where` names who turns speech into text; `reach` is where
+ * What the in-use card says, as codes. `where` names who turns speech into text; `reach` is where
  * audio goes (`null`: nothing is recorded); `action` is the one thing that fixes the state.
  */
 export type VoiceStatus =
@@ -168,6 +168,41 @@ export function voiceStatus(input: VoiceStatusInput): VoiceStatus {
   return { kind: "host", state: "works", option, provider: input.provider, reach, action: null };
 }
 
+// ── "SET UP SPEECH ON THIS PHONE" ───────────────────────────────────────────────────────────────
+//
+// One button in the in-use card that walks the whole way to Whistle on this phone: the host's
+// download when the host lacks the model, the copy to this phone, then On this phone chosen. It is
+// offered only while speech does not work on this device and this device can run the engine. A
+// paused phone keeps Restore instead: its choice is already made, and Restore is the same copy.
+
+/** What one tap of "Set up speech on this phone" does from here, or `null` when it is not offered. */
+export type GuidedPlan =
+  /** The copy is here already: choose On this phone. */
+  | "select"
+  /** The host holds the model: copy it, then choose On this phone. */
+  | "copy"
+  /** The host lacks it and this device may write: the host's download, the copy, then the choice. */
+  | "both"
+  /** The host lacks it and this device may not ask for it: the read-only sentence, no button. */
+  | "needs-host";
+
+export function guidedPlan(input: {
+  status: VoiceStatus;
+  block: PhoneEngineBlock | null;
+  recording: boolean;
+  whistle: WhistleStatus | null;
+  local: StoredModel | null | undefined;
+  canWrite: boolean;
+}): GuidedPlan | null {
+  const { status, block, recording, whistle, local, canWrite } = input;
+  if (status.state === "works" || status.kind === "paused") return null;
+  if (!recording || browserBlock(block) !== null || local === undefined) return null;
+  if (local !== null) return "select";
+  if (whistle === null) return null;
+  if (whistle.state === "ready") return "copy";
+  return canWrite ? "both" : "needs-host";
+}
+
 // ── THE MODEL ROW'S CHIP ────────────────────────────────────────────────────────────────────────
 
 /** The model's state in one or two words, for the hub's row. */
@@ -190,12 +225,12 @@ export function modelChip(input: {
   return "absent";
 }
 
-// ── THE STATUS CARD'S FACTS ─────────────────────────────────────────────────────────────────────
+// ── THE IN-USE CARD'S FACTS ─────────────────────────────────────────────────────────────────────
 //
-// "When you press the mic" is five labelled facts: the engine, where it runs, how it was set up,
-// where audio goes, and whether it is ready. Each is a code here; the card turns it into words. The
-// card never says a bare "Works": the Status row says what the answer rests on, which is a different
-// check for each engine (the bridge's `status()` per provider, bridge/stt/*.ts):
+// The hub's first card names what is in use: the engine as its title, where it runs under it, then
+// whether it is ready, where audio goes, and how it was set up. Each is a code here; the card turns
+// it into words. The card never says a bare "Works": the status line says what the answer rests on,
+// which is a different check for each engine (the bridge's `status()` per provider, bridge/stt/*.ts):
 //
 //   · this phone      a copy of the model in this browser, and a browser that runs the engine
 //   · Whistle (host)  the model held under a hash this release accepts, and the engine files in place
@@ -203,13 +238,13 @@ export function modelChip(input: {
 //   · speech service  configured is all the host knows: it has no cheap way to ask the service
 //   · ChatGPT         Codex on the host answered that it is signed in with ChatGPT
 
-/** What the Engine row names. `other`: a provider id this build does not know, shown as the host sent it. */
+/** The engine the card's title names. `other`: a provider id this build does not know, shown as the host sent it. */
 export type EngineFact = HostOption | "phone" | "other";
 
-/** What the Runs on row says. `nothing`: no engine runs at all. */
+/** Where the engine runs, the line under the title. `nothing`: no engine runs at all. */
 export type RunsOnFact = "phone" | "host" | "nothing";
 
-/** What the Set up row says. */
+/** What the Set up line says. */
 export type SetUpFact =
   | { kind: "settings"; by: string; at: string }
   | { kind: "terminal" }
@@ -217,7 +252,7 @@ export type SetUpFact =
   | { kind: "phone" }
   | { kind: "none" };
 
-/** What the Status row rests on, as a code. Each one is one sentence in the catalogue. */
+/** What the status line rests on, as a code. Each one is one sentence in the catalogue. */
 export type Readiness =
   | "phone-ready"
   | "phone-gone"
@@ -266,7 +301,7 @@ export interface StatusFactsInput {
   whistle: WhistleStatus | null;
 }
 
-/** The five facts' codes for one status. The Audio row is the status's own `reach`. */
+/** The in-use card's codes for one status. Its Audio line is the status's own `reach`. */
 export interface StatusFacts {
   engine: EngineFact;
   runsOn: RunsOnFact;
@@ -300,7 +335,7 @@ const READY_OF = {
   chatgpt: "codex-ready",
 } as const satisfies Record<Exclude<HostOption, "off">, Readiness>;
 
-/** The status card's facts for one status. */
+/** The in-use card's facts for one status. */
 export function statusFacts(status: VoiceStatus, input: StatusFactsInput): StatusFacts {
   switch (status.kind) {
     case "phone":

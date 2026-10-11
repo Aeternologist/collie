@@ -167,6 +167,8 @@ function SpeechDemo(over: Partial<SpeechCardsProps>) {
         onPhoneRemove={() => {}}
         onCheckAgain={() => {}}
         onOpenPage={() => {}}
+        guided={{ kind: "idle" }}
+        onGuidedSetup={() => {}}
         {...over}
       />
     </div>
@@ -207,7 +209,7 @@ export function SettingsSection() {
           state="voice-nothing-installed"
           label="1: the hub, nothing set up"
           reach="open Settings, Voice, on a host with no speech option and no Whistle model yet."
-          note="The status card's five facts say Nothing, Not set up and that nothing is recorded. On this phone offers Set up, which downloads to the host and then copies to the phone. On your host is off, and the host's row says it has no option yet."
+          note="The card's title says Speech is not set up, and that nothing is recorded; its action is Set up speech on this phone, one tap for the whole way (cards 25 and 26). Change how speech works stands open, because there is something to do. On this phone carries Recommended, and On your host says what a host is. On this phone offers Set up, which downloads to the host and then copies to the phone. On your host is off, and the host's row says it has no option yet."
         >
           <Stage height={1100}>
             <SpeechDemo block="host-not-ready" />
@@ -250,8 +252,8 @@ export function SettingsSection() {
         <Card
           state="voice-both-ready"
           label="5: the hub, both ready, On this phone"
-          reach="after the copy finishes, choose On this phone."
-          note="The facts name Whistle on this phone and the copy the status rests on (Ready. Whistle ca52876 is on this phone.). On this phone wears the selected look. The host's row says Whistle on your host. The model's row says Both ready."
+          reach="after the copy finishes, choose On this phone, then tap Change how speech works. On a later visit it starts closed (card 23)."
+          note="The title names Whistle by Cactus Compute, on this phone, and the copy the status rests on (Ready. Whistle ca52876 is on this phone.). On this phone wears the selected look. The host's row says Whistle on your host. The model's row says Both ready."
         >
           <Stage height={1100}>
             <SpeechDemo
@@ -261,6 +263,7 @@ export function SettingsSection() {
               engine="phone"
               local={PHONE_COPY}
               persisted
+              initialOpen
             />
           </Stage>
         </Card>
@@ -288,10 +291,10 @@ export function SettingsSection() {
           state="voice-browser-cannot"
           label="7: the hub, this browser cannot run the engine"
           reach="open Settings, Voice, over plain HTTP on a phone. The same reason shows when the browser has no WebAssembly, or when it blocks the engine."
-          note="On this phone is off with the reason under it. On your host is in force, so dictation works through the host."
+          note="Shown with Change how speech works opened. On this phone is off with the reason under it. On your host is in force, so dictation works through the host, and the card names Whistle on your host."
         >
           <Stage height={1100}>
-            <SpeechDemo whistle={{ ...WHISTLE_READY, hostEngine: true }} hostStt={HOST_WHISTLE} host={PROVIDER_WHISTLE} block="insecure" />
+            <SpeechDemo whistle={{ ...WHISTLE_READY, hostEngine: true }} hostStt={HOST_WHISTLE} host={PROVIDER_WHISTLE} block="insecure" initialOpen />
           </Stage>
         </Card>
 
@@ -299,7 +302,7 @@ export function SettingsSection() {
           state="voice-read-only"
           label="8: the hub, a read-only device"
           reach="open Settings, Voice, on a device that may not write. Copying to the phone is a read; changing the host is a write."
-          note="One banner covers the host's settings. This phone's own choice and hands-free stay live, because they change nothing on the host."
+          note="Shown with Change how speech works opened. One banner covers the host's settings. This phone's own choice and hands-free stay live, because they change nothing on the host."
         >
           <Stage height={1150}>
             <SpeechDemo
@@ -308,6 +311,7 @@ export function SettingsSection() {
               host={PROVIDER_WHISTLE}
               canWrite={false}
               local={PHONE_COPY}
+              initialOpen
             />
           </Stage>
         </Card>
@@ -316,7 +320,7 @@ export function SettingsSection() {
           state="voice-paused"
           label="17: the hub, paused, this phone's copy is gone"
           reach="choose On this phone, then clear the site's storage, or let the browser evict the copy."
-          note="The choice stays on this phone. Collie does not switch to the host by itself (ADR 0096 Decision 12). Restore is the one action; choosing On your host is the person's other way out."
+          note="The card still names Whistle by Cactus Compute, on this phone, and says Paused. The choice stays on this phone. Collie does not switch to the host by itself (ADR 0096 Decision 12). Restore in the card is the one action; Change how speech works stands open, where choosing On your host is the person's other way out."
         >
           <Stage height={1100}>
             <SpeechDemo whistle={{ ...WHISTLE_READY, hostEngine: true }} hostStt={HOST_WHISTLE} host={PROVIDER_WHISTLE} engine="phone" />
@@ -336,6 +340,7 @@ export function SettingsSection() {
               host={PROVIDER_WHISTLE}
               local={PHONE_COPY}
               initialAbout="phone"
+              initialOpen
             />
           </Stage>
         </Card>
@@ -458,7 +463,7 @@ export function SettingsSection() {
           state="voice-hub-codex-signed-out"
           label="20: the hub, ChatGPT on the host, Codex signed out"
           reach="a host on the ChatGPT subscription whose Codex was signed out since. The device that chose it is named."
-          note="The status card's facts: Engine, Runs on (the host by name in a crew), Set up from Settings by the device, Audio, and Status Not ready with what the host found. Fix opens Host speech, where ChatGPT's steps are already open."
+          note="The card's title names ChatGPT subscription (OpenAI), on your host by name in a crew, then Not ready with what the host found, Audio, and Set up from Settings by the device. Fix opens Host speech, where ChatGPT's steps are already open. Change how speech works stands open."
         >
           <Stage height={1150}>
             <SpeechDemo
@@ -500,6 +505,71 @@ export function SettingsSection() {
         >
           <Stage height={1300}>
             <SpeechDemo page="host" whistle={WHISTLE_READY} host={PROVIDER_WHISTLE} initialSetup="chatgpt" />
+          </Stage>
+        </Card>
+
+        <Card
+          state="voice-hub-ready-folded"
+          label="23: the hub, ready, Whistle on this phone, folded"
+          reach="open Settings, Voice, on a phone that runs Whistle from its own copy. Every visit while speech works starts here."
+          note="What is in use comes first: Whistle by Cactus Compute, On this phone, Ready with the version, Audio and Set up. Then hands-free, a daily behaviour. Then one closed row, Change how speech works; everything that sets speech up waits behind it."
+        >
+          <Stage height={640}>
+            <SpeechDemo
+              whistle={{ ...WHISTLE_READY, hostEngine: true }}
+              hostStt={HOST_WHISTLE}
+              host={PROVIDER_WHISTLE}
+              engine="phone"
+              local={PHONE_COPY}
+              persisted
+              hostName="bluefin"
+            />
+          </Stage>
+        </Card>
+
+        <Card
+          state="voice-hub-ready-opened"
+          label="24: the hub, ready, Change how speech works opened"
+          reach="as 23, then tap Change how speech works."
+          note="It opens in place, through Collapse: Only this phone with its two choices, Every device on your host with its row and See all five options and how to set them up, then the Whistle model row, unchanged. A tap between the two choices still moves nothing."
+        >
+          <Stage height={1250}>
+            <SpeechDemo
+              whistle={{ ...WHISTLE_READY, hostEngine: true }}
+              hostStt={HOST_WHISTLE}
+              host={PROVIDER_WHISTLE}
+              engine="phone"
+              local={PHONE_COPY}
+              persisted
+              hostName="bluefin"
+              initialOpen
+            />
+          </Stage>
+        </Card>
+
+        <Card
+          state="voice-hub-guided-host"
+          label="25: the hub, Set up speech on this phone, the host's step"
+          reach="tap Set up speech on this phone on a host without the model. The copy to this phone and the choice follow by themselves."
+          note="One display for both steps: it names the step that runs, Downloading to your host… then Copying to this phone…, with the bytes, in the place the button stood."
+        >
+          <Stage height={1100}>
+            <SpeechDemo block="host-not-ready" whistle={{ ...WHISTLE_ABSENT, state: "downloading", received: 7_400_000 }} guided={{ kind: "running" }} />
+          </Stage>
+        </Card>
+
+        <Card
+          state="voice-hub-guided-failed"
+          label="26: the hub, Set up speech on this phone stopped"
+          reach="as 25, when the copy to this phone fails, here because the host is busy with other phones."
+          note="The run stops at the step that failed. Its own words stand above the button, which now reads Try again and starts the run over from where things are."
+        >
+          <Stage height={1100}>
+            <SpeechDemo
+              whistle={WHISTLE_READY}
+              host={PROVIDER_NONE_READY}
+              guided={{ kind: "failed", phase: "copy", message: "The host is busy copying the model to other phones. Try again shortly." }}
+            />
           </Stage>
         </Card>
       </Group>
