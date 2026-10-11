@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { join, resolve as resolvePath } from "node:path";
 
 import { AuditLog, type AuditEntry } from "./audit.ts";
 import { createWorktreeAt } from "./server.ts";
@@ -33,8 +34,10 @@ import type { FolderFs } from "./worktree-folder.ts";
 //   4. A launcher that fails AFTER the create is a 200 with the worktree and `launcherStarted: false`:
 //      the worktree exists, so nothing is rolled back.
 
-const HOME = "/home/op";
-const REPO = "/home/op/repo";
+// Built with the machine's own path rules: the route joins and splits these with `node:path`, so a
+// bare `/home/op/repo` string would meet `\home\op\repo` on Windows and no fake disk entry would match.
+const HOME = resolvePath("/home/op");
+const REPO = join(HOME, "repo");
 const SPACE = "w1";
 const REQUEST_ID = "0b9e6a1c-3f2d-4c5e-8a7b-1d2e3f4a5b6c";
 const CLAUDE: Launcher = { command: "claude", label: "Claude" };
@@ -66,7 +69,7 @@ function engineWith(workspaces: WorkspaceView[], agents: AgentView[] = []): Stat
 const repoDisk: FolderFs = {
   realpath: (path) => Promise.resolve(path),
   isDirectory: (path) => Promise.resolve(path === REPO),
-  exists: (path) => Promise.resolve(path === `${REPO}/.git`),
+  exists: (path) => Promise.resolve(path === join(REPO, ".git")),
 };
 
 /** A clock the test owns, so the launcher's wait for a settled screen passes in no real time. */
@@ -101,7 +104,7 @@ class FakeWorktreeMux {
       spaceId: "w7",
       spaceLabel: "repo-brisk-otter",
       tabId: "w7:t1",
-      cwd: `${REPO}/.worktrees/brisk-otter`,
+      cwd: join(REPO, ".worktrees", "brisk-otter"),
     });
   }
   readGrid(paneId: string): Promise<MuxOutcome<MuxGrid>> {
@@ -245,7 +248,7 @@ describe("POST /api/worktree — request id and receipt", () => {
         workspaceId: "w7",
         workspaceLabel: "repo-brisk-otter",
         tabId: "",
-        cwd: `${REPO}/.worktrees/brisk-otter`,
+        cwd: join(REPO, ".worktrees", "brisk-otter"),
       },
     });
     expect(mux.creates).toHaveLength(1);
@@ -379,7 +382,7 @@ describe("POST /api/worktree — branch validation", () => {
 //   3. A bad base is a 400 before the multiplexer is touched.
 //   4. The base is stored by folder after a success, and only then.
 
-const WORKTREE_FOLDER = `${REPO}/.worktrees/brisk-otter`;
+const WORKTREE_FOLDER = join(REPO, ".worktrees", "brisk-otter");
 
 /** A git double and the argv arrays it was asked. */
 interface GitDouble {

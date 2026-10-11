@@ -552,6 +552,9 @@ describe("the Whistle model store", () => {
       expect(await s.describe()).toMatchObject({ kind: "unreadable" });
       rmSync(paths.model);
     }
+    // Windows skips the symlink case above, so the mismatched model is still there: clear it, or the
+    // half download below would read as a mismatch.
+    rmSync(paths.model, { force: true });
     otherDownload("half");
     expect(await s.describe()).toEqual({ kind: "downloading", received: 4 });
   });

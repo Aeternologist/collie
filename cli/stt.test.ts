@@ -23,6 +23,8 @@ import { cmdStt, cmdSttOff, cmdSttSetup, cmdSttStatus, cmdSttTest, parseArgList,
 // Nothing here dials anything: the probe and the provider are both injected, which is the whole
 // reason `SttDeps` carries them.
 
+// The key the fake disk is seeded with. What the verb PRINTS is `join(STATE, STT_FILENAME)`, which
+// carries `\` on Windows, so the printed-path assertions use that form.
 const CONFIG_PATH = `${STATE}/${STT_FILENAME}`;
 
 type Deps = SttDeps & { io: ReturnType<typeof capture>; files: FakeFiles };
@@ -570,7 +572,7 @@ describe("collie stt status", () => {
     const d = deps({ seed: { [CONFIG_PATH]: stamp } });
     expect(await cmdSttStatus(d)).toBe(EXIT.OK);
     expect(said(d)).toContain("speech-to-text: off");
-    expect(said(d)).toContain(`${CONFIG_PATH} (no provider)`);
+    expect(said(d)).toContain(`${join(STATE, STT_FILENAME)} (no provider)`);
     expect(said(d)).not.toContain("(absent)");
     expect(d.files.entries.has(CONFIG_PATH)).toBe(true);
   });
@@ -578,7 +580,7 @@ describe("collie stt status", () => {
   test("with no file at all it still says absent", async () => {
     const d = deps();
     expect(await cmdSttStatus(d)).toBe(EXIT.OK);
-    expect(said(d)).toContain(`${CONFIG_PATH} (absent)`);
+    expect(said(d)).toContain(`${join(STATE, STT_FILENAME)} (absent)`);
   });
 
   test("`codex-cli` is labelled as impersonation, in those words", async () => {
