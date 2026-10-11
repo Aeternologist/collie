@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { existsSync, statSync } from "node:fs";
-import { type FileHandle, chmod, lstat, mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { constants, existsSync, statSync } from "node:fs";
+import { type FileHandle, chmod, lstat, mkdir, open, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { WhistleStatus } from "../types.ts";
@@ -155,6 +155,14 @@ export interface WhistleModelStore {
   ready(): Promise<WhistleReady | null>;
   /** Start the download, or join the one in flight. Idempotent when the model is ready. */
   start(): Promise<WhistleStart>;
+  /**
+   * Take a local file instead of a download (`collie stt whistle --from`), through the same single
+   * flight, the same part file and the same hash gate. A symlink or a non-file is refused before
+   * anything is touched; a file whose hash is not the pin ends as a failure naming both hashes.
+   */
+  importFile(source: string): Promise<WhistleStart>;
+  /** The model as the terminal reports it: absent, downloading, ready, not this release's, or unreadable. */
+  describe(): Promise<WhistleDescription>;
   /** Stop a download in flight and delete the model, its manifest and any part file. */
   remove(): Promise<WhistleModelStatus>;
   /** Resolves when no download is in flight. For tests and for `collie stt whistle`. */
@@ -162,6 +170,16 @@ export interface WhistleModelStore {
   /** The manifest, or null when there is none or it cannot be read. */
   manifest(): Promise<WhistleManifest | null>;
 }
+
+/** What {@link WhistleModelStore.describe} reports. */
+export type WhistleDescription =
+  | { kind: "absent" }
+  | { kind: "downloading"; received: number }
+  | { kind: "ready"; sha256: string; bytes: number; revision: string | null }
+  /** A file is there and readable, but its hash is not one this release accepts. */
+  | { kind: "mismatch"; sha256: string; bytes: number }
+  /** A file is there and cannot be read, or is a symlink or not a file. */
+  | { kind: "unreadable"; reason: string };
 
 /** A refusal whose message is Collie's own sentence and safe to report: no path, no upstream body. */
 class WhistleRefusal extends Error {}
@@ -256,6 +274,29 @@ export function createWhistleModelStore(deps: WhistleModelDeps): WhistleModelSto
     // A link or a folder is no download; `prepare` refuses it by name.
     if (!entry.isFile() || Date.now() - entry.mtimeMs >= timeoutMs) return null;
     return { received: entry.size };
+  }
+
+  /** What `collie stt status` and `doctor` say about the model, with more detail than the route needs. */
+  async function describe(): Promise<WhistleDescription> {
+    const flight = inFlight.get(paths.dir);
+    if (flight !== undefined) return { kind: "downloading", received: flight.received };
+    const held = await inspect();
+    if (held.kind === "odd") return { kind: "unreadable", reason: held.reason };
+    if (held.kind === "held") {
+      if (!held.accepted) return { kind: "mismatch", sha256: held.sha256, bytes: held.bytes };
+      return { kind: "ready", sha256: held.sha256, bytes: held.bytes, revision: (await readManifest())?.model.revision ?? null };
+    }
+    const other = await runningElsewhere();
+    return other === null ? { kind: "absent" } : { kind: "downloading", received: other.received };
+  }
+
+  async function readManifest(): Promise<WhistleManifest | null> {
+    try {
+      // SAFETY: only ever written by this module, and every reader treats a missing field as absent.
+      return JSON.parse(await readFile(paths.manifest, "utf8")) as WhistleManifest;
+    } catch {
+      return null;
+    }
   }
 
   async function status(): Promise<WhistleModelStatus> {
@@ -353,23 +394,62 @@ export function createWhistleModelStore(deps: WhistleModelDeps): WhistleModelSto
       await file.close();
     }
 
-    const sha256 = hash.digest("hex");
+    await finalize(hash.digest("hex"), flight.received, pin.url, "download");
+  }
+
+  /**
+   * The hash gate, then the rename and the manifest. The part file is complete and closed. Nothing
+   * reaches the model's path unless its hash is the pin: a mismatch throws with both hashes.
+   */
+  async function finalize(sha256: string, bytes: number, source: string, what: "download" | "file"): Promise<void> {
     if (sha256 !== pin.sha256 || !accepted.includes(sha256)) {
-      throw new WhistleRefusal(`the download did not match the pinned model (got ${sha256}, expected ${pin.sha256})`);
+      throw new WhistleRefusal(`the ${what} did not match the pinned model (got ${sha256}, expected ${pin.sha256})`);
     }
     await refuseOddFile(paths.model, "model");
     await chmod(paths.part, 0o600);
     await rename(paths.part, paths.model);
     const manifest: WhistleManifest = {
       version: 1,
-      model: { sha256, bytes: flight.received, revision: pin.revision, source: pin.url, fetchedAt: new Date(now()).toISOString() },
+      model: { sha256, bytes, revision: pin.revision, source, fetchedAt: new Date(now()).toISOString() },
     };
     await refuseOddFile(paths.manifest, "model's manifest");
     await rm(paths.manifest, { force: true });
     await writeFile(paths.manifest, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600, flag: "wx" });
   }
 
-  async function start(): Promise<WhistleStart> {
+  /** Copy a local file into the part file through the same running hash. Throws a refusal. */
+  async function copyIn(source: string, flight: InFlight, file: FileHandle): Promise<void> {
+    const hash = createHash("sha256");
+    let input: FileHandle | null = null;
+    try {
+      try {
+        // O_NOFOLLOW: a link swapped in after the lstat in `importFile` is refused here, not followed.
+        input = await open(source, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+      } catch {
+        throw new WhistleRefusal("the file could not be opened (a symlink, or no longer there)");
+      }
+      const entry = await input.stat();
+      if (!entry.isFile()) throw new WhistleRefusal("that is not a regular file");
+      if (entry.size > capBytes) throw new WhistleRefusal(`the file is larger than ${capBytes / (1024 * 1024)} MiB`);
+      const buffer = new Uint8Array(1024 * 1024);
+      for (;;) {
+        const { bytesRead } = await input.read(buffer, 0, buffer.byteLength, null);
+        if (bytesRead === 0) break;
+        flight.received += bytesRead;
+        if (flight.received > capBytes) throw new WhistleRefusal(`the file is larger than ${capBytes / (1024 * 1024)} MiB`);
+        const piece = buffer.subarray(0, bytesRead);
+        hash.update(piece);
+        await file.write(piece);
+      }
+    } finally {
+      await input?.close().catch(() => undefined);
+      await file.close();
+    }
+    await finalize(hash.digest("hex"), flight.received, "a file the operator supplied", "file");
+  }
+
+  /** Run `fill` over a freshly locked part file as the one download in flight. See {@link WhistleModelStore.start}. */
+  async function begin(fill: (flight: InFlight, file: FileHandle) => Promise<void>): Promise<WhistleStart> {
     const joined = inFlight.get(paths.dir);
     if (joined !== undefined) return { outcome: "downloading", status: await status() };
     const held = await inspect();
@@ -391,7 +471,7 @@ export function createWhistleModelStore(deps: WhistleModelDeps): WhistleModelSto
       try {
         const file = await prepare();
         prepared(null);
-        await download(flight, file);
+        await fill(flight, file);
         lastFailure.delete(paths.dir);
       } catch (err) {
         if (err instanceof WhistleRunning) {
@@ -424,6 +504,20 @@ export function createWhistleModelStore(deps: WhistleModelDeps): WhistleModelSto
     return { outcome: "downloading", status: await status() };
   }
 
+  /** Take a local file through the same hash gate. Refuses a symlink or a non-file before any state is touched. */
+  async function importFile(source: string): Promise<WhistleStart> {
+    let entry;
+    try {
+      entry = await lstat(source);
+    } catch {
+      return { outcome: "refused", reason: "that file does not exist or cannot be read" };
+    }
+    if (entry.isSymbolicLink()) return { outcome: "refused", reason: "that is a symlink; Collie does not follow it, so name the file itself" };
+    if (!entry.isFile()) return { outcome: "refused", reason: "that is not a regular file" };
+    if (entry.size > capBytes) return { outcome: "refused", reason: `that file is larger than ${capBytes / (1024 * 1024)} MiB` };
+    return begin((flight, file) => copyIn(source, flight, file));
+  }
+
   async function remove(): Promise<WhistleModelStatus> {
     const flight = inFlight.get(paths.dir);
     if (flight !== undefined) {
@@ -432,6 +526,9 @@ export function createWhistleModelStore(deps: WhistleModelDeps): WhistleModelSto
     }
     // `rm` on a symlink removes the link, never its target, so a removal needs no lstat.
     for (const path of [paths.model, paths.manifest, paths.part]) await rm(path, { force: true });
+    // The folder too, when nothing else is in it. `rmdir` refuses a folder that still holds anything, so
+    // a file the operator put there survives, and a symlinked folder is not followed.
+    await rmdir(paths.dir).catch(() => undefined);
     hashCache.delete(paths.model);
     lastFailure.delete(paths.dir);
     return status();
@@ -444,18 +541,13 @@ export function createWhistleModelStore(deps: WhistleModelDeps): WhistleModelSto
       const held = await inspect();
       return held.kind === "held" && held.accepted ? { path: paths.model, sha256: held.sha256, bytes: held.bytes } : null;
     },
-    start,
+    start: () => begin(download),
+    importFile,
+    describe,
     remove,
     async settled() {
       await inFlight.get(paths.dir)?.done;
     },
-    async manifest() {
-      try {
-        // SAFETY: only ever written by this module, and every reader treats a missing field as absent.
-        return JSON.parse(await readFile(paths.manifest, "utf8")) as WhistleManifest;
-      } catch {
-        return null;
-      }
-    },
+    manifest: readManifest,
   };
 }

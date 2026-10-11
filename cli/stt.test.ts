@@ -434,21 +434,21 @@ describe("collie stt test", () => {
 });
 
 describe("collie stt status", () => {
-  test("off is off, and asking does not create a file", () => {
+  test("off is off, and asking does not create a file", async () => {
     const d = deps();
-    expect(cmdSttStatus(d)).toBe(EXIT.OK);
+    expect(await cmdSttStatus(d)).toBe(EXIT.OK);
     expect(said(d)).toContain("speech-to-text: off");
     expect(d.files.entries.size).toBe(0);
   });
 
-  test("the source of every setting is named, and the key never is", () => {
+  test("the source of every setting is named, and the key never is", async () => {
     const d = deps({
       seed: {
         [CONFIG_PATH]: '{"provider":"openai-compatible","baseUrl":"https://stt.example/v1","apiKey":"sk-secret-9999"}',
       },
       env: { [STT_ENV_KEYS.model]: "whisper-1" },
     });
-    expect(cmdSttStatus(d)).toBe(EXIT.OK);
+    expect(await cmdSttStatus(d)).toBe(EXIT.OK);
     const heard = said(d);
     expect(heard).toContain(`(${STT_FILENAME})`);
     expect(heard).toContain(`(${STT_ENV_KEYS.model})`);
@@ -456,18 +456,18 @@ describe("collie stt status", () => {
     expect(heard).not.toContain("sk-secret-9999");
   });
 
-  test("`codex-cli` is labelled as impersonation, in those words", () => {
+  test("`codex-cli` is labelled as impersonation, in those words", async () => {
     const d = deps({
       seed: { [CONFIG_PATH]: '{"provider":"codex","codexBin":"/opt/bin/codex","wireIdentity":"codex-cli"}' },
     });
-    expect(cmdSttStatus(d)).toBe(EXIT.OK);
+    expect(await cmdSttStatus(d)).toBe(EXIT.OK);
     expect(said(d)).toContain("impersonating the Codex CLI (accepted at setup)");
     expect(said(d)).toContain(CODEX_TRANSCRIBE_URL);
   });
 
-  test("configured but unusable is a non-zero report, never a silent off", () => {
+  test("configured but unusable is a non-zero report, never a silent off", async () => {
     const d = deps({ seed: { [CONFIG_PATH]: '{"provider":"codex","wireIdentity":"sneaky"}' } });
-    expect(cmdSttStatus(d)).toBe(EXIT.FAIL);
+    expect(await cmdSttStatus(d)).toBe(EXIT.FAIL);
     expect(said(d)).toContain("cannot be used");
   });
 });
@@ -598,12 +598,12 @@ describe("collie stt — the local-cli provider (#227)", () => {
     expect(said(d)).toContain("exited with status 2");
   });
 
-  test("status names the command, the arguments and where each came from", () => {
+  test("status names the command, the arguments and where each came from", async () => {
     const d = deps({
       seed: { [CONFIG_PATH]: '{"provider":"local-cli","command":"/opt/engine","args":["transcribe"]}' },
       env: { [STT_ENV_KEYS.command]: "/env/engine" },
     });
-    expect(cmdSttStatus(d)).toBe(EXIT.OK);
+    expect(await cmdSttStatus(d)).toBe(EXIT.OK);
     const heard = said(d);
     expect(heard).toContain("/env/engine");
     expect(heard).toContain(`(${STT_ENV_KEYS.command})`);
@@ -633,12 +633,12 @@ describe("collie stt — the local-cli provider (#227)", () => {
     expect(said(bare)).toContain("/fake/engine is a directory, not a program");
   });
 
-  test("status fails on a command the bridge cannot run, with the host-side reason", () => {
+  test("status fails on a command the bridge cannot run, with the host-side reason", async () => {
     const d = deps({
       seed: { [CONFIG_PATH]: '{"provider":"local-cli","command":"/opt/engine"}' },
       commandProblem: () => "is not a regular file",
     });
-    expect(cmdSttStatus(d)).toBe(EXIT.FAIL);
+    expect(await cmdSttStatus(d)).toBe(EXIT.FAIL);
     expect(said(d)).toContain("the command cannot be run: /opt/engine is not a regular file.");
     expect(said(d)).toContain("microphone as unavailable");
 
@@ -646,7 +646,7 @@ describe("collie stt — the local-cli provider (#227)", () => {
       seed: { [CONFIG_PATH]: '{"provider":"local-cli","command":"engine"}' },
       absent: ["engine"],
     });
-    expect(cmdSttStatus(gone)).toBe(EXIT.FAIL);
+    expect(await cmdSttStatus(gone)).toBe(EXIT.FAIL);
     expect(said(gone)).toContain("was not found on this shell's PATH");
   });
 });
