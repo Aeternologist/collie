@@ -155,6 +155,16 @@ import type { CrewHandler, CrewSurface } from "./crew/router.ts";
 import type { CrewTlsOptions } from "./crew/transport.ts";
 import { createSttAdmission, MAX_STT_AUDIO_BYTES, sttCapability, transcribeRequest } from "./stt/http.ts";
 import type { SttProvider } from "./stt/provider.ts";
+import { createWhistleModelStore, type WhistleModelStore } from "./stt/whistle-model.ts";
+import {
+  modelResponse,
+  whistleGet,
+  whistleHost,
+  whistleRemove,
+  whistleStart,
+  whistleStatus,
+  type WhistleRouteDeps,
+} from "./stt/whistle-http.ts";
 import { uploadTooLarge } from "./uploads.ts";
 import { MUX_LOGO_PATH, OPERATOR_FONTS_PATH, journalAgentOf, toPaneWire } from "./types.ts";
 import type { LaunchCheckResponse, MachineAlertsResponse } from "./types.ts";
@@ -202,6 +212,7 @@ import type {
   PaneWire,
   SnapshotResponse,
   SttCapability,
+  WhistleStatus,
   UpdateStatus,
   UploadCapability,
   UploadResponse,
@@ -260,6 +271,9 @@ const CONTENT_TYPES = new Map<string, string>([
   [".svg", "image/svg+xml"],
   [".ico", "image/x-icon"],
   [".woff2", "font/woff2"],
+  // The vendored speech engine (ADR 0096). The exact type is what lets a browser compile it
+  // streaming, and `nosniff` (SECURITY_HEADERS) means no other type would be read as wasm at all.
+  [".wasm", "application/wasm"],
 ]);
 
 // Strict CSP. Scripts are external, hashed bundles (script-src 'self'); pane text is rendered by
@@ -271,6 +285,20 @@ const CSP =
   "default-src 'self'; connect-src 'self'; img-src 'self' data: blob:; " +
   "style-src 'self' 'unsafe-inline'; script-src 'self'; worker-src 'self'; " +
   "manifest-src 'self'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'; form-action 'self'";
+
+/**
+ * The policy every `.js` under `stt/` is served with: the speech worker and the engine glue it loads
+ * (ADR 0096 Decision 8). A dedicated worker loaded from a URL runs under the policy ITS OWN response
+ * carries, so this is the one place wasm may compile, and the document's {@link CSP} never gains
+ * `'wasm-unsafe-eval'`. `default-src 'none'` also closes `connect-src`: the worker cannot fetch, and
+ * `importScripts` reaches this origin only. The page hands it the wasm and the model as bytes.
+ */
+export const STT_WORKER_CSP = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; base-uri 'none'";
+
+/** The served path (mount already stripped) of a script that runs under {@link STT_WORKER_CSP}. */
+export function isSttWorkerScript(rel: string): boolean {
+  return rel.startsWith("stt/") && extname(rel) === ".js";
+}
 
 // Hardening headers set on EVERY response (static + API), applied centrally in the fetch wrapper.
 // nosniff stops content-type confusion; no-referrer keeps the tailnet URL out of any Referer.
@@ -368,6 +396,13 @@ const MAX_HISTORY_LIMIT = 5000;
 // A tab supports rename + close — an action group like the pane route. The `/api/tab` POST above
 // (create) is an exact match on `/api/tab`, so it never collides with this `/api/tab/<id>/<action>`.
 const TAB_ACTION_ROUTE = /^\/api\/tab\/([^/]+)\/(rename|close)$/;
+
+/**
+ * `GET /api/stt/model/<sha256>` (ADR 0096 Decision 9). The segment is matched as an opaque value and
+ * only ever COMPARED with the held model's hash (bridge/stt/whistle-http.ts), never made into a path.
+ * Lead-local: `bridge/crew/forward.ts` does not list it.
+ */
+const STT_MODEL_ROUTE = /^\/api\/stt\/model\/([^/]+)$/;
 
 /**
  * `GET /api/blobs/<hash>` — one content-addressed image out of a pi/omp journal's blob store.
@@ -781,6 +816,8 @@ export function bridgeConfigBody(opts: {
    * configured none ships the same payload as before, the same rule `mode` follows.
    */
   stt?: SttCapability;
+  /** The Whistle model and the host engine's switch (ADR 0096). Omitted when absent, like `stt`. */
+  whistle?: WhistleStatus;
   /**
    * What this host accepts as an attachment. Optional here for the reason `mux` is — the crew-mode
    * assertions build this body by hand and are about the crew — and always passed by the real
@@ -820,6 +857,8 @@ export function bridgeConfigBody(opts: {
   // Appended after the mux block, and omit-when-absent for the reason `mode` is: no key means no
   // microphone, which is precisely true of a collie with no provider configured.
   if (opts.stt !== undefined) wire.stt = opts.stt;
+  // Right after `stt`, and omit-when-absent: no key is an older bridge or a crew member's own answer.
+  if (opts.whistle !== undefined) wire.whistle = opts.whistle;
   // Same omit-when-absent rule, and the same reading on the other end: no key is an older bridge,
   // which the phone falls back to the pre-attachment contract for (images, 10 MB).
   if (opts.upload !== undefined) wire.upload = opts.upload;
@@ -980,6 +1019,11 @@ export function startServer(opts: {
    */
   stt?: () => Promise<SttProvider | null>;
   /**
+   * The Whistle model on this host (ADR 0096). Absent means this function builds the store over
+   * `cfg.stateDir`, which is what the real bridge does; a test passes one with a fake fetch.
+   */
+  whistle?: WhistleModelStore;
+  /**
    * The journal registry, built once by the caller. Absent means this function builds its own, which
    * is what every test does; `bridge/index.ts` passes one so the cache tracker and the history route
    * share the adapters' memoised path caches.
@@ -1097,6 +1141,13 @@ export function startServer(opts: {
   // One gate per Bun server, not per request: two slow uploads and their two provider calls share
   // the same bounded process-local capacity (bridge/stt/http.ts).
   const sttAdmission = createSttAdmission();
+  // The Whistle routes' world (ADR 0096): the model store, and where `stt.json` is. Lead-local, like
+  // `/api/stt`: a crew member answers none of them, and nothing here is ever forwarded.
+  const whistleDeps: WhistleRouteDeps = {
+    store: opts.whistle ?? createWhistleModelStore({ stateDir: cfg.stateDir, version: opts.version }),
+    stateDir: cfg.stateDir,
+    env: process.env,
+  };
   /** Who the requester is, across both device gates — see {@link requestDevice}. */
   const whois = (req: Request): DeviceAuth => requestDevice(req, cfg, pairingGate);
   const crewLead = opts.crewLead;
@@ -2213,6 +2264,9 @@ export function startServer(opts: {
         // live, and this is where the phone learns whether to draw a microphone at all. `?? undefined`
         // because "no provider" must OMIT the key, never send a null one (CREW_PROTOCOL.md §11).
         const sttWire = (await sttCapability(await stt())) ?? undefined;
+        // The lead's (or a solo collie's) model, so Settings can offer the setup tap. A `?host=`
+        // read carries it like `stt`, because speech is lead-only; a peer's own answer leaves it out.
+        const whistleWire = crew.mode === "peer" ? undefined : await whistleStatus(whistleDeps);
         return json(
           bridgeConfigBody({
             push: push.enabled,
@@ -2228,6 +2282,7 @@ export function startServer(opts: {
             // builds the byte-identical body it always did (CREW_PROTOCOL.md §11).
             muxWire: memberMux ?? undefined,
             stt: sttWire,
+            whistle: whistleWire,
             // This host's own limits, read from cfg on every request like everything else here.
             // A crew member answers with ITS number, which is the number that will judge the bytes.
             upload: {
@@ -2664,6 +2719,57 @@ export function startServer(opts: {
         // One line per attempt, and route metadata only: the recording, the transcript and the
         // provider's own words never reach the audit log.
         audit.record({ action: "stt", device: whois(req).device, detail: { ...attempt } });
+        return secure(response);
+      }
+
+      // ── The Whistle model and the host engine (bridge/stt/whistle-http.ts, ADR 0096) ──────
+      // Lead-local like `/api/stt`: none of these reads `?host=` and none is in the crew's
+      // FORWARDABLE list. The writes are gated exactly like `POST /api/stt`; the reads need the
+      // pairing token and nothing more (ADR 0086). Each write and each model copy is one audit line
+      // of route metadata. The status read is not audited: Settings polls it once a second while a
+      // download runs, and it changes nothing.
+      if (pathname === "/api/stt/whistle") {
+        if (req.method === "GET") {
+          const denied = guard(req, cfg, "read", pairingGate);
+          if (denied) return denied;
+          return secure(await whistleGet(whistleDeps));
+        }
+        if (req.method !== "POST" && req.method !== "DELETE") return text("method not allowed", 405);
+        const denied = guard(req, cfg, "write", pairingGate);
+        if (denied) return denied;
+        const { response, attempt } = req.method === "POST" ? await whistleStart(whistleDeps) : await whistleRemove(whistleDeps);
+        audit.record({
+          action: req.method === "POST" ? "stt.whistle.download" : "stt.whistle.remove",
+          device: whois(req).device,
+          detail: { ...attempt },
+        });
+        return secure(response);
+      }
+      if (pathname === "/api/stt/whistle/host" && req.method === "PUT") {
+        // Turning the host engine on writes `stt.json`, so it is a write like any other setting a
+        // phone may change; whistle-http.ts says which states it may change and which it may not.
+        const denied = guard(req, cfg, "write", pairingGate);
+        if (denied) return denied;
+        let body: JsonValue | undefined;
+        try {
+          // SAFETY: `Request.json()` output IS a JsonValue by construction; `parseWhistleHost`
+          // reads the one field it needs and refuses anything else.
+          body = (await req.json()) as JsonValue;
+        } catch {
+          body = undefined;
+        }
+        const { response, attempt } = await whistleHost(whistleDeps, body);
+        audit.record({ action: "stt.whistle.host", device: whois(req).device, detail: { ...attempt } });
+        return secure(response);
+      }
+      const sttModelMatch = pathname.match(STT_MODEL_ROUTE);
+      if (sttModelMatch && req.method === "GET") {
+        // A plain read (ADR 0096 Decision 9): the bytes are public and asking for them changes
+        // nothing. The hash is compared with the held file's, never joined into a path.
+        const denied = guard(req, cfg, "read", pairingGate);
+        if (denied) return denied;
+        const { response, attempt } = await modelResponse(whistleDeps, sttModelMatch[1]!);
+        audit.record({ action: "stt.model.read", device: whois(req).device, detail: { ...attempt } });
         return secure(response);
       }
 
@@ -6716,6 +6822,9 @@ export async function serveStatic(
     "cache-control": cacheControlFor(rel),
   };
   if (ext === ".html") headers["content-security-policy"] = CSP;
+  // Keyed on the path relative to web/dist, which is the mount-stripped request path (ADR 0052), so
+  // the worker keeps its policy under a mount too.
+  else if (isSttWorkerScript(rel)) headers["content-security-policy"] = STT_WORKER_CSP;
   if (rel === "sw.js") headers["service-worker-allowed"] = "/";
 
   // Under a mount the app shell is the one file not served as it lies on disk: its root-absolute
@@ -6749,6 +6858,9 @@ export async function serveStatic(
  */
 const COMPRESSIBLE_EXT = new Set([
   ".js",
+  // Not text, but the speech engine's wasm (ADR 0096) shrinks from 929 KB to 340 KB, which is most
+  // of what a phone fetches to turn on "This phone".
+  ".wasm",
   ".mjs",
   ".css",
   ".html",

@@ -23,6 +23,10 @@ Running a crew? Update the lead first; members follow on their own. Details:
 
 ## [Unreleased]
 
+### Added
+
+- **Whistle speech to text on the host, set up from Settings.** One tap downloads the Whistle model (16.9 MB) once, from a pinned Hugging Face address, and checks it against a hash this release carries. A second tap turns on the host engine: Collie's own copy of the engine runs in a short-lived child of Collie, with no key, no command to configure, and no audio leaving the host. A recording for it is 16 kHz WAV, up to four minutes. Every other provider is still set up with `collie stt setup`.
+
 ### Changed
 
 - **Dictation takes over the composer with a recorder.** Tap the mic and a bar covers the whole composer block, belt and box, in exactly its own space, so nothing above it moves. OK stands where the mic was and the bin at the far end, with a live level display between them. Once you have spoken, three seconds of quiet finish the clip, shown as a ring closing round OK; speaking again resets it. While it transcribes, the ring becomes one turning arc and the bin still cancels the request. The old recording strip is gone.

@@ -448,6 +448,18 @@ export const COMMANDS: readonly Command[] = [
       return cmdMuxProbe({ ctx: deps.ctx, io: s.io, exec: deps.exec, files: deps.files });
     },
   },
+  // The Whistle host engine's child (ADR 0096): the bridge spells it once per dictation, with a WAV
+  // path it wrote. Dispatched from cli/main.ts's bootstrap; declared here so the table stays the one
+  // declaration and the usage line keeps it hidden.
+  {
+    name: "_whistle-transcribe",
+    summary: "internal: transcribe one WAV with the Whistle engine, for the bridge",
+    internal: true,
+    run: async (args, s) => {
+      const { cmdWhistleTranscribe } = await import("./whistle-transcribe.ts");
+      return cmdWhistleTranscribe(args, { io: s.io, env: process.env });
+    },
+  },
   lifecycleCommand(
     "_exec-bridge",
     "internal: the process the supervisor watches",
