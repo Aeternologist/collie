@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, Mic, Trash2 } from "lucide-react";
+import { Check, CircleAlert, Mic, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { TOOLBAR_TAP_TARGET } from "@/components/ui/tap-target";
@@ -34,13 +34,19 @@ import { cn } from "@/lib/utils";
 // ONE MOVING THING AT A TIME at the OK button. While the clip records, the ring around OK is the
 // silence countdown, closing over 3 s once speech has been heard. While it transcribes, the ring is
 // ONE rotating arc on its own track, OK keeps its static check, dimmed and disabled, and there is no
-// separate spinner. Reduced motion draws that arc as a static full ring at reduced opacity.
+// separate spinner. Reduced motion draws that arc as a static full ring at reduced opacity. Running
+// on the phone changes only the word ("Transcribing on this phone"); it adds no second moving thing.
+//
+// WHEN THE PHONE ENGINE FAILS (ADR 0096 Decision 12) the takeover stays open in a fourth state, in
+// the same box. The sentence takes the word's place (two lines at most, nothing grows), the bars give
+// their slot to a "Send to host" button when the host can serve, and OK's spot is left empty: there is
+// nothing to finish. The bin throws the clip away. Nothing is sent unless the person taps the button.
 
 /** Bars in the equalizer. Fixed, so the slots are reserved; they thin out on a narrow phone rather than overflow. */
 export const VOICE_BAR_COUNT = 36;
 
 /** Where the clip is. `requesting` is the browser's permission prompt, still showing the takeover. */
-export type VoiceTakeoverPhase = "requesting" | "recording" | "transcribing";
+export type VoiceTakeoverPhase = "requesting" | "recording" | "transcribing" | "failed";
 
 export interface VoiceTakeoverProps {
   phase: VoiceTakeoverPhase;
@@ -54,6 +60,12 @@ export interface VoiceTakeoverProps {
   padClassName: string;
   /** True when the transcript will be sent straight away (hands-free), so OK says so. */
   sends?: boolean;
+  /** Where the clip is transcribed. `phone` changes the transcribing word to say so. */
+  engine?: "host" | "phone";
+  /** In the `failed` phase: the sentence. */
+  failure?: string | null;
+  /** In the `failed` phase: send the clip to the host. Absent when the host cannot serve, and then no button is drawn. */
+  onSendToHost?: (() => void) | null;
   /** OK, and the silence countdown running out: stop and transcribe. */
   onStop: () => void;
   /** The bin, and Escape: throw the clip away and abort any transcription in flight. */
@@ -71,6 +83,9 @@ export function VoiceTakeover({
   hand = "right",
   padClassName,
   sends = false,
+  engine = "host",
+  failure = null,
+  onSendToHost = null,
   onStop,
   onDiscard,
   takeFocus = true,
@@ -79,6 +94,7 @@ export function VoiceTakeover({
   useLocale();
   const reduced = useMediaQuery("(prefers-reduced-motion: reduce)");
   const transcribing = phase === "transcribing";
+  const failed = phase === "failed";
   const { barRef, levelRef, ringRef } = useVoiceLevels({
     source,
     mode: phase === "recording" ? "live" : transcribing ? "frozen" : "rest",
@@ -94,9 +110,9 @@ export function VoiceTakeover({
   // is disabled then), the region itself while the permission prompt is up.
   useEffect(() => {
     if (!takeFocus) return;
-    const target = phase === "recording" ? okRef.current : transcribing ? binRef.current : rootRef.current;
+    const target = phase === "recording" ? okRef.current : transcribing || failed ? binRef.current : rootRef.current;
     target?.focus({ preventScroll: true });
-  }, [phase, transcribing, takeFocus]);
+  }, [phase, transcribing, failed, takeFocus]);
 
   // THE FOCUS MARK STAYS HIDDEN UNTIL A KEY ASKS FOR IT. Focus is moved onto OK by code, and a browser
   // draws the keyboard focus mark for focus that code moved, even after a tap. The mark is a 2px
@@ -119,7 +135,11 @@ export function VoiceTakeover({
 
   // A live region has to exist before its words change to be read out, so it mounts empty and is
   // filled one effect later. The visible word is `aria-hidden`: this is the one the screen reader hears.
-  const label = transcribing ? t("composer.voice.transcribing") : t("composer.voice.listening");
+  const label = failed
+    ? (failure ?? "")
+    : transcribing
+      ? t(engine === "phone" ? "composer.voice.transcribingPhone" : "composer.voice.transcribing")
+      : t("composer.voice.listening");
   const [spoken, setSpoken] = useState("");
   useEffect(() => setSpoken(label), [label]);
 
@@ -136,15 +156,24 @@ export function VoiceTakeover({
         padClassName,
       )}
     >
-      <span role="status" className="sr-only">
+      <span role={failed ? "alert" : "status"} className="sr-only">
         {spoken}
       </span>
       <div aria-hidden className="flex min-h-0 flex-1 items-center justify-between gap-2 px-1 text-xs">
-        <span className="flex min-w-0 items-center gap-1.5 font-medium text-primary">
-          <Mic className={cn("size-3.5 shrink-0", !transcribing && "animate-pulse motion-reduce:animate-none")} />
-          <span className="min-w-0 truncate">{label}</span>
-        </span>
-        <span className="shrink-0 tabular-nums text-muted-foreground">{elapsed}</span>
+        {failed ? (
+          <span className="flex min-w-0 items-center gap-1.5 font-medium text-status-blocked">
+            <CircleAlert className="size-3.5 shrink-0" />
+            <span className="line-clamp-2 min-w-0 leading-4">{label}</span>
+          </span>
+        ) : (
+          <>
+            <span className="flex min-w-0 items-center gap-1.5 font-medium text-primary">
+              <Mic className={cn("size-3.5 shrink-0", !transcribing && "animate-pulse motion-reduce:animate-none")} />
+              <span className="min-w-0 truncate">{label}</span>
+            </span>
+            <span className="shrink-0 tabular-nums text-muted-foreground">{elapsed}</span>
+          </>
+        )}
       </div>
       <div
         data-slot="voice-takeover-row"
@@ -164,13 +193,24 @@ export function VoiceTakeover({
         >
           <Trash2 className="size-4" />
         </Button>
+        {failed && onSendToHost !== null && (
+          <Button
+            variant="outline"
+            className="h-9 min-w-0 flex-1 rounded-full px-3 text-xs"
+            aria-label={t("composer.voice.sendToHostAria")}
+            onClick={onSendToHost}
+          >
+            <span className="truncate">{t("composer.voice.sendToHost")}</span>
+          </Button>
+        )}
         <div
           ref={levelRef}
           aria-hidden
           data-level="idle"
           className={cn(
             "group/eq flex h-9 min-w-0 flex-1 items-center justify-center gap-[3px] px-1",
-            transcribing && "opacity-30",
+            (transcribing || failed) && "opacity-30",
+            failed && onSendToHost !== null && "hidden",
           )}
         >
           {Array.from({ length: VOICE_BAR_COUNT }, (_, i) => (
@@ -182,16 +222,18 @@ export function VoiceTakeover({
           ))}
         </div>
         <div className="relative size-9 shrink-0" data-slot="voice-takeover-ok">
-          <Button
-            ref={okRef}
-            size="icon"
-            className={cn(TOOLBAR_TAP_TARGET, "size-9 rounded-full")}
-            disabled={phase !== "recording"}
-            aria-label={sends ? t("composer.voice.okSendAria") : t("composer.voice.okAria")}
+          {!failed && (
+            <Button
+              ref={okRef}
+              size="icon"
+              className={cn(TOOLBAR_TAP_TARGET, "size-9 rounded-full")}
+              disabled={phase !== "recording"}
+              aria-label={sends ? t("composer.voice.okSendAria") : t("composer.voice.okAria")}
               onClick={onStop}
-          >
-            <Check className="size-4" />
-          </Button>
+            >
+              <Check className="size-4" />
+            </Button>
+          )}
           {phase === "recording" && (
             // The countdown: empty and invisible until speech was heard and then 3 s of quiet begin;
             // the hook writes its offset and opacity per frame. `pathLength` makes 100 the whole circle.

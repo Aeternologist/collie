@@ -326,3 +326,54 @@ describe("VoiceTakeover — the bars", () => {
     expect(onStop).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("VoiceTakeover — the phone engine (ADR 0096)", () => {
+  it("says the clip is transcribed on this phone, and still draws the one spinner", () => {
+    const { container } = renderTakeover({ phase: "transcribing", engine: "phone" });
+    expect(screen.getByRole("status")).toHaveTextContent("Transcribing on this phone");
+    expect(container.querySelectorAll(".animate-spin")).toHaveLength(1);
+  });
+
+  it("keeps the plain word for the host", () => {
+    renderTakeover({ phase: "transcribing", engine: "host" });
+    expect(screen.getByRole("status").textContent).toBe("Transcribing");
+  });
+
+  it("shows the failure sentence in an alert, with no OK button and no spinner", () => {
+    const { container } = renderTakeover({ phase: "failed", failure: "The speech engine stopped." });
+    expect(screen.getByRole("alert")).toHaveTextContent("The speech engine stopped.");
+    expect(screen.queryByRole("button", { name: /finish and transcribe/i })).toBeNull();
+    expect(container.querySelectorAll(".animate-spin")).toHaveLength(0);
+    // The bin is still there and throws the clip away.
+    expect(screen.getByRole("button", { name: /discard recording/i })).toBeInTheDocument();
+  });
+
+  it("offers Send to host only when it is given a handler, and calls it once per tap", () => {
+    const onSendToHost = vi.fn();
+    const { rerender, onStop, onDiscard } = renderTakeover({ phase: "failed", failure: "x", onSendToHost: null });
+    expect(screen.queryByRole("button", { name: /send the recording to the host/i })).toBeNull();
+
+    rerender(
+      <VoiceTakeover
+        phase="failed"
+        elapsed="0:07"
+        source={null}
+        padClassName="pb-2"
+        failure="x"
+        onSendToHost={onSendToHost}
+        onStop={onStop}
+        onDiscard={onDiscard}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /send the recording to the host/i }));
+    expect(onSendToHost).toHaveBeenCalledTimes(1);
+    expect(onStop).not.toHaveBeenCalled();
+  });
+
+  it("lets Escape and the bin throw the failed clip away", () => {
+    const { onDiscard } = renderTakeover({ phase: "failed", failure: "x" });
+    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: /discard recording/i }));
+    expect(onDiscard).toHaveBeenCalledTimes(2);
+  });
+});

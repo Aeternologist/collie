@@ -279,6 +279,9 @@ export const de: Dictionary = {
   "composer.voice.transcribing": "Transkribiert",
   "composer.voice.okAria": "Beenden und transkribieren",
   "composer.voice.okSendAria": "Beenden, transkribieren und senden",
+  "composer.voice.transcribingPhone": "Transkribiert auf diesem Handy",
+  "composer.voice.sendToHost": "An Host senden",
+  "composer.voice.sendToHostAria": "Aufnahme zum Transkribieren an den Host senden",
   "composer.mic.discardAria": "Aufnahme verwerfen",
   "composer.attach.aria": "Datei anhängen",
   "composer.attach.title": "Anhängen",
@@ -1230,6 +1233,14 @@ export const de: Dictionary = {
   "stt.error.nothingRecorded": "Es wurden keine Audiodaten aufgenommen.",
   "stt.error.unsupportedBrowser": "Dieser Browser unterstützt keine Audioaufnahme.",
   "stt.error.micRefused": "Der Zugriff auf das Mikrofon wurde verweigert.",
+  "stt.error.phone.generic": "Dieses Handy konnte die Aufnahme nicht transkribieren.",
+  "stt.error.phone.undecodable": "Dieses Handy konnte die Aufnahme nicht lesen.",
+  "stt.error.phone.crashed": "Die Spracherkennung wurde beendet.",
+  "stt.error.phone.disabled": "Die Spracherkennung wurde zweimal beendet. Auf diesem Handy ist sie aus, bis du die App neu lädst.",
+  "stt.error.phone.memory": "Auf diesem Handy fehlt Speicher für die Spracherkennung.",
+  "stt.error.phone.timeout": "Die Transkription hat zu lange gedauert.",
+  "stt.error.phone.unsupported": "Dieser Browser kann die Spracherkennung nicht ausführen.",
+  "stt.error.phone.engineFiles": "Die Dateien der Spracherkennung sind beschädigt. Lade die App neu.",
 
   // --- directTyping (the composer's "Type into terminal" mode, hooks/use-direct-typing.ts) ---
   "directTyping.status.draftPending":

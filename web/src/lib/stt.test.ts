@@ -8,6 +8,8 @@ import {
   __resetSttEngine,
   noteSttProbe,
   phoneEngineBlock,
+  phoneFailureMessage,
+  recordingLimitMs,
   setSttEnginePreference,
   sttEnginePreference,
   sttModelErrorMessage,
@@ -101,17 +103,17 @@ describe("the probe's answer", () => {
     expect(sttProbeState()).toBe("crashed");
   });
 
-  it("runs a throwaway engine once, records what it said, and stops the worker", async () => {
+  it("runs the shared engine once, records what it said, and leaves the worker to its idle timer", async () => {
     const dispose = vi.fn();
     const probe = vi.fn(async () => ({ ok: false as const, reason: "wasm-csp" as const }));
-    const createSttEngine = vi.fn(() => ({ probe, dispose, transcribe: vi.fn() }));
+    const createSttEngine = vi.fn(() => ({ probe, dispose, transcribe: vi.fn(), disabled: () => false }));
     vi.resetModules();
     vi.doMock("@/lib/stt-engine", () => ({ createSttEngine }));
     const fresh = await import("./stt");
     await Promise.all([fresh.runSttProbe(), fresh.runSttProbe()]);
     await fresh.runSttProbe();
     expect(createSttEngine).toHaveBeenCalledTimes(1);
-    expect(dispose).toHaveBeenCalledTimes(1);
+    expect(dispose).not.toHaveBeenCalled();
     expect(fresh.sttProbeState()).toBe("wasm-csp");
     vi.doUnmock("@/lib/stt-engine");
   });
@@ -171,5 +173,101 @@ describe("sttModelErrorMessage", () => {
       t("stt.model.error.downloadFailed"),
     );
     expect(sttModelErrorMessage(new Error("boom"))).toBe("boom");
+  });
+});
+
+describe("recordingLimitMs", () => {
+  const whistle = { provider: "whistle", available: true, input: "wav-16k" as const, maxDurationMs: 240_000 };
+
+  it("is the provider's cap on the host engine, and five minutes on the phone", () => {
+    expect(recordingLimitMs("host", whistle)).toBe(240_000);
+    expect(recordingLimitMs("phone", whistle)).toBe(5 * 60 * 1000);
+  });
+
+  it("is five minutes when the provider names none, and never more than five", () => {
+    expect(recordingLimitMs("host", null)).toBe(5 * 60 * 1000);
+    expect(recordingLimitMs("host", { provider: "codex", available: true })).toBe(5 * 60 * 1000);
+    expect(recordingLimitMs("host", { ...whistle, maxDurationMs: 3_600_000 })).toBe(5 * 60 * 1000);
+    expect(recordingLimitMs("host", { ...whistle, maxDurationMs: 0 })).toBe(5 * 60 * 1000);
+    expect(recordingLimitMs("host", { ...whistle, maxDurationMs: Number.NaN })).toBe(5 * 60 * 1000);
+  });
+});
+
+describe("phoneFailureMessage", () => {
+  it("says the engine is off after the second crash, whichever code ended the clip", () => {
+    expect(phoneFailureMessage("crashed", true, null)).toBe(t("stt.error.phone.disabled"));
+    expect(phoneFailureMessage("timeout", true, null)).toBe(t("stt.error.phone.disabled"));
+    expect(phoneFailureMessage("disabled", true, null)).toBe(t("stt.error.phone.disabled"));
+    expect(phoneFailureMessage("crashed", false, null)).toBe(t("stt.error.phone.crashed"));
+    expect(phoneFailureMessage("timeout", false, null)).toBe(t("stt.error.phone.timeout"));
+  });
+
+  it("has a sentence for each case in the failure table, none of them a raw key", () => {
+    const damaged = new SttModelError("damaged");
+    const sentences = [
+      phoneFailureMessage("oom", false, null),
+      phoneFailureMessage("busy", false, null),
+      phoneFailureMessage("unsupported", false, null),
+      phoneFailureMessage("wasm-hash", false, null),
+      phoneFailureMessage("model-hash", false, null),
+      phoneFailureMessage("bytes-failed", false, damaged),
+      phoneFailureMessage("bytes-failed", false, new SttModelError("engine-mismatch")),
+      phoneFailureMessage("bytes-failed", false, null),
+      phoneFailureMessage("transcribe-failed", false, null),
+    ];
+    for (const sentence of sentences) expect(sentence).not.toMatch(/^(stt|composer)\./);
+    expect(phoneFailureMessage("busy", false, null)).toBe(t("stt.error.busy"));
+    expect(phoneFailureMessage("bytes-failed", false, damaged)).toBe(t("stt.model.error.damaged"));
+    expect(phoneFailureMessage("wasm-hash", false, null)).toBe(t("stt.error.phone.engineFiles"));
+  });
+});
+
+describe("transcribeOnPhone", () => {
+  /** A fresh stt module over a fake engine. */
+  async function withEngine(engine: {
+    transcribe: ReturnType<typeof vi.fn>;
+    disabled?: () => boolean;
+    probe?: ReturnType<typeof vi.fn>;
+  }) {
+    const fake = { probe: vi.fn(), disabled: () => false, dispose: vi.fn(), ...engine };
+    vi.resetModules();
+    vi.doMock("@/lib/stt-engine", () => ({ createSttEngine: () => fake }));
+    return { fresh: await import("./stt"), fake };
+  }
+
+  it("returns the words and shares one engine across clips", async () => {
+    const transcribe = vi.fn(async () => ({ ok: true, text: "hello", language: "en" }));
+    const { fresh } = await withEngine({ transcribe });
+    const signal = new AbortController().signal;
+    await expect(fresh.transcribeOnPhone(new Float32Array(4), signal)).resolves.toEqual({ ok: true, text: "hello" });
+    await fresh.transcribeOnPhone(new Float32Array(4), signal);
+    expect(transcribe).toHaveBeenCalledTimes(2);
+    vi.doUnmock("@/lib/stt-engine");
+  });
+
+  it("hands back the probe answer when two crashes switched the engine off, and notes nothing itself", async () => {
+    const probe = vi.fn(async () => ({ ok: false as const, reason: "disabled" as const }));
+    const { fresh } = await withEngine({
+      transcribe: vi.fn(async () => ({ ok: false, code: "crashed" })),
+      disabled: () => true,
+      probe,
+    });
+    const result = await fresh.transcribeOnPhone(new Float32Array(4), new AbortController().signal);
+    expect(result).toEqual({
+      ok: false,
+      message: fresh.phoneFailureMessage("crashed", true, null),
+      probe: { ok: false, reason: "disabled" },
+    });
+    expect(fresh.sttProbeState()).toBe("unknown");
+    fresh.noteSttProbe(result.ok ? { ok: true } : (result.probe ?? { ok: true }));
+    expect(fresh.sttProbeState()).toBe("crashed");
+    vi.doUnmock("@/lib/stt-engine");
+  });
+
+  it("carries no probe for an ordinary failure", async () => {
+    const { fresh } = await withEngine({ transcribe: vi.fn(async () => ({ ok: false, code: "oom" })) });
+    const result = await fresh.transcribeOnPhone(new Float32Array(4), new AbortController().signal);
+    expect(result).toEqual({ ok: false, message: t("stt.error.phone.memory") });
+    vi.doUnmock("@/lib/stt-engine");
   });
 });

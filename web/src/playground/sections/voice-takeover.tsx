@@ -94,11 +94,17 @@ function TakeoverStage({
   elapsed,
   script,
   replayMs = null,
+  engine = "host",
+  failure = null,
+  canSendToHost = false,
 }: {
   phase: VoiceTakeoverPhase;
   elapsed: string;
   script: Script;
   replayMs?: number | null;
+  engine?: "host" | "phone";
+  failure?: string | null;
+  canSendToHost?: boolean;
 }) {
   const roomy = useRoomyActions();
   const key = useReplayKey(replayMs);
@@ -118,6 +124,9 @@ function TakeoverStage({
           elapsed={elapsed}
           source={source}
           padClassName={BLOCK_PAD}
+          engine={engine}
+          failure={failure}
+          onSendToHost={canSendToHost ? () => {} : null}
           onStop={() => {}}
           onDiscard={() => {}}
           takeFocus={false}
@@ -166,6 +175,22 @@ export function VoiceTakeoverGroup() {
         note={`${NOTE} Under reduced motion the arc is a still full ring at 40%.`}
       >
         <TakeoverStage phase="transcribing" elapsed="0:12" script="quiet" />
+      </Card>
+      <Card
+        state="voice-takeover-transcribing-phone"
+        label="5: transcribing on this phone"
+        reach="choose This phone in Settings, Speech, then record. Only the word changes; there is still one turning arc."
+        note={NOTE}
+      >
+        <TakeoverStage phase="transcribing" elapsed="0:12" script="quiet" engine="phone" />
+      </Card>
+      <Card
+        state="voice-takeover-failed"
+        label="6: the phone could not transcribe, the host can"
+        reach="make the phone engine fail (a damaged model, or two crashes). The sentence takes the word's place, Send to host takes the bars' place, and nothing is sent until you tap it."
+        note={`${NOTE} Without an available host provider the button is not drawn and the bars stay dimmed.`}
+      >
+        <TakeoverStage phase="failed" elapsed="0:12" script="quiet" failure="The speech engine stopped." canSendToHost />
       </Card>
     </Group>
   );

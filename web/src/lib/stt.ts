@@ -10,8 +10,8 @@ import {
   loadOperatorCommands,
   subscribeOperatorConfig,
 } from "@/lib/operator-config";
-import type { SttProbe } from "@/lib/stt-engine";
-import { SttModelError, type SttModelErrorCode } from "@/lib/stt-model";
+import type { SttEngine, SttEngineErrorCode, SttProbe } from "@/lib/stt-engine";
+import { getEngineBytes, SttModelError, type SttModelErrorCode } from "@/lib/stt-model";
 import type { SttCapability, WhistleStatus } from "@/lib/types";
 
 /** The refusal half of one transcription attempt — the only shape `sttErrorMessage` has words for. */
@@ -40,6 +40,18 @@ export const MAX_STT_AUDIO_BYTES = 8 * 1024 * 1024;
 
 /** Hard stop on one clip. A recording still running at five minutes is a pocket, not a reply. */
 export const MAX_STT_DURATION_MS = 5 * 60 * 1000;
+
+/**
+ * The longest this clip may record. The phone engine keeps the five minutes. The host engine takes
+ * the provider's own cap when it publishes one (`whistle` takes 4 minutes, because its WAV upload is
+ * about four times the size of the compressed recording and the 8 MiB cap stays). The host can only
+ * shorten the clip: a cap above five minutes, or one that is not a positive number, is ignored.
+ */
+export function recordingLimitMs(engine: "host" | "phone", host: SttCapability | null): number {
+  const cap = host?.maxDurationMs;
+  if (engine !== "host" || cap === undefined || !Number.isFinite(cap) || cap <= 0) return MAX_STT_DURATION_MS;
+  return Math.min(cap, MAX_STT_DURATION_MS);
+}
 
 /** Containers a browser's MediaRecorder actually produces, best first. Every one of them is in the
  *  bridge's accepted set; the first the browser admits to supporting wins (Chrome/Firefox take the
@@ -236,6 +248,8 @@ export function __resetSttEngine(): void {
   probeState = "unknown";
   probeListeners.clear();
   probeRun = null;
+  enginePromise = null;
+  lastBytesError = null;
 }
 
 // ── WHY "THIS PHONE" CANNOT BE CHOSEN ───────────────────────────────────────────────────────────
@@ -292,26 +306,51 @@ export function useSttProbeState(): SttProbeState {
   return useSyncExternalStore(subscribeProbe, sttProbeState, sttProbeState);
 }
 
+// ── THE PHONE ENGINE, ONE PER PAGE ──────────────────────────────────────────────────────────────
+//
+// Settings' probe and the composer's dictation share this one engine, so they share its worker, its
+// crash count and what it learned about the browser. The engine module loads on demand, so a page that
+// never probes or dictates on the phone never pays for it. The engine takes its bytes from the model
+// store (lib/stt-model.ts) when a fresh worker needs them.
+
+let enginePromise: Promise<SttEngine> | null = null;
+/** The last thing `getBytes` threw, so a failed clip can say "damaged" and not just "failed". */
+let lastBytesError: SttModelError | null = null;
+
+export function phoneEngine(): Promise<SttEngine> {
+  enginePromise ??= import("@/lib/stt-engine")
+    .then(({ createSttEngine }) =>
+      createSttEngine({
+        getBytes: async () => {
+          try {
+            return await getEngineBytes();
+          } catch (error) {
+            if (error instanceof SttModelError) lastBytesError = error;
+            throw error;
+          }
+        },
+      }),
+    )
+    .catch((error) => {
+      enginePromise = null;
+      throw error;
+    });
+  return enginePromise;
+}
+
 let probeRun: Promise<void> | null = null;
 
 /**
  * Ask the speech worker whether this browser can run the engine, once per page session, and record the
- * answer. A throwaway engine: it starts the worker, which compiles its eight-byte module, and stops
- * it. It needs neither the model nor the network. The engine module loads on demand, so a page that
- * never opens Settings never pays for it. A worker that came through the service worker also lands in
- * the speech cache here (sw.ts), which is what makes the engine start offline.
+ * answer. It starts the worker, which compiles its eight-byte module, and needs neither the model nor
+ * the network. The worker ends itself after a minute idle. A worker that came through the service
+ * worker also lands in the speech cache here (sw.ts), which is what makes the engine start offline.
  */
 export function runSttProbe(): Promise<void> {
   if (probeState !== "unknown") return Promise.resolve();
   probeRun ??= (async () => {
     try {
-      const { createSttEngine } = await import("@/lib/stt-engine");
-      const engine = createSttEngine({ getBytes: () => Promise.reject(new Error("probe only")) });
-      try {
-        noteSttProbe(await engine.probe());
-      } finally {
-        engine.dispose();
-      }
+      noteSttProbe(await (await phoneEngine()).probe());
     } catch {
       // A probe that could not run says nothing; the state stays unknown and the engine decides at use.
     } finally {
@@ -319,6 +358,63 @@ export function runSttProbe(): Promise<void> {
     }
   })();
   return probeRun;
+}
+
+/** The sentence for a clip the phone engine could not transcribe (plan section 6). */
+export function phoneFailureMessage(code: SttEngineErrorCode, disabled: boolean, bytesError: SttModelError | null): string {
+  if (code === "disabled" || ((code === "crashed" || code === "timeout") && disabled)) {
+    return t("stt.error.phone.disabled");
+  }
+  switch (code) {
+    case "crashed":
+      return t("stt.error.phone.crashed");
+    case "timeout":
+      return t("stt.error.phone.timeout");
+    case "oom":
+      return t("stt.error.phone.memory");
+    case "busy":
+      return t("stt.error.busy");
+    case "unsupported":
+      return t("stt.error.phone.unsupported");
+    case "wasm-hash":
+      return t("stt.error.phone.engineFiles");
+    case "model-hash":
+      return t("stt.model.error.damaged");
+    case "bytes-failed":
+      if (bytesError === null) return t("stt.error.phone.generic");
+      return bytesError.code === "engine-mismatch" ? t("stt.error.phone.engineFiles") : sttModelErrorMessage(bytesError);
+    default:
+      return t("stt.error.phone.generic");
+  }
+}
+
+/**
+ * What the phone engine made of a clip. A failure carries `probe` when it changed what is known about
+ * this browser (two crashes, or a browser found unable): the caller notes it with {@link noteSttProbe}
+ * AFTER it has put the sentence on screen, because noting it can take "This phone" off the choices and
+ * the composer reacts to that.
+ */
+export type PhoneTranscript = { ok: true; text: string } | { ok: false; message: string; probe?: SttProbe };
+
+/**
+ * One clip through the phone engine. Nothing is uploaded. A failure comes back as a sentence, and a
+ * second crash (or a browser found unable) comes back with the probe answer to note, which takes "This
+ * phone" off the choices for the rest of the page session (ADR 0096 Decision 12).
+ */
+export async function transcribeOnPhone(pcm: Float32Array, signal: AbortSignal): Promise<PhoneTranscript> {
+  let engine: SttEngine;
+  try {
+    engine = await phoneEngine();
+  } catch {
+    return { ok: false, message: t("stt.error.phone.unsupported") };
+  }
+  lastBytesError = null;
+  const outcome = await engine.transcribe(pcm, { signal });
+  if (outcome.ok) return { ok: true, text: outcome.text };
+  const message = phoneFailureMessage(outcome.code, engine.disabled(), lastBytesError);
+  // With a worker already refused or switched off, `probe()` answers at once and starts nothing.
+  if (engine.disabled() || outcome.code === "unsupported") return { ok: false, message, probe: await engine.probe() };
+  return { ok: false, message };
 }
 
 /** Why "This phone" is off, or `null` when it can be chosen. */
