@@ -708,16 +708,22 @@ exemption is granted by POSITION — the peer check sits after the federated dis
 its own `COLLIE_STANDBY_HOST` and neither gate reaches it; don't route it through the front door's
 `fetch` to share them.
 
-**The bridge makes no outbound call and spawns no long-running child for content — unless the
-operator ran `collie stt setup`.** Speech-to-text (`bridge/stt/`, CLI `cli/stt.ts`) is a registered
-provider seam, absent until that verb writes `stt.json`: it then holds a provider credential at 0600,
-opens an operator-configured outbound path carrying microphone audio, on the `codex` provider
-spawns a `codex app-server` child, and on the `local-cli` provider spawns the operator's named
+**The bridge makes two outbound calls of its own, and spawns no child for content unless
+`stt.json` names a speech provider.** The two calls are the update check and the Whistle
+model download: one file, fetched on a write device's tap or `collie stt whistle`, from a pinned
+address, and kept only when its sha256 matches a pin in this release
+([ADR 0096](./.adr/0096-speech-can-stay-on-the-phone.md)). Speech-to-text (`bridge/stt/`, CLI
+`cli/stt.ts`) is a registered provider seam, absent until `stt.json` names a provider. Then it may
+hold a provider credential at 0600, open an operator-configured outbound path carrying microphone
+audio, on `codex` spawn a `codex app-server` child, and on `local-cli` spawn the operator's named
 command as the bridge user, once per dictation, argv only and never a shell (ADR 0029, addendum
-2026-10-03). Every one of these costs is declined by doing nothing, the local-engine
-configuration keeps the egress on loopback, and the wire identity is probed honest-first and recorded
+2026-10-03). The `whistle` provider spawns Collie's own binary instead, `_whistle-transcribe` with a
+fixed argv, under the same bounds, and its audio stays on the host. Every one of these costs is
+declined by doing nothing, the local-engine configuration keeps the egress on loopback, and the wire
+identity is probed honest-first and recorded
 ([ADR 0029](./.adr/0029-speech-to-text-is-a-provider-seam-collie-owns.md)). Setup is a CLI act, never
-a web form, for the reason pairing is.
+a web form, for the reason pairing is, with one named exception: Whistle may be set up from Settings,
+because it holds no credential, runs no operator command and sends no audio off the host (ADR 0096).
 
 **Two device gates guard writes, independently, and compose by AND.** `COLLIE_DEVICE_HEADER` trusts
 a name a proxy injects; **pairing** (`bridge/pairing.ts`, `collie pair` / `collie devices`) requires a
