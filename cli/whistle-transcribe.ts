@@ -37,7 +37,7 @@ import { EXIT, type Io } from "./io.ts";
 const OUTPUT_CAPACITY = 64 * 1024;
 
 /** The few members of the Emscripten module this verb calls. */
-interface NeedleModule {
+export interface NeedleModule {
   HEAPU8: Uint8Array;
   _malloc(bytes: number): number;
   _free(pointer: number): void;
@@ -50,7 +50,7 @@ interface GlueModule {
   exports: object;
 }
 
-type CreateNeedle = (options: { wasmBinary: Uint8Array; print: (text: string) => void; printErr: (text: string) => void }) => Promise<NeedleModule>;
+export type CreateNeedle = (options: { wasmBinary: Uint8Array; print: (text: string) => void; printErr: (text: string) => void }) => Promise<NeedleModule>;
 
 export interface WhistleTranscribeDeps {
   io: Io;
@@ -94,8 +94,20 @@ function loadGlue(source: Uint8Array, dir: string): CreateNeedle {
   return module.exports as CreateNeedle;
 }
 
-/** The transcript of `pcm`, 16 kHz mono floats. */
-async function transcribe(createNeedle: CreateNeedle, wasm: Uint8Array, model: Uint8Array, pcm: Float32Array, io: Io): Promise<string> {
+/**
+ * The engine's answer in the output buffer: the bytes up to its terminating zero, searched for
+ * inside the buffer only (`web/src/stt/worker-core.ts` `readTranscript` reads it the same way). No
+ * zero inside it is a refusal, never a read past the end into the rest of the heap.
+ */
+export function readAnswer(heap: Uint8Array, at: number, capacity: number): string {
+  const window = heap.subarray(at, at + capacity);
+  const end = window.indexOf(0);
+  if (end === -1) throw new Refusal("the engine's answer did not end inside its buffer");
+  return new TextDecoder().decode(window.subarray(0, end));
+}
+
+/** The transcript of `pcm`, 16 kHz mono floats. Exported for the test, which hands it a fake engine. */
+export async function transcribe(createNeedle: CreateNeedle, wasm: Uint8Array, model: Uint8Array, pcm: Float32Array, io: Io): Promise<string> {
   const quiet = (text: string): void => io.err(text);
   const engine = await createNeedle({ wasmBinary: wasm, print: quiet, printErr: quiet });
   const modelAt = engine._malloc(model.byteLength);
@@ -106,12 +118,13 @@ async function transcribe(createNeedle: CreateNeedle, wasm: Uint8Array, model: U
   const pcmAt = engine._malloc(pcm.byteLength);
   engine.HEAPU8.set(new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength), pcmAt);
   const outAt = engine._malloc(OUTPUT_CAPACITY);
+  // Zeroed first: `malloc` hands back whatever the heap held there, and an answer the engine did not
+  // terminate must not run on into old bytes.
+  engine.HEAPU8.fill(0, outAt, outAt + OUTPUT_CAPACITY);
   const written = engine._needle_transcribe(pcmAt, pcm.length, 0, 0, 0, outAt, OUTPUT_CAPACITY);
   if (written < 0) throw new Refusal(`the engine could not transcribe (code ${written})`);
   // HEAPU8 is read after the call: a heap that grew during it is a new buffer.
-  const heap = engine.HEAPU8;
-  const end = heap.indexOf(0, outAt);
-  const answer = new TextDecoder().decode(heap.subarray(outAt, end === -1 ? outAt + OUTPUT_CAPACITY : end));
+  const answer = readAnswer(engine.HEAPU8, outAt, OUTPUT_CAPACITY);
   engine._free(pcmAt);
   engine._free(outAt);
 

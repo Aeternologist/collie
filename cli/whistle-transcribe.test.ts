@@ -7,7 +7,7 @@ import { encodeWav16 } from "../bridge/stt/wav.ts";
 import { whistlePaths } from "../bridge/stt/whistle-model.ts";
 import { NEEDLE_VERSION_DIR } from "../bridge/stt/whistle-pins.ts";
 import { EXIT, type Io } from "./io.ts";
-import { cmdWhistleTranscribe } from "./whistle-transcribe.ts";
+import { cmdWhistleTranscribe, readAnswer, transcribe, type CreateNeedle, type NeedleModule } from "./whistle-transcribe.ts";
 
 // The hidden verb. The refusals run everywhere; the real engine runs only where the measured model
 // is on disk, named by COLLIE_TEST_WHISTLE_DIR (a folder holding `whistle.cact` and `1.wav`, as
@@ -83,6 +83,52 @@ describe("collie _whistle-transcribe — refusals", () => {
     expect(await cmdWhistleTranscribe([wavFile()], { io: c.io, env, root: checkout })).toBe(EXIT.FAIL);
     expect(c.err.at(-1)).toBe("error: the Whistle model is a symlink; it is not followed");
     expect(c.out).toEqual([]);
+  });
+});
+
+describe("collie _whistle-transcribe — reading the engine's answer", () => {
+  const CAPACITY = 64 * 1024;
+
+  /** An engine whose heap is full of old bytes, and whose transcribe writes `answer` as given. */
+  function fakeEngine(answer: Uint8Array): CreateNeedle {
+    const heap = new Uint8Array(4 * CAPACITY).fill(0x41);
+    let next = 16;
+    const engine: NeedleModule = {
+      HEAPU8: heap,
+      _malloc: (bytes) => {
+        const at = next;
+        next += bytes;
+        return at;
+      },
+      _free: () => undefined,
+      _needle_load: () => 0,
+      _needle_transcribe: (_pcm, _samples, _a, _b, _c, out) => {
+        heap.set(answer, out);
+        return answer.byteLength;
+      },
+    };
+    return async () => engine;
+  }
+
+  const run = (answer: Uint8Array) =>
+    transcribe(
+      fakeEngine(answer),
+      new Uint8Array(1),
+      new Uint8Array(8),
+      new Float32Array(4),
+      captureIo().io,
+    );
+
+  test("an answer the engine did not terminate ends at the zeroed buffer, not in old heap bytes", async () => {
+    expect(await run(new TextEncoder().encode('{"text":" hello "}'))).toBe("hello");
+  });
+
+  test("an answer that fills the whole buffer with no zero is refused, and nothing past it is read", async () => {
+    await expect(run(new Uint8Array(CAPACITY).fill(0x20))).rejects.toThrow("the engine's answer did not end inside its buffer");
+    const heap = new Uint8Array(CAPACITY + 8).fill(0x7b);
+    heap[CAPACITY + 4] = 0;
+    expect(() => readAnswer(heap, 0, CAPACITY)).toThrow("the engine's answer did not end inside its buffer");
+    expect(readAnswer(new Uint8Array([0x61, 0x62, 0, 0x63]), 0, 4)).toBe("ab");
   });
 });
 
