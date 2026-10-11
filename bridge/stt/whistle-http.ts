@@ -6,8 +6,11 @@ import type { WhistleStatus } from "../types.ts";
 import {
   coerceSttFile,
   namedSttProvider,
+  sttChangeStamp,
   sttEnvSettings,
   sttSettingsPath,
+  writeSttSettingsFile,
+  type SttChangeStamp,
   type SttSettingsDocument,
   type SttSettingsFileOps,
 } from "./config.ts";
@@ -46,6 +49,8 @@ export interface WhistleRouteDeps {
   env: Record<string, string | undefined>;
   /** How `stt.json` is written and removed. The disk unless a test watches it. */
   files?: SttSettingsFileOps;
+  /** The clock for the change stamp. The real one unless a test sets it. */
+  now?: () => Date;
 }
 
 /**
@@ -71,6 +76,8 @@ export interface SttSources {
   unreadable: boolean;
   /** What `stt.json` held when it was read (null: no file, or not readable), to see a change by. */
   seen: string | null;
+  /** Which paired device last changed the option from the app, and when. Null when none is recorded. */
+  stamp: SttChangeStamp | null;
 }
 
 /**
@@ -80,6 +87,7 @@ export interface SttSources {
  */
 export function readSttSources(stateDir: string, envVars: Record<string, string | undefined>): SttSources {
   let file = coerceSttFile(undefined);
+  let stamp: SttChangeStamp | null = null;
   let unreadable = false;
   let text: string | null = null;
   try {
@@ -90,12 +98,20 @@ export function readSttSources(stateDir: string, envVars: Record<string, string 
   if (text !== null) {
     try {
       // SAFETY: `JSON.parse` answers with a JSON value and `coerceSttFile` checks every field it reads.
-      file = coerceSttFile(JSON.parse(text) as JsonValue);
+      const parsed = JSON.parse(text) as JsonValue;
+      file = coerceSttFile(parsed);
+      stamp = sttChangeStamp(parsed);
     } catch {
       unreadable = true;
     }
   }
-  return { file: unreadable ? coerceSttFile(undefined) : file, env: sttEnvSettings(envVars), unreadable, seen: text };
+  return {
+    file: unreadable ? coerceSttFile(undefined) : file,
+    env: sttEnvSettings(envVars),
+    unreadable,
+    seen: text,
+    stamp: unreadable ? null : stamp,
+  };
 }
 
 /** Whether two reads saw the same `stt.json` and the same environment. */
@@ -153,10 +169,19 @@ export async function whistleStart(deps: WhistleRouteDeps): Promise<WhistleRoute
   return { response: json(await whistleStatus(deps), status), attempt: { status, outcome: start.outcome } };
 }
 
-/** `DELETE /api/stt/whistle`: the model goes, and so does the `whistle` provider when a phone may remove it. */
-export async function whistleRemove(deps: WhistleRouteDeps): Promise<WhistleRouteResult> {
+/**
+ * `DELETE /api/stt/whistle`: the model goes, and so does the `whistle` provider when a phone may remove
+ * it. `changedBy` is the paired device's label, when the request came from one: the provider is then
+ * turned off by writing a file that holds only who did it and when (Settings shows "Last changed by"),
+ * instead of removing the file. A file with no provider in it is "nothing configured" to every reader.
+ */
+export async function whistleRemove(deps: WhistleRouteDeps, changedBy: string | null = null): Promise<WhistleRouteResult> {
   await deps.store.remove();
-  if (hostFlags(deps).removable) (deps.files ?? diskSttFileOps).remove(sttSettingsPath(deps.stateDir));
+  if (hostFlags(deps).removable) {
+    const files = deps.files ?? diskSttFileOps;
+    if (changedBy === null) files.remove(sttSettingsPath(deps.stateDir));
+    else writeSttSettingsFile(deps.stateDir, { changedBy, changedAt: (deps.now?.() ?? new Date()).toISOString() }, files);
+  }
   return { response: json(await whistleStatus(deps), 200), attempt: { status: 200, outcome: "removed" } };
 }
 

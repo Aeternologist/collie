@@ -2756,7 +2756,8 @@ export function startServer(opts: {
         if (req.method !== "POST" && req.method !== "DELETE") return text("method not allowed", 405);
         const denied = guard(req, cfg, "write", pairingGate);
         if (denied) return denied;
-        const { response, attempt } = req.method === "POST" ? await whistleStart(whistleDeps) : await whistleRemove(whistleDeps);
+        const { response, attempt } =
+          req.method === "POST" ? await whistleStart(whistleDeps) : await whistleRemove(whistleDeps, pairedLabel(req, pairingGate));
         audit.record({
           action: req.method === "POST" ? "stt.whistle.download" : "stt.whistle.remove",
           device: whois(req).device,
@@ -2786,7 +2787,9 @@ export function startServer(opts: {
         } catch {
           body = undefined;
         }
-        const { response, attempt } = await sttHostPut(sttHostDeps, body);
+        // The pairing label, and only that, is kept as "Last changed by": never a token, an address
+        // or a proxy header's value (a header names a device for the gate, not for a screen).
+        const { response, attempt } = await sttHostPut(sttHostDeps, body, pairedLabel(req, pairingGate));
         audit.record({ action: "stt.host", device: whois(req).device, detail: { ...attempt } });
         return secure(response);
       }
@@ -6395,6 +6398,23 @@ export function requestDevice(req: Request, cfg: Config, pairing?: PairingGate):
     // device is still read-only, and vice versa.
     authorized: header.authorized && paired !== null,
   };
+}
+
+/**
+ * The label of the paired device that sent `req`, or null: no pairing on this bridge, no token, an
+ * expired or unknown one, the host's own local credential, or a registry that cannot be read. Used
+ * where a change is credited by name on screen (Settings → Voice, "Last changed by"), so it is the
+ * label the device's owner chose at pairing and never the token, an address or a header value.
+ */
+export function pairedLabel(req: Request, pairing?: PairingGate): string | null {
+  if (pairing === undefined) return null;
+  const token = bearerToken(req.headers);
+  if (pairing.local?.(token, req) === true) return null;
+  try {
+    return pairing.resolve(token)?.label ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /**

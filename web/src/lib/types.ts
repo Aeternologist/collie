@@ -1875,6 +1875,10 @@ export interface SttHostStatus {
   switchable: Record<SttHostChoice, SttHostSwitch>;
   /** The `codex` binary whose sign-in would pay, named in the consent. Present when the host found one. */
   codexBin?: string;
+  /** The paired device that last changed the option from Settings, by its pairing label. Absent on an older host, or when it was last set elsewhere. */
+  changedBy?: string;
+  /** When that device changed it, an ISO 8601 time. Present exactly when `changedBy` is. */
+  changedAt?: string;
 }
 
 /**

@@ -467,6 +467,36 @@ function anySetting(raw: RawSettings): boolean {
   return Object.values(raw).some((value) => value !== undefined);
 }
 
+/**
+ * Who last changed the host's speech option from a paired device, and when (Settings → Voice shows it
+ * as "Last changed by …"). Written beside the settings in `stt.json` by the two routes that change the
+ * option from the app, and dropped by every other writer, so a `collie stt setup` in a terminal clears
+ * it. `changedBy` is the device's pairing label, never a token, an address or a header value.
+ * {@link coerceSttFile} never reads these two fields, so they cannot change what the bridge runs.
+ */
+export interface SttChangeStamp {
+  /** The paired device's label, as its owner named it at pairing (48 characters at most). */
+  changedBy: string;
+  /** When, as an ISO 8601 time. */
+  changedAt: string;
+}
+
+/** The longest label pairing accepts (bridge/pairing.ts). A longer one in the file is not believed. */
+const MAX_CHANGED_BY = 48;
+
+/** The stamp in a parsed `stt.json`, or null when it is absent or either field is not believable. */
+export function sttChangeStamp(raw: JsonValue | undefined): SttChangeStamp | null {
+  const o = jsonRecord(raw);
+  if (o === null) return null;
+  const changedBy = optionalString(o.changedBy);
+  const changedAt = optionalString(o.changedAt);
+  if (changedBy === undefined || changedAt === undefined || changedBy.length > MAX_CHANGED_BY) return null;
+  // Control characters have no business in a label a screen prints.
+  if ([...changedBy].some((c) => c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f)) return null;
+  if (!/^\d{4}-\d{2}-\d{2}T/.test(changedAt) || Number.isNaN(Date.parse(changedAt))) return null;
+  return { changedBy, changedAt };
+}
+
 /** The file operations {@link writeSttSettingsFile} needs. The CLI's `Files` and the bridge's disk both fit. */
 export interface SttSettingsFileOps {
   mkdirp(path: string, mode?: number): void;
@@ -485,7 +515,11 @@ let sttWriteSeq = 0;
  * turned this off". `collie stt setup` and the Settings switch for the Whistle host engine both come
  * through here. Returns the path written; throws when the write failed, after removing the temporary.
  */
-export function writeSttSettingsFile(stateDir: string, document: SttSettingsDocument, ops: SttSettingsFileOps): string {
+export function writeSttSettingsFile(
+  stateDir: string,
+  document: SttSettingsDocument | (SttSettingsDocument & SttChangeStamp),
+  ops: SttSettingsFileOps,
+): string {
   const path = sttSettingsPath(stateDir);
   // A name unique to this write, as `pairing.ts` does it: a shared `stt.json.tmp` let the bridge's
   // Settings switch and a `collie stt setup` in a terminal delete or rename each other's temporary.

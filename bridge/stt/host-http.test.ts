@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 import type { CodexDetector, CodexSignIn } from "./codex-detect.ts";
 import { CODEX_CONSENT_ID } from "./codex-setup.ts";
-import { createSttSettingsReader, sttSettingsPath, type SttSettingsDocument, type SttWireIdentity } from "./config.ts";
+import { createSttSettingsReader, sttSettingsPath, type SttChangeStamp, type SttSettingsDocument, type SttWireIdentity } from "./config.ts";
 import { parseSttHostRequest, sttHostGet, sttHostPut, sttHostStatus, type SttHostRouteDeps } from "./host-http.ts";
 import type { SttProvider } from "./provider.ts";
 import { createWhistleModelStore, resetWhistleModelState, type WhistleModelPin } from "./whistle-model.ts";
@@ -92,7 +92,7 @@ async function modelReady(h: Harness): Promise<void> {
 const sttJson = (): string | null => (existsSync(sttSettingsPath(stateDir)) ? readFileSync(sttSettingsPath(stateDir), "utf8") : null);
 /** `stt.json` as text, exactly: a document, or something that is not one. */
 const seedText = (text: string): void => writeFileSync(sttSettingsPath(stateDir), text);
-const seed = (doc: SttSettingsDocument): void => seedText(JSON.stringify(doc));
+const seed = (doc: SttSettingsDocument | (SttSettingsDocument & SttChangeStamp)): void => seedText(JSON.stringify(doc));
 
 /** A provider the gate would hand the microphone. */
 const provider = (id: string, available = true, reason?: string): SttProvider => ({
@@ -385,5 +385,80 @@ describe("PUT /api/stt/host", () => {
     });
     const result = await sttHostPut(h.deps, { provider: "codex", consent: CODEX_CONSENT_ID });
     expect(result.attempt).toEqual({ status: 502, outcome: "stt.codex_probe_failed", provider: "codex" });
+  });
+});
+
+describe("Last changed by: the change stamp", () => {
+  const AT = new Date("2026-10-11T09:41:00.000Z");
+
+  test("a change from a named device writes its label and the time beside the settings, and GET reports them", async () => {
+    const h = harness();
+    h.deps.now = () => AT;
+    await modelReady(h);
+    const result = await sttHostPut(h.deps, { provider: "whistle" }, "Pixel 8");
+    expect(result.response.status).toBe(200);
+    expect(JSON.parse(sttJson()!)).toEqual({ provider: "whistle", changedBy: "Pixel 8", changedAt: AT.toISOString() });
+    expect(await result.response.json()).toMatchObject({ changedBy: "Pixel 8", changedAt: AT.toISOString() });
+    expect(await (await sttHostGet(h.deps)).json()).toMatchObject({ provider: "whistle", changedBy: "Pixel 8" });
+    // The stamp never reaches the settings the bridge runs with.
+    const read = createSttSettingsReader({ stateDir, warn: () => undefined, env: {} });
+    expect(await read()).toEqual({ provider: "whistle" });
+  });
+
+  test("codex keeps its identity and gains the stamp", async () => {
+    const h = harness();
+    h.deps.now = () => AT;
+    await sttHostPut(h.deps, { provider: "codex", consent: CODEX_CONSENT_ID }, "ThinkPad");
+    expect(JSON.parse(sttJson()!)).toEqual({
+      provider: "codex",
+      codexBin: CODEX,
+      wireIdentity: "honest",
+      changedBy: "ThinkPad",
+      changedAt: AT.toISOString(),
+    });
+  });
+
+  test("off from a named device leaves only the stamp, which reads as nothing configured", async () => {
+    seed({ provider: "whistle" });
+    const h = harness();
+    h.deps.now = () => AT;
+    expect((await sttHostPut(h.deps, { provider: "off" }, "Pixel 8")).response.status).toBe(200);
+    expect(JSON.parse(sttJson()!)).toEqual({ changedBy: "Pixel 8", changedAt: AT.toISOString() });
+    const status = await sttHostStatus(h.deps);
+    expect(status).toMatchObject({ provider: "none", configuredBy: "none", changedBy: "Pixel 8", changedAt: AT.toISOString() });
+    expect(status.switchable.off).toEqual({ ok: true });
+    const read = createSttSettingsReader({ stateDir, warn: () => undefined, env: {} });
+    expect(await read()).toBeNull();
+    // Off again changes nothing, and Whistle can be chosen over the stamp-only file.
+    expect((await sttHostPut(h.deps, { provider: "off" }, "Pixel 8")).attempt.outcome).toBe("unchanged");
+    await modelReady(h);
+    expect((await sttHostPut(h.deps, { provider: "whistle" }, "ThinkPad")).response.status).toBe(200);
+    expect(JSON.parse(sttJson()!)).toMatchObject({ provider: "whistle", changedBy: "ThinkPad" });
+  });
+
+  test("a change no device is named for writes no stamp, and drops an older one", async () => {
+    seed({ provider: "whistle", changedBy: "Pixel 8", changedAt: AT.toISOString() });
+    const h = harness();
+    await sttHostPut(h.deps, { provider: "codex", consent: CODEX_CONSENT_ID });
+    expect(JSON.parse(sttJson()!)).toEqual({ provider: "codex", codexBin: CODEX, wireIdentity: "honest" });
+    expect(await sttHostStatus(h.deps)).not.toHaveProperty("changedBy");
+    expect((await sttHostPut(h.deps, { provider: "off" })).response.status).toBe(200);
+    expect(sttJson()).toBeNull();
+  });
+
+  test("GET leaves out a stamp it cannot believe, and any stamp while the environment names the provider", async () => {
+    for (const stamp of [
+      { changedBy: "", changedAt: AT.toISOString() },
+      { changedBy: "x".repeat(49), changedAt: AT.toISOString() },
+      { changedBy: "Pixel\n8", changedAt: AT.toISOString() },
+      { changedBy: "Pixel 8", changedAt: "yesterday" },
+      { changedBy: 7, changedAt: AT.toISOString() },
+      { changedBy: "Pixel 8" },
+    ]) {
+      seedText(JSON.stringify({ provider: "whistle", ...stamp }));
+      expect(await sttHostStatus(harness().deps)).not.toHaveProperty("changedBy");
+    }
+    seedText(JSON.stringify({ provider: "whistle", changedBy: "Pixel 8", changedAt: AT.toISOString() }));
+    expect(await sttHostStatus(harness({ env: { COLLIE_STT_PROVIDER: "codex" } }).deps)).not.toHaveProperty("changedBy");
   });
 });

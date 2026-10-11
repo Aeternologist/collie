@@ -47,6 +47,7 @@ import {
   cacheWatchable,
   replyPane,
   requestBodyCap,
+  pairedLabel,
   requestDevice,
   resetStaticGzipCache,
   resolveStaticPath,
@@ -1571,6 +1572,33 @@ describe("requestDevice — attribution across both gates", () => {
   });
 });
 
+describe("pairedLabel — the name Settings credits a change to", () => {
+  const gate = {
+    enforced: () => true,
+    resolve: (token: string | null) => (token === "tok-phone" ? { label: "Pixel 8" } : null),
+    local: (token: string | null) => token === "tok-local",
+  };
+
+  test("the pairing label of the token, and nothing else", () => {
+    expect(pairedLabel(req({ host: "h", authorization: "Bearer tok-phone" }), gate)).toBe("Pixel 8");
+    // A header name is for the gate, not for a screen.
+    expect(pairedLabel(req({ host: "h", "x-device-id": "desk" }), gate)).toBeNull();
+    expect(pairedLabel(req({ host: "h", authorization: "Bearer tok-unknown" }), gate)).toBeNull();
+    expect(pairedLabel(req({ host: "h", authorization: "Bearer tok-local" }), gate)).toBeNull();
+    expect(pairedLabel(req({ host: "h", authorization: "Bearer tok-phone" }))).toBeNull();
+  });
+
+  test("a registry that cannot be read names nobody", () => {
+    const broken = {
+      enforced: () => true,
+      resolve: (): { label: string } | null => {
+        throw new Error("unreadable");
+      },
+    };
+    expect(pairedLabel(req({ host: "h", authorization: "Bearer tok-phone" }), broken)).toBeNull();
+  });
+});
+
 // ── Open routes (M46 specs 03 and 06, ADR 0086) ─────────────────────────────────────────────
 // Reads need the pairing token, and pairing is always on. The open-route list is short and named:
 // `/api/health` and `/api/pair`. The crew surface (`/crew/v1/*`) and the standby door have their own
@@ -2409,6 +2437,11 @@ describe("the Whistle routes and the /api/config block", () => {
     expect(host).toContain('if (req.method !== "PUT") return text("method not allowed", 405);');
     expect(block("const sttModelMatch = pathname.match(STT_MODEL_ROUTE);")).toContain('guard(req, cfg, "read", pairingGate)');
     expect(block('if (pathname === "/api/stt" && req.method === "POST")')).toContain('guard(req, cfg, "write", pairingGate)');
+  });
+
+  test("a change to the host's option is credited to the paired label, never to whois", () => {
+    expect(block('if (pathname === "/api/stt/host") {')).toContain("sttHostPut(sttHostDeps, body, pairedLabel(req, pairingGate))");
+    expect(block('if (pathname === "/api/stt/whistle") {')).toContain("whistleRemove(whistleDeps, pairedLabel(req, pairingGate))");
   });
 
   test("a model copy is handed the request's signal, so a client that leaves frees its place", () => {

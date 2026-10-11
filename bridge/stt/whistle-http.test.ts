@@ -160,8 +160,17 @@ describe("DELETE /api/stt/whistle", () => {
     await ready(d);
     const theirs = JSON.stringify({ provider: "codex" });
     writeFileSync(sttSettingsPath(stateDir), theirs);
-    await whistleRemove(d);
+    await whistleRemove(d, "Pixel 8");
     expect(sttJson()).toBe(theirs);
+  });
+
+  test("from a named device, the whistle provider becomes a file holding only who turned it off and when", async () => {
+    const d = { ...deps(), now: () => new Date("2026-10-11T09:41:00.000Z") };
+    await ready(d);
+    writeFileSync(sttSettingsPath(stateDir), JSON.stringify({ provider: "whistle" }));
+    const result = await whistleRemove(d, "Pixel 8");
+    expect(await result.response.json()).toMatchObject({ state: "absent", hostEngine: false, hostTaken: false });
+    expect(JSON.parse(sttJson()!)).toEqual({ changedBy: "Pixel 8", changedAt: "2026-10-11T09:41:00.000Z" });
   });
 });
 

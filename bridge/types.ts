@@ -1801,6 +1801,14 @@ export interface SttHostStatus {
   switchable: { whistle: SttHostSwitch; codex: SttHostSwitch; off: SttHostSwitch };
   /** The `codex` binary whose sign-in would pay, for the consent's words. Present when one was found. */
   codexBin?: string;
+  /**
+   * The paired device that last changed the option from Settings, by its pairing label. Absent when
+   * the option was last set in a terminal, by the environment, or by a device the bridge could not
+   * name. Never a token, an address or a header value.
+   */
+  changedBy?: string;
+  /** When that device changed it, an ISO 8601 time. Present exactly when `changedBy` is. */
+  changedAt?: string;
 }
 
 /** Where the host's copy of the Whistle model stands (ADR 0096 Decision 2). */

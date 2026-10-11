@@ -12,6 +12,7 @@ import {
   resolveSttSettings,
   sttSettingsPath,
   writeSttSettingsFile,
+  type SttChangeStamp,
   type SttSettingsDocument,
   type SttSettingsFileOps,
 } from "./config.ts";
@@ -80,6 +81,8 @@ export interface SttHostRouteDeps {
   gate: SttHostGate;
   /** How `stt.json` is written and removed. The disk unless a test watches it. */
   files?: SttSettingsFileOps;
+  /** The clock for the change stamp. The real one unless a test sets it. */
+  now?: () => Date;
 }
 
 /**
@@ -155,6 +158,12 @@ export async function sttHostStatus(deps: SttHostRouteDeps): Promise<SttHostStat
   const reason = capability?.reason ?? (provider !== "none" && capability === null ? warnings[0] : undefined);
   if (reason !== undefined) status.reason = reason;
   if (resolved?.provider === "codex") status.identity = resolved.wireIdentity;
+  // Who changed it from the app. Not when the environment names the provider: the stamp is about the
+  // file, and the file is not what runs then.
+  if (sources.stamp !== null && namedSttProvider({}, sources.env) === undefined) {
+    status.changedBy = sources.stamp.changedBy;
+    status.changedAt = sources.stamp.changedAt;
+  }
 
   const lock = lockReason(sources);
   if (lock !== null) {
@@ -208,8 +217,16 @@ export function parseSttHostRequest(raw: JsonValue | undefined): { provider: Stt
   return consent === undefined ? { provider } : { provider, consent };
 }
 
-/** `PUT /api/stt/host`. `body` is the parsed request body. */
-export async function sttHostPut(deps: SttHostRouteDeps, body: JsonValue | undefined): Promise<SttHostRouteResult> {
+/**
+ * `PUT /api/stt/host`. `body` is the parsed request body. `changedBy` is the label of the paired device
+ * that sent it, or null (no pairing on this bridge, or a request it could not name): a change made
+ * with a label is written with it and the time, which `GET` reports back as "Last changed by".
+ */
+export async function sttHostPut(
+  deps: SttHostRouteDeps,
+  body: JsonValue | undefined,
+  changedBy: string | null = null,
+): Promise<SttHostRouteResult> {
   const request = parseSttHostRequest(body);
   if (request === null) {
     return { response: new Response("bad body", { status: 400 }), attempt: { status: 400, outcome: "invalid" } };
@@ -222,13 +239,13 @@ export async function sttHostPut(deps: SttHostRouteDeps, body: JsonValue | undef
   if (deps.gate.busy) return refuse(409, "stt.host_busy", request.provider);
   deps.gate.busy = true;
   try {
-    return await switchProvider(deps, request.provider);
+    return await switchProvider(deps, request.provider, changedBy);
   } finally {
     deps.gate.busy = false;
   }
 }
 
-async function switchProvider(deps: SttHostRouteDeps, choice: SttHostChoice): Promise<SttHostRouteResult> {
+async function switchProvider(deps: SttHostRouteDeps, choice: SttHostChoice, changedBy: string | null): Promise<SttHostRouteResult> {
   const files = deps.files ?? diskSttFileOps;
   const before = readSttSources(deps.stateDir, deps.env);
   if (lockReason(before) !== null) return refuse(409, "stt.host_provider_locked", choice);
@@ -239,10 +256,17 @@ async function switchProvider(deps: SttHostRouteDeps, choice: SttHostChoice): Pr
     return { response: json(await sttHostStatus(deps)), attempt };
   };
 
+  const stamp = (): SttChangeStamp | null =>
+    changedBy === null ? null : { changedBy, changedAt: (deps.now?.() ?? new Date()).toISOString() };
+
   if (choice === "off") {
     // No await since `before` was read: the file removed is the file that was judged.
     if (current === undefined) return done("unchanged");
-    files.remove(sttSettingsPath(deps.stateDir));
+    // A named device leaves a file holding only who turned it off and when, which every reader takes
+    // for "nothing configured" (`coerceSttFile` drops both fields). Without one, the file goes.
+    const by = stamp();
+    if (by === null) files.remove(sttSettingsPath(deps.stateDir));
+    else writeSttSettingsFile(deps.stateDir, by, files);
     return done("ok");
   }
 
@@ -273,6 +297,7 @@ async function switchProvider(deps: SttHostRouteDeps, choice: SttHostChoice): Pr
   // await in between.
   if (!sameSttSources(before, readSttSources(deps.stateDir, deps.env))) return refuse(409, "stt.host_changed", choice);
   if (choice === "whistle" && current === "whistle") return done("unchanged");
-  writeSttSettingsFile(deps.stateDir, document, files);
+  const by = stamp();
+  writeSttSettingsFile(deps.stateDir, by === null ? document : { ...document, ...by }, files);
   return done("ok", identity);
 }

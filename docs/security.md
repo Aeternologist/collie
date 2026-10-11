@@ -294,6 +294,9 @@ entirely.
   stolen write token could point the host's speech at the operator's signed-in ChatGPT account. It
   cannot add a key or a command, or replace one. The token can already type `codex` into a
   terminal. [ADR 0097](../.adr/0097-codex-speech-can-be-chosen-from-settings.md) weighs this.
+  A switch from Settings also writes the paired device's name, as given at pairing, and the time into
+  `stt.json`, so **Host speech** can say who changed it last. No token and no address is written.
+  A run of `collie stt setup` drops that line.
 
 Why it is built this way: [ADR 0096](../.adr/0096-speech-can-stay-on-the-phone.md). The setup steps
 are in [Voice input and Web Push](voice-and-push.md#whistle-speech-to-text-on-your-phone-or-your-host).
