@@ -8,6 +8,7 @@ import type { GitHead } from "./git-head.ts";
 import type { ChatBody } from "./journal/live.ts";
 import type { AgentSessionRef, TranscriptEntry } from "./journal/types.ts";
 import type { MuxCapability, MuxSpaceCapacity, MuxTopologyLatency } from "./mux/capabilities.ts";
+import type { SttWireIdentity } from "./stt/config.ts";
 import type { UpdateRun } from "./update-run.ts";
 
 // Re-exported so the wire surface has ONE import site: a consumer of PaneHistoryResponse gets the
@@ -1750,6 +1751,56 @@ export interface SttCapability {
    * times the size of a compressed recording and the 8 MiB upload cap stays.
    */
   maxDurationMs?: number;
+}
+
+/**
+ * Why Settings may not switch the host to one choice (ADR 0097), as a code the phone translates:
+ *
+ *  - `env`               the deployment's environment names the speech settings; it wins, and no phone changes it
+ *  - `terminal`          a provider set up in a terminal with a key, an endpoint or a command
+ *  - `unreadable`        `stt.json` is there and cannot be read; it is the operator's to fix
+ *  - `not-ready`         Whistle: the model is not on the host yet
+ *  - `codex-missing`     Codex: no `codex` binary was found on the host
+ *  - `codex-signed-out`  Codex: `codex login status` says it is not signed in
+ *  - `codex-other-login` Codex: signed in, but not with ChatGPT (an API key, say)
+ *  - `codex-unknown`     Codex: the sign-in could not be checked (a timeout, an answer not understood)
+ */
+export type SttHostSwitchReason =
+  | "env"
+  | "terminal"
+  | "unreadable"
+  | "not-ready"
+  | "codex-missing"
+  | "codex-signed-out"
+  | "codex-other-login"
+  | "codex-unknown";
+
+/** Whether one choice may be made from Settings, and if not, why. */
+export interface SttHostSwitch {
+  ok: boolean;
+  /** Absent when `ok`. */
+  reason?: SttHostSwitchReason;
+}
+
+/**
+ * The host's speech provider, as `GET /api/stt/host` and `PUT /api/stt/host` report it (ADR 0097).
+ * Mirrors `SttHostStatus` in web/src/lib/types.ts.
+ */
+export interface SttHostStatus {
+  /** `whistle`, `codex`, `openai-compatible`, `local-cli`, or `none`. A name this build does not know is passed through. */
+  provider: string;
+  /** Whether it could serve a request right now. False for `none`. */
+  available: boolean;
+  /** Operator-facing prose when it could not: the provider's own words, or why the settings do not resolve. */
+  reason?: string;
+  /** For `codex` only: the identity recorded at setup. `codex-cli` is the fallback that wears the Codex CLI's headers. */
+  identity?: SttWireIdentity;
+  /** Where the provider is named: `stt.json` in the state dir, the bridge's environment, or nowhere. */
+  configuredBy: "file" | "env" | "none";
+  /** The three choices Settings offers, each with whether it may be made now. */
+  switchable: { whistle: SttHostSwitch; codex: SttHostSwitch; off: SttHostSwitch };
+  /** The `codex` binary whose sign-in would pay, for the consent's words. Present when one was found. */
+  codexBin?: string;
 }
 
 /** Where the host's copy of the Whistle model stands (ADR 0096 Decision 2). */

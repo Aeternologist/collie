@@ -1835,6 +1835,49 @@ export interface WhistleStatus {
 }
 
 /**
+ * Why Settings may not switch the host to one choice (ADR 0097). Mirrors `SttHostSwitchReason` in
+ * bridge/types.ts, where each word is explained.
+ */
+export type SttHostSwitchReason =
+  | "env"
+  | "terminal"
+  | "unreadable"
+  | "not-ready"
+  | "codex-missing"
+  | "codex-signed-out"
+  | "codex-other-login"
+  | "codex-unknown";
+
+/** Whether one choice may be made from Settings, and if not, why. */
+export interface SttHostSwitch {
+  ok: boolean;
+  /** Absent when `ok`. */
+  reason?: SttHostSwitchReason;
+}
+
+/** The three choices Settings offers for the host's speech provider. */
+export type SttHostChoice = "whistle" | "codex" | "off";
+
+/**
+ * The host's speech provider, as `GET /api/stt/host` and `PUT /api/stt/host` report it (ADR 0097).
+ * Mirrors `SttHostStatus` in bridge/types.ts.
+ */
+export interface SttHostStatus {
+  /** `whistle`, `codex`, `openai-compatible`, `local-cli`, or `none`. A name this app does not know is shown as is. */
+  provider: string;
+  available: boolean;
+  /** The host's own words when it cannot serve a request. English: it comes from the host. */
+  reason?: string;
+  /** For `codex` only: `honest`, or `codex-cli`, the fallback that wears the Codex CLI's headers. */
+  identity?: "honest" | "codex-cli";
+  /** Where the provider is named: the host's `stt.json`, the host's environment, or nowhere. */
+  configuredBy: "file" | "env" | "none";
+  switchable: Record<SttHostChoice, SttHostSwitch>;
+  /** The `codex` binary whose sign-in would pay, named in the consent. Present when the host found one. */
+  codexBin?: string;
+}
+
+/**
  * Notification type preferences (GET/POST /api/notifications/prefs). Which agent statuses push, set
  * bridge-wide (fans out to every device, like the snooze). Mirrors NotifyPrefs in bridge/notify-prefs.ts.
  */

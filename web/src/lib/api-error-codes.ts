@@ -118,9 +118,19 @@ export const API_ERROR_CODES = [
   // The Whistle model and the host engine — /api/stt/whistle, /api/stt/model/:sha256 (ADR 0096)
   "stt.model_busy",
   "stt.model_unknown",
-  "stt.whistle_provider_taken",
   "stt.whistle_not_ready",
   "stt.whistle_download_failed",
+
+  // The host's speech provider: PUT /api/stt/host (ADR 0097)
+  "stt.consent_required",
+  "stt.host_busy",
+  "stt.host_provider_locked",
+  "stt.host_changed",
+  "stt.codex_missing",
+  "stt.codex_signed_out",
+  "stt.codex_other_login",
+  "stt.codex_unknown",
+  "stt.codex_probe_failed",
 
   // The prompt-cache watch list — /api/notifications/cache-watch (ADR 0042)
   "cache.pane_unknown",

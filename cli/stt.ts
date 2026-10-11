@@ -18,7 +18,8 @@ import {
   type SttSettings,
   type SttWireIdentity,
 } from "../bridge/stt/config.ts";
-import { CODEX_TRANSCRIBE_URL, probeCodexIdentity, silentWavBytes } from "../bridge/stt/codex.ts";
+import { CODEX_TRANSCRIBE_URL, silentWavBytes } from "../bridge/stt/codex.ts";
+import { codexConsentLines, probeCodexSetup } from "../bridge/stt/codex-setup.ts";
 import { silentMp4AacBytes, silentWebmOpusBytes } from "../bridge/stt/probe-clips.ts";
 import { createSttProvider } from "../bridge/stt/index.ts";
 import { jsonStringField } from "../bridge/stt/json.ts";
@@ -37,7 +38,10 @@ import type { Exec, Files } from "./sys.ts";
 // provider key into the state dir, or — on the codex provider — records the operator's consent to put
 // somebody else's name on the wire. Neither decision can be authorised by a page loaded over the
 // front door; the shell on the host IS the proof, exactly as it is for enrolment (see the header of
-// `cli/pairing.ts`). There is no web setup form and there is not going to be one.
+// `cli/pairing.ts`). There is no web setup form for a key or a command, and there is not going to be
+// one. Two narrow exceptions take no key and no command: Whistle (ADR 0096), and switching the host
+// to codex after the same consent, shown in full and accepted with a tap (ADR 0097). The consent's
+// words and the probe are shared with that switch (`bridge/stt/codex-setup.ts`), so they cannot drift.
 //
 // ── THE THREE THINGS THIS MODULE OWES THE BRIDGE ─────────────────────────────
 //  1. It writes `<stateDir>/stt.json`, and the bridge re-reads that file behind an mtime check
@@ -346,20 +350,11 @@ async function askAt(
 function consentParagraph(deps: SttDeps, codexPath: string): void {
   deps.io.out("");
   deps.io.out("── Read this before you accept ──────────────────────────────────────────────");
-  deps.io.out(`  Recordings would be sent to ${CODEX_TRANSCRIBE_URL}.`);
-  deps.io.out("  That endpoint is PRIVATE and UNSUPPORTED. It is undocumented, nobody owes Collie");
-  deps.io.out("  compatibility with it, and it may stop working at any time without notice.");
-  deps.io.out("");
-  deps.io.out(`  Every request is authorised by a short-lived token from YOUR sign-in at ${codexPath}.`);
-  deps.io.out("  So YOUR ChatGPT account carries the exposure: the rate limits are yours, and so is");
-  deps.io.out("  any suspension or ban that comes of using a private endpoint this way.");
-  deps.io.out("");
-  deps.io.out("  Collie asks the endpoint under its OWN name first. If that is refused, the fallback");
-  deps.io.out("  wears the Codex CLI's headers — that is impersonation, and accepting here is what");
-  deps.io.out("  permits it. Whichever identity is accepted gets written into the config, in a word");
-  deps.io.out("  you can read back with `collie stt status`.");
-  deps.io.out("");
-  deps.io.out("  Nothing has run yet. Nothing is written unless you accept.");
+  // The words are bridge/stt/codex-setup.ts's, the same ones Settings shows before its "I accept".
+  codexConsentLines(codexPath).forEach((paragraph, index) => {
+    if (index > 0) deps.io.out("");
+    for (const line of paragraph) deps.io.out(`  ${line}`);
+  });
   deps.io.out("─────────────────────────────────────────────────────────────────────────────");
 }
 
@@ -377,10 +372,11 @@ async function setupCodex(
 
   deps.io.out("");
   deps.io.out("Probing the endpoint — honest identity first…");
-  const settings: CodexSttSettings = { provider: "codex", codexBin, wireIdentity: "honest" };
   let identity: SttWireIdentity;
+  let document: RawSettings;
   try {
-    identity = await (deps.probe ?? probeCodexIdentity)(settings);
+    // The same probe, and the same document, as the Settings switch (bridge/stt/host-http.ts).
+    ({ identity, document } = await probeCodexSetup(codexBin, deps.probe));
   } catch (err) {
     // Including the sign-in failures `bridge/stt/codex-auth.ts` re-throws by name: "Codex is not
     // signed in — run `codex login`" is a different sentence from "both identities were refused",
@@ -400,7 +396,7 @@ async function setupCodex(
     deps.io.out("  ✓ The endpoint accepted Collie under its own name. No impersonation is configured;");
     deps.io.out("    the recorded identity is `honest`, and no `originator` header is ever sent.");
   }
-  return { provider: "codex", codexBin, wireIdentity: identity };
+  return document;
 }
 
 /**

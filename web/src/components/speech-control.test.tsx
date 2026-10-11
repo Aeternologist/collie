@@ -8,7 +8,8 @@ import { __resetOperatorCommands } from "@/lib/operator-config";
 import { __resetSttEngine, sttEnginePreference } from "@/lib/stt";
 import * as sttModel from "@/lib/stt-model";
 import { dateTime } from "@/lib/format";
-import type { SttCapability, WhistleStatus } from "@/lib/types";
+import { CODEX_CONSENT_ID } from "@/lib/stt-consent";
+import type { SttCapability, SttHostStatus, WhistleStatus } from "@/lib/types";
 import { server } from "@/test/setup";
 import { SpeechCards, SpeechControl, type SpeechCardsProps } from "./speech-control";
 
@@ -36,10 +37,43 @@ const READY: WhistleStatus = { ...ABSENT, state: "ready", sha256: SHA, revision:
 const HOST_WHISTLE: SttCapability = { provider: "whistle", available: true };
 const COPY = { sha256: SHA, bytes: BYTES, revision: REVISION };
 
+const CODEX_BIN = "/home/op/.local/bin/codex";
+/** The host with no provider, Whistle not downloaded yet, Codex installed but signed out. */
+const HOST_NONE: SttHostStatus = {
+  provider: "none",
+  available: false,
+  configuredBy: "none",
+  codexBin: CODEX_BIN,
+  switchable: {
+    whistle: { ok: false, reason: "not-ready" },
+    codex: { ok: false, reason: "codex-signed-out" },
+    off: { ok: true },
+  },
+};
+const OPEN_ALL: SttHostStatus["switchable"] = { whistle: { ok: true }, codex: { ok: true }, off: { ok: true } };
+const HOST_WHISTLE_ON: SttHostStatus = { ...HOST_NONE, provider: "whistle", available: true, configuredBy: "file", switchable: OPEN_ALL };
+const HOST_CODEX_ON: SttHostStatus = { ...HOST_WHISTLE_ON, provider: "codex", identity: "honest" };
+const LOCKED = (reason: "terminal" | "env" | "unreadable"): SttHostStatus["switchable"] => ({
+  whistle: { ok: false, reason },
+  codex: { ok: false, reason },
+  off: { ok: false, reason },
+});
+const HOST_KEYED: SttHostStatus = {
+  provider: "openai-compatible",
+  available: true,
+  configuredBy: "file",
+  switchable: LOCKED("terminal"),
+};
+
 function props(over: Partial<SpeechCardsProps> = {}): SpeechCardsProps {
   return {
     whistle: ABSENT,
     hostStt: null,
+    host: null,
+    switching: null,
+    providerError: null,
+    consentOpen: false,
+    consentError: null,
     canWrite: true,
     engine: "host",
     block: null,
@@ -55,7 +89,9 @@ function props(over: Partial<SpeechCardsProps> = {}): SpeechCardsProps {
     onAskRemove: vi.fn(),
     onCancelRemove: vi.fn(),
     onRemove: vi.fn(),
-    onHostEngine: vi.fn(),
+    onChooseProvider: vi.fn(),
+    onAcceptConsent: vi.fn(),
+    onCancelConsent: vi.fn(),
     onPhoneDownload: vi.fn(),
     onPhoneRemove: vi.fn(),
     ...over,
@@ -194,41 +230,157 @@ describe("SpeechCards, the host step", () => {
     expect(onRemove).toHaveBeenCalledTimes(1);
   });
 
-  it("ready: a read-only device sees the details but cannot remove or switch", () => {
+  it("ready: a read-only device sees the details but cannot remove", () => {
     render(<SpeechCards {...props({ whistle: READY, canWrite: false })} />);
     expect(screen.getByText("sha256 b6e02f04…")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Remove from host" })).toBeNull();
-    expect(screen.getByRole("switch", { name: "Use Whistle on the host" })).toBeDisabled();
   });
 
-  it("ready: the switch says it is for every device, reflects the host and flips it", async () => {
-    const onHostEngine = vi.fn();
-    const { rerender } = render(<SpeechCards {...props({ whistle: READY, onHostEngine })} />);
-    expect(screen.getByText("For every device that uses the host.")).toBeInTheDocument();
-    const toggle = screen.getByRole("switch", { name: "Use Whistle on the host" });
-    expect(toggle).toHaveAttribute("aria-checked", "false");
-    await userEvent.click(toggle);
-    expect(onHostEngine).toHaveBeenCalledWith(true);
-    rerender(<SpeechCards {...props({ whistle: { ...READY, hostEngine: true }, onHostEngine })} />);
-    expect(screen.getByRole("switch", { name: "Use Whistle on the host" })).toHaveAttribute("aria-checked", "true");
-  });
-
-  it("ready: the switch is disabled with the reason when another provider holds the host", () => {
-    render(<SpeechCards {...props({ whistle: { ...READY, hostTaken: true } })} />);
-    const toggle = screen.getByRole("switch", { name: "Use Whistle on the host" });
-    expect(toggle).toBeDisabled();
-    expect(screen.getByText("Another speech provider is set up on the host.")).toBeInTheDocument();
-    expect(toggle).toHaveAttribute("aria-describedby");
-  });
-
-  it("ready: the switch stays usable to turn Whistle OFF even though a provider is configured", () => {
-    render(<SpeechCards {...props({ whistle: { ...READY, hostTaken: true, hostEngine: true } })} />);
-    expect(screen.getByRole("switch", { name: "Use Whistle on the host" })).not.toBeDisabled();
+  it("ready: the Whistle card has no host switch any more; the choice lives in the Host speech provider card", () => {
+    render(<SpeechCards {...props({ whistle: READY, host: HOST_NONE })} />);
+    const host = screen.getByRole("region", { name: "On your host" });
+    expect(within(host).queryByRole("switch")).toBeNull();
+    expect(within(host).queryByRole("radio")).toBeNull();
+    expect(screen.getByRole("radiogroup", { name: "Host speech provider" })).toBeInTheDocument();
   });
 
   it("shows a failed host action in words", () => {
-    render(<SpeechCards {...props({ whistle: READY, hostError: "Another speech provider is set up on the host." })} />);
-    expect(screen.getAllByText("Another speech provider is set up on the host.").length).toBeGreaterThan(0);
+    render(<SpeechCards {...props({ whistle: READY, hostError: "Whistle could not be downloaded: disk full" })} />);
+    expect(screen.getByText("Whistle could not be downloaded: disk full")).toBeInTheDocument();
+  });
+});
+
+describe("SpeechCards, the Host speech provider", () => {
+  const group = () => screen.getByRole("radiogroup", { name: "Host speech provider" });
+  const detail = (label: string) => screen.getByText(label, { selector: "dt" }).nextElementSibling;
+
+  it("is not drawn while the host has not said (an older bridge)", () => {
+    render(<SpeechCards {...props({ whistle: READY, host: null })} />);
+    expect(screen.queryByText("Host speech provider")).toBeNull();
+  });
+
+  it("is drawn even where the Whistle cards are not", () => {
+    render(<SpeechCards {...props({ whistle: null, host: HOST_KEYED })} />);
+    expect(screen.getByText("Host speech provider")).toBeInTheDocument();
+    expect(screen.queryByText("Speech engine")).toBeNull();
+  });
+
+  it("nothing on the host: Off is chosen, and each closed choice says why and what to run there", () => {
+    render(<SpeechCards {...props({ host: HOST_NONE })} />);
+    expect(detail("Provider")).toHaveTextContent("None");
+    expect(detail("Status")).toHaveTextContent("Off. The host turns no recording into text.");
+    expect(within(group()).getByRole("radio", { name: /^Off/ })).toHaveAttribute("aria-checked", "true");
+    expect(within(group()).getByRole("radio", { name: /^Whistle/ })).toBeDisabled();
+    expect(screen.getByText("Download Whistle to your host first.")).toBeInTheDocument();
+    expect(within(group()).getByRole("radio", { name: /^Codex \(ChatGPT sign-in\)/ })).toBeDisabled();
+    expect(screen.getByText("Codex is not signed in on your host. Run this there:")).toBeInTheDocument();
+    expect(screen.getByText("codex login")).toBeInTheDocument();
+    // The terminal-only providers: the command, never a form.
+    expect(screen.getByText("Set up elsewhere")).toBeInTheDocument();
+    expect(screen.getByText("collie stt setup")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).toBeNull();
+  });
+
+  it("each Codex verdict has its own words and command", () => {
+    for (const [reason, words, command] of [
+      ["codex-missing", "Codex is not installed on your host. Install it there, then sign in with ChatGPT:", "codex login"],
+      ["codex-other-login", "Codex on your host is not signed in with ChatGPT. Run this there and pick ChatGPT:", "codex login"],
+      ["codex-unknown", "Collie could not check the Codex sign-in on your host. To see why, run this there:", "codex login status"],
+    ] as const) {
+      const { unmount } = render(
+        <SpeechCards {...props({ host: { ...HOST_NONE, switchable: { ...HOST_NONE.switchable, codex: { ok: false, reason } } } })} />,
+      );
+      expect(screen.getByText(words)).toBeInTheDocument();
+      expect(screen.getByText(command)).toBeInTheDocument();
+      unmount();
+    }
+  });
+
+  it("Whistle on: it is chosen, and a tap on another choice reports it; a tap on the chosen one does nothing", async () => {
+    const onChooseProvider = vi.fn();
+    render(<SpeechCards {...props({ host: HOST_WHISTLE_ON, onChooseProvider })} />);
+    expect(detail("Provider")).toHaveTextContent("Whistle");
+    expect(detail("Status")).toHaveTextContent("Working");
+    const whistle = within(group()).getByRole("radio", { name: /^Whistle/ });
+    expect(whistle).toHaveAttribute("aria-checked", "true");
+    await userEvent.click(whistle);
+    expect(onChooseProvider).not.toHaveBeenCalled();
+    await userEvent.click(within(group()).getByRole("radio", { name: /^Off/ }));
+    expect(onChooseProvider).toHaveBeenCalledWith("off");
+    await userEvent.click(within(group()).getByRole("radio", { name: /^Codex/ }));
+    expect(onChooseProvider).toHaveBeenCalledWith("codex");
+  });
+
+  it("Codex on: the identity is named, honest or the codex-cli fallback, in words", () => {
+    const { rerender } = render(<SpeechCards {...props({ host: HOST_CODEX_ON })} />);
+    expect(detail("Provider")).toHaveTextContent("Codex (ChatGPT sign-in)");
+    expect(detail("Identity")).toHaveTextContent("honest Collie names itself to the endpoint.");
+    rerender(<SpeechCards {...props({ host: { ...HOST_CODEX_ON, identity: "codex-cli" } })} />);
+    expect(detail("Identity")).toHaveTextContent("codex-cli Collie wears the Codex CLI's headers");
+    expect(within(group()).getByRole("radio", { name: /^Codex/ })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("an unavailable provider shows the host's own reason", () => {
+    render(<SpeechCards {...props({ host: { ...HOST_CODEX_ON, available: false, reason: "Codex is not signed in — run `codex login`" } })} />);
+    expect(detail("Status")).toHaveTextContent("Codex is not signed in — run `codex login`");
+  });
+
+  it("a provider set up in a terminal is shown, not offered: the commands that change it, no choice", () => {
+    render(<SpeechCards {...props({ host: HOST_KEYED })} />);
+    expect(detail("Provider")).toHaveTextContent("OpenAI-compatible endpoint");
+    expect(screen.queryByRole("radiogroup", { name: "Host speech provider" })).toBeNull();
+    expect(screen.getByText(/This provider was set up in a terminal on the host/)).toBeInTheDocument();
+    expect(screen.getByText("collie stt setup")).toBeInTheDocument();
+    expect(screen.getByText("collie stt off")).toBeInTheDocument();
+  });
+
+  it("a local command and the environment are shown the same way, with their own command", () => {
+    const { unmount } = render(<SpeechCards {...props({ host: { ...HOST_KEYED, provider: "local-cli" } })} />);
+    expect(detail("Provider")).toHaveTextContent("A command on the host");
+    unmount();
+    render(<SpeechCards {...props({ host: { ...HOST_WHISTLE_ON, configuredBy: "env", switchable: LOCKED("env") } })} />);
+    expect(screen.queryByRole("radiogroup", { name: "Host speech provider" })).toBeNull();
+    expect(screen.getByText(/The host's environment sets the speech provider/)).toBeInTheDocument();
+    expect(screen.getByText("collie stt status")).toBeInTheDocument();
+  });
+
+  it("a read-only device sees the status only", () => {
+    render(<SpeechCards {...props({ host: HOST_CODEX_ON, canWrite: false })} />);
+    expect(detail("Provider")).toHaveTextContent("Codex (ChatGPT sign-in)");
+    expect(screen.queryByRole("radiogroup", { name: "Host speech provider" })).toBeNull();
+    expect(screen.queryByText("collie stt setup")).toBeNull();
+    expect(screen.getByText("A device with write access can change this.")).toBeInTheDocument();
+  });
+
+  it("while a choice is in flight, no other choice can be tapped", () => {
+    render(<SpeechCards {...props({ host: HOST_WHISTLE_ON, switching: "off" })} />);
+    for (const radio of within(group()).getAllByRole("radio")) expect(radio).toBeDisabled();
+  });
+
+  it("the consent sheet: the CLI's words with the endpoint and the binary, then Cancel or I accept", async () => {
+    const onAcceptConsent = vi.fn();
+    const onCancelConsent = vi.fn();
+    render(<SpeechCards {...props({ host: HOST_WHISTLE_ON, consentOpen: true, onAcceptConsent, onCancelConsent })} />);
+    const sheet = screen.getByRole("dialog", { name: "Use Codex for speech?" });
+    expect(within(sheet).getByText(/Recordings would be sent to https:\/\/chatgpt\.com\/backend-api\/transcribe\./)).toBeInTheDocument();
+    expect(within(sheet).getByText(/That endpoint is PRIVATE and UNSUPPORTED\./)).toBeInTheDocument();
+    expect(within(sheet).getByText(new RegExp(`YOUR sign-in at ${CODEX_BIN.replaceAll(".", "\\.")}\\.`))).toBeInTheDocument();
+    expect(within(sheet).getByText(/That is impersonation, and accepting here is what permits it\./)).toBeInTheDocument();
+    expect(within(sheet).getByText("Nothing has run yet. Nothing is written unless you accept.")).toBeInTheDocument();
+    await userEvent.click(within(sheet).getByRole("button", { name: "Cancel" }));
+    expect(onCancelConsent).toHaveBeenCalledTimes(1);
+    expect(onAcceptConsent).not.toHaveBeenCalled();
+    await userEvent.click(within(sheet).getByRole("button", { name: "I accept" }));
+    expect(onAcceptConsent).toHaveBeenCalledTimes(1);
+  });
+
+  it("the consent sheet while the host probes: both buttons wait; a refusal is written in the sheet", () => {
+    const { rerender } = render(<SpeechCards {...props({ host: HOST_WHISTLE_ON, consentOpen: true, switching: "codex" })} />);
+    const sheet = screen.getByRole("dialog", { name: "Use Codex for speech?" });
+    expect(within(sheet).getByRole("button", { name: "I accept" })).toBeDisabled();
+    expect(within(sheet).getByRole("button", { name: "Cancel" })).toBeDisabled();
+    rerender(<SpeechCards {...props({ host: HOST_WHISTLE_ON, consentOpen: true, consentError: "Codex is not signed in on your host. Run codex login there." })} />);
+    expect(within(screen.getByRole("dialog")).getByText("Codex is not signed in on your host. Run codex login there.")).toBeInTheDocument();
   });
 });
 
@@ -340,7 +492,7 @@ describe("SpeechCards, the engine choice", () => {
     render(<SpeechCards {...props({ whistle: READY, hostStt: null })} />);
     expect(within(group()).getByRole("radio", { name: "Host" })).toBeDisabled();
     expect(
-      screen.getByText("Your host has no speech provider. Turn on Whistle on the host above, or run collie stt setup."),
+      screen.getByText("Your host has no speech provider. Choose one under Host speech provider above, or run collie stt setup."),
     ).toBeInTheDocument();
     expect(screen.queryByText(/Your host uses/)).toBeNull();
   });
@@ -403,7 +555,13 @@ function stubPhoneBrowser() {
   vi.stubGlobal("caches", {});
 }
 
+/** The host's provider, as GET /api/stt/host answers it. */
+function hostStatus(body: SttHostStatus | null) {
+  return http.get("/api/stt/host", () => (body === null ? new HttpResponse("not found", { status: 404 }) : HttpResponse.json(body)));
+}
+
 beforeEach(() => {
+  server.use(hostStatus(null));
   stubPhoneBrowser();
   __resetOperatorCommands();
   __resetSttEngine();
@@ -461,19 +619,77 @@ describe("SpeechControl", () => {
     expect(polls).toBe(0);
   });
 
-  it("turns the host engine on with PUT, and says a refusal in words", async () => {
+  it("reads the host's provider and switches to Whistle with one PUT, then shows the host's answer", async () => {
     const bodies: unknown[] = [];
     server.use(
       config(READY),
-      http.put("/api/stt/whistle/host", async ({ request }) => {
+      hostStatus({ ...HOST_NONE, switchable: { ...HOST_NONE.switchable, whistle: { ok: true } } }),
+      http.put("/api/stt/host", async ({ request }) => {
         bodies.push(await request.json());
-        return HttpResponse.json({ error: "taken", code: "stt.whistle_provider_taken" }, { status: 409 });
+        return HttpResponse.json(HOST_WHISTLE_ON);
       }),
     );
     renderControl();
-    await userEvent.click(await screen.findByRole("switch", { name: "Use Whistle on the host" }));
-    expect(bodies).toEqual([{ on: true }]);
-    expect(await screen.findByText("Another speech provider is set up on the host.")).toBeInTheDocument();
+    const group = await screen.findByRole("radiogroup", { name: "Host speech provider" });
+    await userEvent.click(within(group).getByRole("radio", { name: /^Whistle/ }));
+    expect(bodies).toEqual([{ provider: "whistle" }]);
+    await waitFor(() => expect(within(group).getByRole("radio", { name: /^Whistle/ })).toHaveAttribute("aria-checked", "true"));
+  });
+
+  it("says a refused switch in words, in the operator's language", async () => {
+    server.use(
+      config(READY),
+      hostStatus(HOST_WHISTLE_ON),
+      http.put("/api/stt/host", () =>
+        HttpResponse.json({ error: "changed", code: "stt.host_changed" }, { status: 409 }),
+      ),
+    );
+    renderControl();
+    const group = await screen.findByRole("radiogroup", { name: "Host speech provider" });
+    await userEvent.click(within(group).getByRole("radio", { name: /^Off/ }));
+    expect(await screen.findByText("The speech settings on your host changed meanwhile. Nothing was changed.")).toBeInTheDocument();
+  });
+
+  it("Codex: the tap opens the consent and sends nothing; I accept sends the consent's id", async () => {
+    const bodies: unknown[] = [];
+    server.use(
+      config(READY),
+      hostStatus(HOST_WHISTLE_ON),
+      http.put("/api/stt/host", async ({ request }) => {
+        bodies.push(await request.json());
+        return HttpResponse.json(HOST_CODEX_ON);
+      }),
+    );
+    renderControl();
+    const group = await screen.findByRole("radiogroup", { name: "Host speech provider" });
+    await userEvent.click(within(group).getByRole("radio", { name: /^Codex/ }));
+    const sheet = await screen.findByRole("dialog", { name: "Use Codex for speech?" });
+    expect(bodies).toEqual([]);
+    await userEvent.click(within(sheet).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(bodies).toEqual([]);
+
+    await userEvent.click(within(group).getByRole("radio", { name: /^Codex/ }));
+    await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "I accept" }));
+    await waitFor(() => expect(bodies).toEqual([{ provider: "codex", consent: CODEX_CONSENT_ID }]));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(await screen.findByText("Collie names itself to the endpoint.", { exact: false })).toBeInTheDocument();
+  });
+
+  it("Codex refused: the reason is written in the open sheet", async () => {
+    server.use(
+      config(READY),
+      hostStatus(HOST_WHISTLE_ON),
+      http.put("/api/stt/host", () =>
+        HttpResponse.json({ error: "probe", code: "stt.codex_probe_failed", detail: { reason: "both identities were refused" } }, { status: 502 }),
+      ),
+    );
+    renderControl();
+    const group = await screen.findByRole("radiogroup", { name: "Host speech provider" });
+    await userEvent.click(within(group).getByRole("radio", { name: /^Codex/ }));
+    await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "I accept" }));
+    const sheet = screen.getByRole("dialog");
+    expect(await within(sheet).findByText("The Codex endpoint did not accept Collie: both identities were refused")).toBeInTheDocument();
   });
 
   it("removes the model from the host after the second tap", async () => {
@@ -541,7 +757,7 @@ describe("SpeechControl", () => {
     server.use(config(READY));
     renderControl();
     expect(
-      await screen.findByText("Your host has no speech provider. Turn on Whistle on the host above, or run collie stt setup."),
+      await screen.findByText("Your host has no speech provider. Choose one under Host speech provider above, or run collie stt setup."),
     ).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Host" })).toBeDisabled();
   });

@@ -156,10 +156,11 @@ import type { CrewTlsOptions } from "./crew/transport.ts";
 import { createSttAdmission, MAX_STT_AUDIO_BYTES, sttCapability, transcribeRequest } from "./stt/http.ts";
 import type { SttProvider } from "./stt/provider.ts";
 import { createWhistleModelStore, type WhistleModelStore } from "./stt/whistle-model.ts";
+import type { CodexDetector } from "./stt/codex-detect.ts";
+import { createHostCodexDetector, sttHostGet, sttHostPut, type SttHostRouteDeps } from "./stt/host-http.ts";
 import {
   modelResponse,
   whistleGet,
-  whistleHost,
   whistleRemove,
   whistleStart,
   whistleStatus,
@@ -1024,6 +1025,12 @@ export function startServer(opts: {
    */
   whistle?: WhistleModelStore;
   /**
+   * Whether the host's `codex` is installed and signed in, for Settings' Host speech provider card
+   * (ADR 0097). Absent means this function builds the real one (`codex login status`, cached); a test
+   * passes a fake so no `codex` runs.
+   */
+  sttCodex?: CodexDetector;
+  /**
    * The journal registry, built once by the caller. Absent means this function builds its own, which
    * is what every test does; `bridge/index.ts` passes one so the cache tracker and the history route
    * share the adapters' memoised path caches.
@@ -1149,6 +1156,16 @@ export function startServer(opts: {
     store: opts.whistle ?? createWhistleModelStore({ stateDir: cfg.stateDir, version: opts.version }),
     stateDir: cfg.stateDir,
     env: process.env,
+  };
+  // The host's speech provider (ADR 0097): the same `stt.json` and model store, the gate's provider for
+  // what the microphone gets, one Codex sign-in check shared by every device, one switch at a time.
+  const sttHostDeps: SttHostRouteDeps = {
+    stateDir: cfg.stateDir,
+    env: process.env,
+    stt,
+    store: whistleDeps.store,
+    codex: opts.sttCodex ?? createHostCodexDetector(cfg.stateDir, process.env),
+    gate: { busy: false },
   };
   /** Who the requester is, across both device gates — see {@link requestDevice}. */
   const whois = (req: Request): DeviceAuth => requestDevice(req, cfg, pairingGate);
@@ -2747,21 +2764,30 @@ export function startServer(opts: {
         });
         return secure(response);
       }
-      if (pathname === "/api/stt/whistle/host" && req.method === "PUT") {
-        // Turning the host engine on writes `stt.json`, so it is a write like any other setting a
-        // phone may change; whistle-http.ts says which states it may change and which it may not.
+      // ── The host's speech provider (bridge/stt/host-http.ts, ADR 0097) ───────────────────
+      // Lead-local like the routes above: neither reads `?host=` and neither is forwardable. The read
+      // needs the pairing token and is not audited (Settings reads it when Voice opens). The write is
+      // gated like `POST /api/stt`, because it chooses where room audio goes, and is one audit line of
+      // route metadata: the choice and the outcome, never a reason's text or a path.
+      if (pathname === "/api/stt/host") {
+        if (req.method === "GET") {
+          const denied = guard(req, cfg, "read", pairingGate);
+          if (denied) return denied;
+          return secure(await sttHostGet(sttHostDeps));
+        }
+        if (req.method !== "PUT") return text("method not allowed", 405);
         const denied = guard(req, cfg, "write", pairingGate);
         if (denied) return denied;
         let body: JsonValue | undefined;
         try {
-          // SAFETY: `Request.json()` output IS a JsonValue by construction; `parseWhistleHost`
-          // reads the one field it needs and refuses anything else.
+          // SAFETY: `Request.json()` output IS a JsonValue by construction; `parseSttHostRequest`
+          // reads the two fields it needs and refuses anything else.
           body = (await req.json()) as JsonValue;
         } catch {
           body = undefined;
         }
-        const { response, attempt } = await whistleHost(whistleDeps, body);
-        audit.record({ action: "stt.whistle.host", device: whois(req).device, detail: { ...attempt } });
+        const { response, attempt } = await sttHostPut(sttHostDeps, body);
+        audit.record({ action: "stt.host", device: whois(req).device, detail: { ...attempt } });
         return secure(response);
       }
       const sttModelMatch = pathname.match(STT_MODEL_ROUTE);

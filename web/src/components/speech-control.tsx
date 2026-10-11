@@ -1,19 +1,15 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { AudioLines, Cpu, Download, Loader2, Trash2 } from "lucide-react";
+import { AudioLines, Cpu, Download, Loader2, Server, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { CopyableBlock } from "@/components/ui/copyable-block";
 import { SectionLabel } from "@/components/ui/section-label";
 import { Segmented } from "@/components/ui/segmented";
-import { Switch } from "@/components/ui/switch";
+import { BottomSheet } from "@/components/ui/sheet";
 import { useStoredModel } from "@/hooks/use-stored-model";
 import { useLocale } from "@/hooks/use-locale";
-import {
-  fetchWhistleStatus,
-  removeWhistleModel,
-  setWhistleHostEngine,
-  startWhistleSetup,
-} from "@/lib/api";
+import { fetchSttHost, fetchWhistleStatus, removeWhistleModel, setSttHost, startWhistleSetup } from "@/lib/api";
 import { describeThrownError } from "@/lib/api-error-message";
 import { dateTime } from "@/lib/format";
 import { t, type MessageKey } from "@/lib/i18n";
@@ -34,21 +30,38 @@ import {
   type PhoneEngineBlock,
   type SttEngineChoice,
 } from "@/lib/stt";
+import { CODEX_CONSENT_ID, CODEX_CONSENT_KEYS, CODEX_TRANSCRIBE_URL } from "@/lib/stt-consent";
 import { downloadModel, removeModel, SttModelError, type StoredModel } from "@/lib/stt-model";
-import { isReadOnly, type SttCapability, type WhistleStatus } from "@/lib/types";
+import {
+  isReadOnly,
+  type SttCapability,
+  type SttHostChoice,
+  type SttHostStatus,
+  type SttHostSwitchReason,
+  type WhistleStatus,
+} from "@/lib/types";
+import { cn } from "@/lib/utils";
 
-// SETTINGS → VOICE: THE MODEL THAT LETS VOICE BECOME TEXT, AND WHERE IT RUNS (ADR 0096).
+// SETTINGS → VOICE: THE MODEL THAT LETS VOICE BECOME TEXT, AND WHERE IT RUNS (ADR 0096, ADR 0097).
 //
-// Two cards, in the order a person works through them. First Whistle, the small speech model both
-// engines run, with the credit to the people who made it and two steps: put it on the host, then set
-// it up on this phone. Then the Speech engine, the choice this device makes between the two, which
-// depends on what the steps above produced.
+// Three cards, in the order a person works through them. First Whistle, the small speech model both
+// engines can run, with the credit to the people who made it and two steps: put it on the host, then
+// set it up on this phone. Then the Host speech provider: what the host uses when a device sends it a
+// recording, and, on a write device, the choice between Whistle, Codex and Off. Last the Speech engine,
+// the choice this device makes between the host and itself, which depends on what the cards above
+// produced.
 //
 // THE HOST DOWNLOADS, NOT THE PHONE, AND ONLY ON A TAP. "Download to host" asks the host to fetch the
 // 16.9 MB once; "Set up on this phone" copies it from the host. Nothing here runs by itself, and a
 // phone never calls a third party (Decision 7). Downloading to the host is a write, so a read-only
 // device sees one sentence instead of the button. Copying to the phone is a read, so any paired device
 // may.
+//
+// THE HOST'S PROVIDER CHANGES ONLY AMONG THREE (ADR 0097). Whistle, Codex and Off carry no key and run
+// no command the operator chose. A provider set up in a terminal with a key, an endpoint or a command,
+// and anything the host's environment names, is shown and never changed here: the card prints the
+// command that changes it, to copy and run on the host. Codex first shows its consent in a sheet, the
+// same words `collie stt setup` prints, and nothing is sent to the host before "I accept".
 //
 // THIS FILE HAS TWO HALVES, as notify-prefs-control.tsx does. `SpeechCards` is the view: every fact
 // it draws arrives as a prop, so the playground can show each state with no host behind it.
@@ -84,6 +97,16 @@ export interface SpeechCardsProps {
   whistle: WhistleStatus | null;
   /** The host's speech provider, as `/api/config` says it. `null`: none is configured. */
   hostStt: SttCapability | null;
+  /** The host's provider, who set it and what may be chosen (`GET /api/stt/host`). `null`: not known (an older bridge, or not read yet). */
+  host: SttHostStatus | null;
+  /** The choice being sent to the host, while it is in flight. */
+  switching: SttHostChoice | null;
+  /** A refused switch, in words, written inside the Host speech provider card. */
+  providerError: string | null;
+  /** The Codex consent sheet is open. */
+  consentOpen: boolean;
+  /** A refused Codex switch, in words, written inside the open consent sheet. */
+  consentError: string | null;
   /** This device may set up and change the host's model (the same rule every other write uses). */
   canWrite: boolean;
   /** What this device asked for. */
@@ -108,7 +131,11 @@ export interface SpeechCardsProps {
   onAskRemove: () => void;
   onCancelRemove: () => void;
   onRemove: () => void;
-  onHostEngine: (on: boolean) => void;
+  /** A provider row was tapped: Whistle and Off are sent at once, Codex opens the consent. */
+  onChooseProvider: (choice: SttHostChoice) => void;
+  /** "I accept" in the consent sheet: the only path by which a Codex switch reaches the host. */
+  onAcceptConsent: () => void;
+  onCancelConsent: () => void;
   onPhoneDownload: () => void;
   onPhoneRemove: () => void;
 }
@@ -182,16 +209,18 @@ function Version({ revision, sha256 }: { revision: string | undefined; sha256: s
   );
 }
 
-/** The two cards, drawn from what they are told. No store, no network. */
+/** The cards, drawn from what they are told. No store, no network. */
 export function SpeechCards(props: SpeechCardsProps) {
   useLocale();
-  const { whistle, local } = props;
-  // Nothing to offer: this host has no Whistle and this phone holds no copy.
-  if (whistle === null && !local) return null;
+  const { whistle, local, host } = props;
+  // Whistle and the engine choice need a host that offers Whistle or a copy on this phone.
+  const whistleShown = whistle !== null || Boolean(local);
+  if (!whistleShown && host === null) return null;
   return (
     <>
-      <WhistleCard {...props} />
-      <EngineCard {...props} />
+      {whistleShown && <WhistleCard {...props} />}
+      {host !== null && <HostProviderCard {...props} host={host} />}
+      {whistleShown && <EngineCard {...props} />}
     </>
   );
 }
@@ -258,10 +287,8 @@ function HostStep({
   onAskRemove,
   onCancelRemove,
   onRemove,
-  onHostEngine,
 }: SpeechCardsProps & { whistle: WhistleStatus }) {
   const size = formatDownloadSize(whistle.bytes);
-  const taken = whistle.hostTaken && !whistle.hostEngine;
   return (
     <Step id="speech-host-step" heading={t("settings.speech.host.heading")}>
       {whistle.state === "absent" &&
@@ -324,28 +351,6 @@ function HostStep({
                 : [{ label: t("settings.speech.detail.downloaded"), value: dateTime(Date.parse(whistle.fetchedAt)) }]),
             ]}
           />
-          <div className="flex min-h-11 items-center justify-between gap-4">
-            <div className="min-w-0">
-              <div className="text-sm font-medium" id="speech-host-label">
-                {t("settings.speech.host.use.label")}
-              </div>
-              <p className="text-xs leading-snug text-muted-foreground">{t("settings.speech.host.use.description")}</p>
-            </div>
-            <div className="flex h-6 w-11 shrink-0 items-center justify-center">
-              <Switch
-                checked={whistle.hostEngine}
-                onCheckedChange={onHostEngine}
-                disabled={!canWrite || hostBusy || taken}
-                aria-labelledby="speech-host-label"
-                aria-describedby={taken ? "speech-host-taken" : undefined}
-              />
-            </div>
-          </div>
-          {taken && (
-            <p id="speech-host-taken" className="text-xs text-muted-foreground">
-              {t("settings.speech.host.use.taken")}
-            </p>
-          )}
           {canWrite && !confirmingRemove && (
             <Button variant="outline" className="h-11" onClick={onAskRemove}>
               {t("settings.speech.host.remove")}
@@ -373,6 +378,312 @@ function HostStep({
         </p>
       )}
     </Step>
+  );
+}
+
+// ── THE HOST SPEECH PROVIDER (ADR 0097) ──────────────────────────────────────────────────────────
+
+/** What a provider is called on this card. A name this app does not know is shown as the host sent it. */
+function hostProviderName(provider: string): string {
+  switch (provider) {
+    case "whistle":
+      return t("settings.speech.provider.name.whistle");
+    case "codex":
+      return t("settings.speech.provider.name.codex");
+    case "openai-compatible":
+      return t("settings.speech.provider.name.openai");
+    case "local-cli":
+      return t("settings.speech.provider.name.localCli");
+    case "none":
+      return t("settings.speech.provider.name.none");
+    default:
+      return provider;
+  }
+}
+
+/** Why a choice is off, and the command that would change that, run on the host. Null for the locks, which the card says once. */
+function switchWhy(reason: SttHostSwitchReason): { key: MessageKey; command: string | null } | null {
+  switch (reason) {
+    case "not-ready":
+      return { key: "settings.speech.provider.why.notReady", command: null };
+    case "codex-missing":
+      return { key: "settings.speech.provider.why.codexMissing", command: "codex login" };
+    case "codex-signed-out":
+      return { key: "settings.speech.provider.why.codexSignedOut", command: "codex login" };
+    case "codex-other-login":
+      return { key: "settings.speech.provider.why.codexOtherLogin", command: "codex login" };
+    case "codex-unknown":
+      return { key: "settings.speech.provider.why.codexUnknown", command: "codex login status" };
+    case "env":
+    case "terminal":
+    case "unreadable":
+      return null;
+  }
+}
+
+/** Why nothing at all may be chosen here: the provider belongs to a terminal, the environment, or an unreadable file. */
+type LockReason = Extract<SttHostSwitchReason, "env" | "terminal" | "unreadable">;
+
+function lockOf(host: SttHostStatus): LockReason | null {
+  const reason = host.switchable.off.reason;
+  return reason === "env" || reason === "terminal" || reason === "unreadable" ? reason : null;
+}
+
+/** A command to run on the host, with the Copy icon. Never translated: it is what the terminal takes. */
+function HostCommand({ command }: { command: string }) {
+  return (
+    <CopyableBlock text={command} label={t("copyable.command")}>
+      <p className="break-all rounded-sm border border-border bg-background py-2 pr-10 pl-3 font-mono text-xs">{command}</p>
+    </CopyableBlock>
+  );
+}
+
+/** Which row the host's provider selects. A provider set up elsewhere selects none of the three. */
+function selectedChoice(provider: string): SttHostChoice | null {
+  if (provider === "whistle" || provider === "codex") return provider;
+  return provider === "none" ? "off" : null;
+}
+
+const CHOICES = [
+  { value: "whistle", label: "settings.speech.provider.name.whistle", note: "settings.speech.provider.option.whistle.note" },
+  { value: "codex", label: "settings.speech.provider.name.codex", note: "settings.speech.provider.option.codex.note" },
+  { value: "off", label: "settings.speech.provider.option.off", note: "settings.speech.provider.option.off.note" },
+] as const satisfies readonly { value: SttHostChoice; label: MessageKey; note: MessageKey }[];
+
+function HostProviderCard({
+  host,
+  canWrite,
+  switching,
+  providerError,
+  consentOpen,
+  consentError,
+  onChooseProvider,
+  onAcceptConsent,
+  onCancelConsent,
+}: SpeechCardsProps & { host: SttHostStatus }) {
+  const lock = lockOf(host);
+  const selected = selectedChoice(host.provider);
+  let status: string;
+  if (host.provider === "none") status = t("settings.speech.provider.status.none");
+  else if (host.available) status = t("settings.speech.provider.status.ok");
+  else status = host.reason ?? t("settings.speech.provider.status.unavailable");
+  const rows: { label: string; value: ReactNode }[] = [
+    { label: t("settings.speech.provider.detail.provider"), value: hostProviderName(host.provider) },
+    { label: t("settings.speech.provider.detail.status"), value: status },
+  ];
+  if (host.provider === "codex" && host.identity !== undefined) {
+    rows.push({
+      label: t("settings.speech.provider.detail.identity"),
+      value: (
+        <>
+          <span className="font-mono text-xs">{host.identity}</span>{" "}
+          {t(host.identity === "codex-cli" ? "settings.speech.provider.identity.codexCli" : "settings.speech.provider.identity.honest")}
+        </>
+      ),
+    });
+  }
+  return (
+    <Card className="gap-0 py-0">
+      <div className="flex items-start gap-3 p-4">
+        <Server className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
+        <div className="min-w-0">
+          <div className="font-medium" id="speech-provider-title">
+            {t("settings.speech.provider.title")}
+          </div>
+          <p className="text-sm text-muted-foreground">{t("settings.speech.provider.description")}</p>
+        </div>
+      </div>
+      <div className="border-t border-border p-4">
+        <Details rows={rows} />
+      </div>
+
+      {!canWrite ? (
+        <p className="border-t border-border p-4 text-sm">{t("settings.speech.provider.readOnly")}</p>
+      ) : lock !== null ? (
+        <LockedNote lock={lock} />
+      ) : (
+        <>
+          <div role="radiogroup" aria-labelledby="speech-provider-title">
+            {CHOICES.map((choice) => (
+              <ProviderRow
+                key={choice.value}
+                choice={choice}
+                checked={selected === choice.value}
+                why={host.switchable[choice.value].ok ? null : (host.switchable[choice.value].reason ?? null)}
+                busy={switching === choice.value}
+                locked={switching !== null}
+                onChoose={onChooseProvider}
+              />
+            ))}
+          </div>
+          <section aria-labelledby="speech-provider-elsewhere" className="space-y-2 border-t border-border p-4">
+            <h3 id="speech-provider-elsewhere">
+              <SectionLabel>{t("settings.speech.provider.elsewhere.label")}</SectionLabel>
+            </h3>
+            <p className="text-xs text-muted-foreground">{t("settings.speech.provider.elsewhere")}</p>
+            <HostCommand command="collie stt setup" />
+          </section>
+        </>
+      )}
+      {providerError !== null && !consentOpen && (
+        <p role="status" className="border-t border-border px-4 py-3 text-xs text-status-blocked">
+          {providerError}
+        </p>
+      )}
+      <CodexConsentSheet
+        open={consentOpen}
+        codexBin={host.codexBin ?? "codex"}
+        busy={switching === "codex"}
+        error={consentError}
+        onAccept={onAcceptConsent}
+        onCancel={onCancelConsent}
+      />
+    </Card>
+  );
+}
+
+/** A provider set up in a terminal, by the environment, or a file that cannot be read: what to run instead of a choice. */
+function LockedNote({ lock }: { lock: LockReason }) {
+  return (
+    <div className="space-y-2 border-t border-border p-4">
+      {lock === "terminal" ? (
+        <>
+          <p className="text-xs text-muted-foreground">{t("settings.speech.provider.locked.terminal")}</p>
+          <HostCommand command="collie stt setup" />
+          <p className="text-xs text-muted-foreground">{t("settings.speech.provider.locked.off")}</p>
+          <HostCommand command="collie stt off" />
+        </>
+      ) : (
+        <>
+          <p className="text-xs text-muted-foreground">
+            {t(lock === "env" ? "settings.speech.provider.locked.env" : "settings.speech.provider.locked.unreadable")}
+          </p>
+          <HostCommand command="collie stt status" />
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * One choice: a radio with its name and what it means, and under it, outside the radio, why it is off
+ * and the command that would change that. The reason has a Copy button, which cannot sit inside a
+ * button, so it is the row's second part rather than the radio's description.
+ */
+function ProviderRow({
+  choice,
+  checked,
+  why,
+  busy,
+  locked,
+  onChoose,
+}: {
+  choice: (typeof CHOICES)[number];
+  checked: boolean;
+  why: SttHostSwitchReason | null;
+  busy: boolean;
+  /** Another choice is in flight. */
+  locked: boolean;
+  onChoose: (choice: SttHostChoice) => void;
+}) {
+  const id = `speech-provider-${choice.value}`;
+  const reason = why === null ? null : switchWhy(why);
+  return (
+    <div className="border-t border-border">
+      <button
+        type="button"
+        role="radio"
+        aria-checked={checked}
+        aria-labelledby={`${id}-label`}
+        aria-describedby={`${id}-note`}
+        disabled={why !== null || locked}
+        onClick={() => {
+          if (!checked) onChoose(choice.value);
+        }}
+        className="flex min-h-11 w-full items-start gap-3 px-4 py-3 text-left transition-colors active:bg-muted disabled:opacity-50 disabled:active:bg-transparent"
+      >
+        {/* The ring always carries its border; selecting it only fills the dot, so nothing moves (§2). */}
+        <span
+          aria-hidden
+          className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border-2 border-muted-foreground"
+        >
+          {busy ? (
+            <Loader2 className="size-3 animate-spin" />
+          ) : (
+            <span className={cn("size-2.5 rounded-full", checked ? "bg-primary" : "bg-transparent")} />
+          )}
+        </span>
+        <span className="min-w-0">
+          <span id={`${id}-label`} className="block text-sm font-medium">
+            {t(choice.label)}
+          </span>
+          <span id={`${id}-note`} className="block text-xs leading-snug text-muted-foreground">
+            {t(choice.note)}
+          </span>
+        </span>
+      </button>
+      {reason !== null && (
+        <div className="space-y-2 pr-4 pb-3 pl-12">
+          <p className="text-xs text-muted-foreground">{t(reason.key)}</p>
+          {reason.command !== null && <HostCommand command={reason.command} />}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The Codex consent, before anything is sent to the host. The words are `collie stt setup`'s
+ * (lib/stt-consent.ts says how they are kept equal), and "I accept" is the only control that sends a
+ * Codex switch. While the host checks the sign-in and probes the endpoint, the sheet stays open with
+ * the button busy, and a refusal is written here, under the words it refused.
+ */
+export function CodexConsentSheet({
+  open,
+  codexBin,
+  busy,
+  error,
+  onAccept,
+  onCancel,
+}: {
+  open: boolean;
+  /** The binary whose sign-in pays, as the host found it. */
+  codexBin: string;
+  busy: boolean;
+  error: string | null;
+  onAccept: () => void;
+  onCancel: () => void;
+}) {
+  useLocale();
+  return (
+    <BottomSheet open={open} onClose={busy ? () => {} : onCancel} title={t("settings.speech.provider.consent.title")}>
+      <div className="flex flex-col gap-3">
+        {CODEX_CONSENT_KEYS.map((key) => (
+          <p key={key} className="text-sm break-words">
+            {t(key, { url: CODEX_TRANSCRIBE_URL, codexBin })}
+          </p>
+        ))}
+        {busy && (
+          <p role="status" className="text-xs text-muted-foreground">
+            {t("settings.speech.provider.consent.probing")}
+          </p>
+        )}
+        {error !== null && !busy && (
+          <p role="status" className="text-xs text-status-blocked">
+            {error}
+          </p>
+        )}
+        <div className="flex gap-2 pt-1">
+          <Button type="button" variant="outline" className="h-11 flex-1" disabled={busy} onClick={onCancel}>
+            {t("dialog.cancel")}
+          </Button>
+          <Button type="button" className="h-11 flex-1" disabled={busy} onClick={onAccept}>
+            {busy && <Loader2 className="size-4 animate-spin" />}
+            {t("settings.speech.provider.consent.accept")}
+          </Button>
+        </div>
+      </div>
+    </BottomSheet>
   );
 }
 
@@ -520,6 +831,21 @@ export function SpeechControl() {
   const [hostBusy, setHostBusy] = useState(false);
   const [confirmingRemove, setConfirmingRemove] = useState(false);
   const copyAbort = useRef<AbortController | null>(null);
+  const [host, setHost] = useState<SttHostStatus | null>(null);
+  const [switching, setSwitching] = useState<SttHostChoice | null>(null);
+  const [providerError, setProviderError] = useState<string | null>(null);
+  const [consentOpen, setConsentOpen] = useState(false);
+  const [consentError, setConsentError] = useState<string | null>(null);
+
+  // THE HOST'S PROVIDER, read when the page opens and again whenever the model changes state, because
+  // a ready model is what opens the Whistle row and a removed one may take the provider with it. An
+  // older bridge answers 404 and the card stays away; nothing here retries.
+  const modelKey = `${whistle?.state ?? "none"}:${whistle?.sha256 ?? ""}:${whistle?.hostEngine === true}`;
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchSttHost(controller.signal).then(setHost, () => undefined);
+    return () => controller.abort();
+  }, [modelKey]);
 
   // The reason "This phone" is off. Unknown while the first look is under way counts as "has a copy",
   // so the option does not flash disabled and then open.
@@ -583,6 +909,29 @@ export function SpeechControl() {
     }
   }
 
+  /**
+   * Send one choice to the host. Codex only ever arrives here from "I accept", with the id of the
+   * consent text the sheet showed; Whistle and Off are sent on the tap. The answer is the host's new
+   * status, and the config is re-read with it, because the microphone follows the provider.
+   */
+  async function switchProvider(choice: SttHostChoice): Promise<void> {
+    setSwitching(choice);
+    setProviderError(null);
+    setConsentError(null);
+    try {
+      setHost(await setSttHost(choice, choice === "codex" ? CODEX_CONSENT_ID : undefined));
+      setConsentOpen(false);
+      void refreshOperatorConfig();
+    } catch (error) {
+      if (choice === "codex") setConsentError(describeThrownError(error));
+      else setProviderError(describeThrownError(error));
+      // What the host says now, so a row that closed meanwhile shows why.
+      fetchSttHost().then(setHost, () => undefined);
+    } finally {
+      setSwitching(null);
+    }
+  }
+
   async function phoneDownload(): Promise<void> {
     if (whistle === null) return;
     const controller = new AbortController();
@@ -606,6 +955,11 @@ export function SpeechControl() {
     <SpeechCards
       whistle={whistle}
       hostStt={hostStt}
+      host={host}
+      switching={switching}
+      providerError={providerError}
+      consentOpen={consentOpen}
+      consentError={consentError}
       canWrite={canWrite}
       engine={engine}
       block={block}
@@ -621,7 +975,17 @@ export function SpeechControl() {
       onAskRemove={() => setConfirmingRemove(true)}
       onCancelRemove={() => setConfirmingRemove(false)}
       onRemove={() => void hostAction(removeWhistleModel, true)}
-      onHostEngine={(on) => void hostAction(() => setWhistleHostEngine(on), true)}
+      onChooseProvider={(choice) => {
+        if (choice !== "codex") {
+          void switchProvider(choice);
+          return;
+        }
+        // Nothing is sent before "I accept".
+        setConsentError(null);
+        setConsentOpen(true);
+      }}
+      onAcceptConsent={() => void switchProvider("codex")}
+      onCancelConsent={() => setConsentOpen(false)}
       onPhoneDownload={() => void phoneDownload()}
       onPhoneRemove={() => {
         setPhoneError(null);

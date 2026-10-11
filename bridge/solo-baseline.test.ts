@@ -734,12 +734,14 @@ describe("solo zero-tax — routes", () => {
       // here rather than exempted, exactly as device pairing is. It is off until an operator
       // configures a provider, and it registers no crew route.
       "/api/stt",
-      // The Whistle model and the host engine's switch (ADR 0096): SOLO routes that legitimately
-      // extend this list, named here rather than exempted. Lead-local like `/api/stt`, gated like it,
-      // and none is forwardable. A bridge whose operator never taps "Download to host" downloads nothing
-      // and writes nothing through them.
+      // The host's speech provider (ADR 0097): a SOLO route that legitimately extends this list, named
+      // here rather than exempted. Lead-local like `/api/stt`, its write gated like it, not forwardable.
+      // A bridge whose operator never opens Settings → Voice runs nothing and writes nothing through it.
+      "/api/stt/host",
+      // The Whistle model (ADR 0096): a SOLO route that legitimately extends this list, named here
+      // rather than exempted. Lead-local like `/api/stt`, gated like it, and not forwardable. A bridge
+      // whose operator never taps "Download to host" downloads nothing and writes nothing through it.
       "/api/stt/whistle",
-      "/api/stt/whistle/host",
       "/api/subscribe",
       "/api/tab",
       // Starting an update from the phone (M15/05) — a SOLO route that legitimately extends this
@@ -1022,8 +1024,9 @@ const STATE_DIR_ENTRIES = [
   "push-subscriptions.json",
   "snooze.json",
   // Speech-to-text settings. Absent until the operator runs `collie stt setup`. The bridge writes it
-  // in one case only: the Whistle host engine's switch in Settings, which writes `{ "provider":
-  // "whistle" }` when no other provider is set, and removes it again (bridge/stt/whistle-http.ts).
+  // in one case only: the Host speech provider card in Settings, which writes Whistle or Codex (after
+  // the consent) or removes the file, and only while no key, command or environment names a provider
+  // (bridge/stt/host-http.ts, ADR 0097).
   "stt.json",
   // The detached updater's own stdout and stderr (#283), with the run before it kept beside it as
   // `update-runner.log.1`. Absent until the first update started from the phone: the bridge opens it

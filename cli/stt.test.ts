@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { STT_ENV_KEYS, STT_FILENAME, type SttSettings } from "../bridge/stt/config.ts";
+import { STT_ENV_KEYS, STT_FILENAME, type CodexSttSettings, type SttSettings } from "../bridge/stt/config.ts";
+import { CODEX_CONSENT_ID } from "../bridge/stt/codex-setup.ts";
+import { sttHostPut } from "../bridge/stt/host-http.ts";
+import { createWhistleModelStore } from "../bridge/stt/whistle-model.ts";
 import { CODEX_TRANSCRIBE_URL } from "../bridge/stt/codex.ts";
 import { LocalCliEmptyTranscriptError } from "../bridge/stt/local-cli.ts";
 import { SttError, type SttAudio, type SttProvider, type SttResult } from "../bridge/stt/provider.ts";
@@ -327,6 +333,46 @@ describe("collie stt setup — codex", () => {
     });
     expect(await cmdSttSetup(d, ["--provider", "codex", "--codex-bin", "/opt/bin/codex"])).toBe(EXIT.OK);
     expect(written(d).codexBin).toBe("/opt/bin/codex");
+  });
+
+  test("Settings' Codex switch probes the same way and writes the same file (ADR 0097)", async () => {
+    for (const identity of ["honest", "codex-cli"] as const) {
+      const cliAsked: CodexSttSettings[] = [];
+      const d = deps({
+        answers: consented,
+        probe: async (settings) => {
+          cliAsked.push(settings);
+          return identity;
+        },
+      });
+      expect(await cmdSttSetup(d, ["--provider", "codex"])).toBe(EXIT.OK);
+
+      const stateDir = mkdtempSync(join(tmpdir(), "collie-stt-parity-"));
+      try {
+        const hostAsked: CodexSttSettings[] = [];
+        const result = await sttHostPut(
+          {
+            stateDir,
+            env: {},
+            stt: async () => null,
+            store: createWhistleModelStore({ stateDir, version: "0.0.0" }),
+            // The binary the CLI found (`which codex` in the fakes), found the same way on the host.
+            codex: { check: async () => ({ state: "ready", codexBin: "/fake/codex" }) },
+            gate: { busy: false },
+            probe: async (settings) => {
+              hostAsked.push(settings);
+              return identity;
+            },
+          },
+          { provider: "codex", consent: CODEX_CONSENT_ID },
+        );
+        expect(result.response.status).toBe(200);
+        expect(hostAsked).toEqual(cliAsked);
+        expect(JSON.parse(readFileSync(join(stateDir, STT_FILENAME), "utf8"))).toEqual(written(d));
+      } finally {
+        rmSync(stateDir, { recursive: true, force: true });
+      }
+    }
   });
 });
 

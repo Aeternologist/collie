@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createSttSettingsReader, sttSettingsPath, writeSttSettingsFile, type SttSettingsFileOps } from "./config.ts";
+import { sttSettingsPath, writeSttSettingsFile, type SttSettingsFileOps } from "./config.ts";
 import { createWhistleModelStore, resetWhistleModelState, whistlePaths, type WhistleModelPin } from "./whistle-model.ts";
 import {
   diskSttFileOps,
@@ -13,7 +13,6 @@ import {
   modelResponse,
   resetModelSends,
   whistleGet,
-  whistleHost,
   whistleRemove,
   whistleStart,
   type WhistleRouteDeps,
@@ -115,74 +114,9 @@ describe("GET and POST /api/stt/whistle", () => {
   });
 });
 
-describe("PUT /api/stt/whistle/host", () => {
-  test("on needs the model first: 409 stt.whistle_not_ready, and nothing is written", async () => {
-    const result = await whistleHost(deps(), { on: true });
-    expect(result.response.status).toBe(409);
-    expect((await result.response.json()).code).toBe("stt.whistle_not_ready");
-    expect(sttJson()).toBeNull();
-  });
+// Choosing the provider (Whistle, Codex or Off) moved to `PUT /api/stt/host`: host-http.test.ts.
 
-  test("on with no other provider writes exactly { provider: whistle } at 0600, and the gate reads it with no restart", async () => {
-    const d = deps();
-    await ready(d);
-    const read = createSttSettingsReader({ stateDir, warn: () => undefined, env: {} });
-    expect(await read()).toBeNull();
-
-    const result = await whistleHost(d, { on: true });
-    expect(result.response.status).toBe(200);
-    expect(await result.response.json()).toMatchObject({ state: "ready", hostEngine: true, hostTaken: false });
-    expect(JSON.parse(sttJson()!)).toEqual({ provider: "whistle" });
-    if (process.platform !== "win32") expect(statSync(sttSettingsPath(stateDir)).mode & 0o777).toBe(0o600);
-    expect(readdirSync(stateDir).filter((name) => name.endsWith(".tmp"))).toEqual([]);
-    expect(await read()).toEqual({ provider: "whistle" });
-
-    // Off removes it, and the same reader sees speech-to-text off.
-    const off = await whistleHost(d, { on: false });
-    expect(off.response.status).toBe(200);
-    expect(await off.response.json()).toMatchObject({ hostEngine: false });
-    expect(sttJson()).toBeNull();
-    expect(await read()).toBeNull();
-  });
-
-  test("on never replaces a provider the operator set up: 409 stt.whistle_provider_taken, file untouched", async () => {
-    const d = deps();
-    await ready(d);
-    const theirs = JSON.stringify({ provider: "openai-compatible", baseUrl: "http://127.0.0.1:8080/v1" });
-    writeFileSync(sttSettingsPath(stateDir), theirs);
-    const result = await whistleHost(d, { on: true });
-    expect(result.response.status).toBe(409);
-    expect((await result.response.json()).code).toBe("stt.whistle_provider_taken");
-    expect(sttJson()).toBe(theirs);
-    // Nor does off remove it.
-    const off = await whistleHost(d, { on: false });
-    expect(off.response.status).toBe(409);
-    expect(sttJson()).toBe(theirs);
-  });
-
-  test("on refuses with 409 when the operator wrote stt.json while the model was being checked", async () => {
-    const d = deps();
-    await ready(d);
-    const theirs = JSON.stringify({ provider: "local-cli", command: "/usr/bin/whisper" });
-    // `collie stt setup` lands during the (slow) `ready()`: after the first read, before the write.
-    const racing: WhistleRouteDeps = {
-      ...d,
-      store: {
-        ...d.store,
-        ready: async () => {
-          const held = await d.store.ready();
-          writeFileSync(sttSettingsPath(stateDir), theirs);
-          return held;
-        },
-      },
-    };
-    const result = await whistleHost(racing, { on: true });
-    expect(result.response.status).toBe(409);
-    expect((await result.response.json()).code).toBe("stt.whistle_provider_taken");
-    expect(result.attempt).toEqual({ status: 409, outcome: "taken", on: true });
-    expect(sttJson()).toBe(theirs);
-  });
-
+describe("the stt.json writer", () => {
   test("two writers never share a temporary name, and neither removes the other's", () => {
     const names: string[] = [];
     const watching: SttSettingsFileOps = {
@@ -207,27 +141,13 @@ describe("PUT /api/stt/whistle/host", () => {
     expect(JSON.parse(sttJson()!)).toEqual({ provider: "whistle" });
   });
 
-  test("off with nothing configured is a no-op, and off cannot undo an environment that names whistle", async () => {
-    const d = deps();
-    expect((await whistleHost(d, { on: false })).response.status).toBe(200);
-    const env = deps({ COLLIE_STT_PROVIDER: "whistle" });
-    await ready(env);
-    expect(await (await whistleGet(env)).json()).toMatchObject({ hostEngine: true, hostTaken: false });
-    expect((await whistleHost(env, { on: false })).response.status).toBe(409);
-  });
-
-  test("a body that is not { on: boolean } is a 400", async () => {
-    for (const body of [null, {}, { on: "yes" }, "on", [true]]) {
-      expect((await whistleHost(deps(), body)).response.status).toBe(400);
-    }
-  });
 });
 
 describe("DELETE /api/stt/whistle", () => {
   test("removes the model and the whistle provider", async () => {
     const d = deps();
     await ready(d);
-    await whistleHost(d, { on: true });
+    writeFileSync(sttSettingsPath(stateDir), JSON.stringify({ provider: "whistle" }));
     const result = await whistleRemove(d);
     expect(result.response.status).toBe(200);
     expect(await result.response.json()).toEqual({ state: "absent", bytes: MODEL.byteLength, hostEngine: false, hostTaken: false });

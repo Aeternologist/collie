@@ -232,9 +232,9 @@ export const ACK_MANIFEST = {
     channel: "inline",
     why: "The two-tap confirm sits in the Whistle card and its outcome is the card itself going back to the setup button; a refusal is written under it.",
   },
-  setWhistleHostEngine: {
+  setSttHost: {
     channel: "inline",
-    why: "The switch is the acknowledgement, and a refusal (another provider, no model) is written under that same switch, because the reason is about that one row.",
+    why: "The Host speech provider card is the acknowledgement: the chosen row turns selected and the status line names the provider the host answered with. A refusal (another provider set up in a terminal, no model, Codex not signed in, the probe refused) is written inside that card, or inside the consent sheet while it is open, because the reason is about that one choice.",
   },
 // `satisfies`, not an annotation: the KEYS stay known to the compiler (so a typo'd name is a type
 // error at any reader, rather than a silent `undefined`), while every entry is still checked against

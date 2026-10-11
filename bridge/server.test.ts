@@ -2402,7 +2402,11 @@ describe("the Whistle routes and the /api/config block", () => {
     expect(status).toContain('const denied = guard(req, cfg, "write", pairingGate);');
     // The read answers before the write gate is reached, and nothing but GET is let through it.
     expect(status.indexOf('if (req.method === "GET")')).toBeLessThan(status.indexOf('"write"'));
-    expect(block('if (pathname === "/api/stt/whistle/host" && req.method === "PUT")')).toContain('guard(req, cfg, "write", pairingGate)');
+    const host = block('if (pathname === "/api/stt/host") {');
+    expect(host).toContain('const denied = guard(req, cfg, "read", pairingGate);');
+    expect(host).toContain('const denied = guard(req, cfg, "write", pairingGate);');
+    expect(host.indexOf('if (req.method === "GET")')).toBeLessThan(host.indexOf('"write"'));
+    expect(host).toContain('if (req.method !== "PUT") return text("method not allowed", 405);');
     expect(block("const sttModelMatch = pathname.match(STT_MODEL_ROUTE);")).toContain('guard(req, cfg, "read", pairingGate)');
     expect(block('if (pathname === "/api/stt" && req.method === "POST")')).toContain('guard(req, cfg, "write", pairingGate)');
   });
@@ -2412,16 +2416,16 @@ describe("the Whistle routes and the /api/config block", () => {
   });
 
   test("every write and every model copy is audited; the status poll is not", () => {
-    for (const action of ["stt.whistle.download", "stt.whistle.remove", "stt.whistle.host", "stt.model.read"]) {
+    for (const action of ["stt.whistle.download", "stt.whistle.remove", "stt.host", "stt.model.read"]) {
       expect(src).toContain(action);
     }
   });
 
   test("none of them is forwarded to a crew member, and none reads ?host=", () => {
-    for (const path of ["/api/stt/whistle", "/api/stt/whistle/host", `/api/stt/model/${"a".repeat(64)}`, "/api/stt"]) {
+    for (const path of ["/api/stt/whistle", "/api/stt/host", `/api/stt/model/${"a".repeat(64)}`, "/api/stt"]) {
       expect(crewRouteFor(path)).toBeNull();
     }
-    for (const start of ['if (pathname === "/api/stt/whistle") {', 'if (pathname === "/api/stt/whistle/host" && req.method === "PUT")', "const sttModelMatch = pathname.match(STT_MODEL_ROUTE);"]) {
+    for (const start of ['if (pathname === "/api/stt/whistle") {', 'if (pathname === "/api/stt/host") {', "const sttModelMatch = pathname.match(STT_MODEL_ROUTE);"]) {
       const handler = block(start);
       expect(handler).not.toContain("target(");
       expect(handler).not.toMatch(/\bhost\b(?!["/ ])|crewLead|searchParams/);

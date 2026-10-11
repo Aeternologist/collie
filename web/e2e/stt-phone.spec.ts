@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { chromium, expect, test, type Page, type Request, type Route } from "@playwright/test";
 
 import { en } from "@/lib/i18n/messages/en";
-import type { SttCapability, WhistleStatus } from "@/lib/types";
+import type { SttCapability, SttHostStatus, WhistleStatus } from "@/lib/types";
 import { ACCEPTED_WHISTLE_SHAS, NEEDLE_WASM_BYTES } from "@/stt/pins";
 
 import { installApiStub } from "./fixtures/api";
@@ -11,7 +11,8 @@ import { serveWithShellCsp, sttWorkerCsp } from "./fixtures/csp";
 
 // SPEECH ON THE PHONE AND ON THE HOST, END TO END (ADR 0096), against a stubbed bridge.
 //
-//   * Settings → Voice: Download to host (absent, downloading, ready), Use Whistle on the host, Set up on this phone, This phone.
+//   * Settings → Voice: Download to host (absent, downloading, ready), Whistle under Host speech provider
+//     (ADR 0097), Set up on this phone, This phone.
 //   * Dictation on the phone engine: record, stop, the transcript lands in the composer, and
 //     `POST /api/stt` is never called (Decision 11).
 //   * Dictation on the host with the `whistle` provider: the upload is a 16 kHz WAV (Decision 4).
@@ -114,13 +115,28 @@ interface ConfigBody {
   whistle?: WhistleStatus;
 }
 
-type JsonBody = ConfigBody | WhistleStatus | { ok: true; text: string };
+type JsonBody = ConfigBody | WhistleStatus | SttHostStatus | { ok: true; text: string };
+
+/** `GET /api/stt/host` as the bridge would answer it for this world: Codex is not installed here. */
+function hostStatus(world: World): SttHostStatus {
+  const provider = world.stt?.provider ?? "none";
+  return {
+    provider,
+    available: world.stt?.available ?? false,
+    configuredBy: provider === "none" ? "none" : "file",
+    switchable: {
+      whistle: world.whistle?.state === "ready" ? { ok: true } : { ok: false, reason: "not-ready" },
+      codex: { ok: false, reason: "codex-missing" },
+      off: { ok: true },
+    },
+  };
+}
 
 function json(route: Route, body: JsonBody, status = 200): Promise<void> {
   return route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
 }
 
-/** The Whistle half of the bridge: config, status, setup, remove, host switch, the model and the upload. */
+/** The speech half of the bridge: config, the model's status, setup, remove, the host's provider, the model and the upload. */
 async function installSpeechBridge(page: Page, world: World): Promise<void> {
   await installApiStub(page);
   await page.route("**/api/config", (route) => {
@@ -153,13 +169,14 @@ async function installSpeechBridge(page: Page, world: World): Promise<void> {
     }
     return json(route, world.whistle ?? absent());
   });
-  await page.route("**/api/stt/whistle/host", async (route) => {
-    // SAFETY: the app's own `setWhistleHostEngine` posts exactly `{ on: boolean }`.
-    const on = (route.request().postDataJSON() as { on: boolean }).on;
-    world.writes.push({ method: "PUT", path: "/api/stt/whistle/host", body: { on } });
-    world.whistle = { ...(world.whistle ?? ready()), hostEngine: on };
-    world.stt = on ? WHISTLE_HOST_STT : undefined;
-    return json(route, world.whistle);
+  await page.route("**/api/stt/host", async (route) => {
+    if (route.request().method() === "GET") return json(route, hostStatus(world));
+    // SAFETY: the app's own `setSttHost` sends exactly `{ provider }` for Whistle and Off.
+    const body = route.request().postDataJSON() as { provider: "whistle" | "off" };
+    world.writes.push({ method: "PUT", path: "/api/stt/host", body });
+    world.stt = body.provider === "whistle" ? WHISTLE_HOST_STT : undefined;
+    if (world.whistle !== undefined) world.whistle = { ...world.whistle, hostEngine: body.provider === "whistle" };
+    return json(route, hostStatus(world));
   });
   await page.route("**/api/stt/model/*", async (route) => {
     world.modelGets += 1;
@@ -386,7 +403,7 @@ async function setUpOnPhone(page: Page, timeout = 30_000): Promise<void> {
 
 // ── SETTINGS: THE HOST'S MODEL ──────────────────────────────────────────────────────────────────
 
-test("Download to host walks absent, downloading, ready; Use Whistle on the host turns the provider on", async ({ page }) => {
+test("Download to host walks absent, downloading, ready; Whistle under Host speech provider turns the provider on", async ({ page }) => {
   const world = freshWorld({ whistle: absent() });
   await installSpeechBridge(page, world);
   await serveUnderBridgePolicies(page);
@@ -407,13 +424,23 @@ test("Download to host walks absent, downloading, ready; Use Whistle on the host
   await expect(version).toHaveAttribute("href", `https://huggingface.co/Cactus-Compute/whistle/tree/${REVISION}`);
   await expect(version).toHaveAttribute("target", "_blank");
 
-  // Use Whistle on the host: a PUT with the switch's value, and the config re-read carries the provider.
-  const host = page.getByRole("switch", { name: en["settings.speech.host.use.label"] });
-  await expect(host).not.toBeChecked();
-  await host.click();
-  await expect(host).toBeChecked();
-  expect(world.writes.at(-1)).toEqual({ method: "PUT", path: "/api/stt/whistle/host", body: { on: true } });
+  // The Whistle card has no switch any more: the host's provider is chosen in its own card (ADR 0097).
+  await expect(page.getByRole("switch")).toHaveCount(0);
+  const providers = page.getByRole("radiogroup", { name: en["settings.speech.provider.title"] });
+  const off = providers.getByRole("radio", { name: en["settings.speech.provider.option.off"], exact: true });
+  const whistle = providers.getByRole("radio", { name: en["settings.speech.provider.name.whistle"], exact: true });
+  await expect(off).toHaveAttribute("aria-checked", "true");
+  // Codex is not installed on this host: the row is off and says what to run there.
+  await expect(providers.getByRole("radio", { name: en["settings.speech.provider.name.codex"], exact: true })).toBeDisabled();
+  await expect(page.getByText(en["settings.speech.provider.why.codexMissing"])).toBeVisible();
+  // The model is ready, so the poll's end re-read the host and Whistle is open: one tap, one PUT.
+  await expect(whistle).toBeEnabled();
+  await whistle.click();
+  await expect(whistle).toHaveAttribute("aria-checked", "true");
+  expect(world.writes.at(-1)).toEqual({ method: "PUT", path: "/api/stt/host", body: { provider: "whistle" } });
   expect(world.stt?.provider).toBe("whistle");
+  // The microphone follows the provider: the config re-read names Whistle under the engine choice.
+  await expect(page.getByText(en["settings.speech.engine.hostUses"].replace("{provider}", "Whistle"))).toBeVisible();
 });
 
 test("the phone engine: set up on this phone, then choose This phone, and the copy is kept", async ({ page }) => {

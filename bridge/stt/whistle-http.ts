@@ -8,10 +8,9 @@ import {
   namedSttProvider,
   sttEnvSettings,
   sttSettingsPath,
-  writeSttSettingsFile,
+  type SttSettingsDocument,
   type SttSettingsFileOps,
 } from "./config.ts";
-import { jsonBooleanField, jsonRecord } from "./json.ts";
 import type { WhistleModelStore } from "./whistle-model.ts";
 
 // ── THE WHISTLE ROUTES' OWN RULES, AWAY FROM Bun.serve (ADR 0096) ───────────────────────────
@@ -19,8 +18,10 @@ import type { WhistleModelStore } from "./whistle-model.ts";
 //   GET    /api/stt/whistle         read   the model's state and the host engine's switch
 //   POST   /api/stt/whistle         write  start the download, or join the one in flight
 //   DELETE /api/stt/whistle         write  remove the model, and the `whistle` provider if it is set
-//   PUT    /api/stt/whistle/host    write  `{ "on": boolean }`, the host engine's switch
 //   GET    /api/stt/model/<sha256>  read   the model's bytes, content-addressed
+//
+// The host engine's switch was `PUT /api/stt/whistle/host` until it became one choice of three on
+// `PUT /api/stt/host` (bridge/stt/host-http.ts, ADR 0097). It never shipped in a release.
 //
 // None is forwarded: none is in the crew's FORWARDABLE list and none reads `?host=`, exactly like
 // `/api/stt`, because speech is lead-only (ADR 0029). A crew member answers them about its own model
@@ -28,17 +29,14 @@ import type { WhistleModelStore } from "./whistle-model.ts";
 // server.ts does the gating and the audit line; everything the routes decide lives here so `bun test`
 // can drive it.
 //
-// THE SWITCH IS NOT A SETUP FORM (ADR 0096 Decision 3). It writes one document, `{ "provider":
-// "whistle" }`, through the same writer `collie stt setup` uses, and only when nothing else is
-// configured: a provider the operator chose in the terminal (a key, a command, an endpoint) is never
-// replaced or removed from a phone, and neither is an `stt.json` this bridge cannot read, nor a
-// provider the deployment's environment names. The bridge picks the change up without a restart,
-// because the gate re-reads `stt.json` behind an mtime check on every request (bridge/stt/index.ts).
+// Settings may write `stt.json` from here in one way only: DELETE removes the `whistle` provider with
+// the model, when the file names `whistle` and the environment names nothing. Choosing a provider is
+// bridge/stt/host-http.ts's, which reads `stt.json` through {@link readSttSources} below.
 
 /** What a whistle route answered, and the words for its audit line. Never a path, never the model. */
 export interface WhistleRouteResult {
   response: Response;
-  attempt: { status: number; outcome: string; on?: boolean };
+  attempt: { status: number; outcome: string };
 }
 
 export interface WhistleRouteDeps {
@@ -63,26 +61,29 @@ export const diskSttFileOps: SttSettingsFileOps = {
   remove: (path) => rmSync(path, { force: true }),
 };
 
-/** Who holds the host's speech-to-text setting, as far as Settings is concerned. */
-interface HostFlags {
-  hostEngine: boolean;
-  hostTaken: boolean;
-  /** The file names `whistle` and the environment names nothing: a phone may turn it off. */
-  removable: boolean;
+/** `stt.json` and the environment, as read before any resolve. */
+export interface SttSources {
+  /** The file's fields. Empty when there is no file, or when it could not be read. */
+  file: SttSettingsDocument;
+  /** The environment's fields. */
+  env: SttSettingsDocument;
+  /** A file is there and cannot be read or parsed. It is the operator's, never "nothing configured". */
+  unreadable: boolean;
   /** What `stt.json` held when it was read (null: no file, or not readable), to see a change by. */
   seen: string | null;
 }
 
 /**
- * Read `stt.json` and the environment, before any resolve. A file that is there and cannot be read
- * or parsed is the operator's (taken), never "nothing configured": overwriting it would lose it.
+ * Read `stt.json` and the environment, synchronously, before any resolve. A file that is there and
+ * cannot be read or parsed is the operator's: overwriting it would lose it. Synchronous on purpose: a
+ * caller that reads, checks and writes with no `await` in between cannot be overtaken half way.
  */
-function hostFlags(deps: WhistleRouteDeps): HostFlags {
+export function readSttSources(stateDir: string, envVars: Record<string, string | undefined>): SttSources {
   let file = coerceSttFile(undefined);
   let unreadable = false;
   let text: string | null = null;
   try {
-    text = readFileSync(sttSettingsPath(deps.stateDir), "utf8");
+    text = readFileSync(sttSettingsPath(stateDir), "utf8");
   } catch (err) {
     unreadable = !(err instanceof Error && "code" in err && err.code === "ENOENT");
   }
@@ -94,25 +95,31 @@ function hostFlags(deps: WhistleRouteDeps): HostFlags {
       unreadable = true;
     }
   }
-  const env = sttEnvSettings(deps.env);
-  if (unreadable) return { hostEngine: false, hostTaken: true, removable: false, seen: text };
+  return { file: unreadable ? coerceSttFile(undefined) : file, env: sttEnvSettings(envVars), unreadable, seen: text };
+}
+
+/** Whether two reads saw the same `stt.json` and the same environment. */
+export function sameSttSources(before: SttSources, now: SttSources): boolean {
+  return before.seen === now.seen && before.unreadable === now.unreadable && JSON.stringify(before.env) === JSON.stringify(now.env);
+}
+
+/** Who holds the host's speech-to-text setting, as far as the Whistle card is concerned. */
+interface HostFlags {
+  hostEngine: boolean;
+  hostTaken: boolean;
+  /** The file names `whistle` and the environment names nothing: a phone may turn it off. */
+  removable: boolean;
+}
+
+function hostFlags(deps: WhistleRouteDeps): HostFlags {
+  const { file, env, unreadable } = readSttSources(deps.stateDir, deps.env);
+  if (unreadable) return { hostEngine: false, hostTaken: true, removable: false };
   const effective = namedSttProvider(file, env);
   return {
     hostEngine: effective === "whistle",
     hostTaken: effective !== undefined && effective !== "whistle",
     removable: namedSttProvider(file, {}) === "whistle" && namedSttProvider({}, env) === undefined,
-    seen: text,
   };
-}
-
-/** Whether `stt.json` and the environment still say what they said when `before` was read. */
-function sameFlags(before: HostFlags, now: HostFlags): boolean {
-  return (
-    before.seen === now.seen &&
-    before.hostEngine === now.hostEngine &&
-    before.hostTaken === now.hostTaken &&
-    before.removable === now.removable
-  );
 }
 
 /** The whole `WhistleStatus`: the store's half and the switch's half. `/api/config` carries this too. */
@@ -151,39 +158,6 @@ export async function whistleRemove(deps: WhistleRouteDeps): Promise<WhistleRout
   await deps.store.remove();
   if (hostFlags(deps).removable) (deps.files ?? diskSttFileOps).remove(sttSettingsPath(deps.stateDir));
   return { response: json(await whistleStatus(deps), 200), attempt: { status: 200, outcome: "removed" } };
-}
-
-/** The body of `PUT /api/stt/whistle/host`, or null when it is not `{ "on": boolean }`. */
-export function parseWhistleHost(raw: JsonValue | undefined): { on: boolean } | null {
-  const on = jsonBooleanField(jsonRecord(raw)?.on);
-  return on === null ? null : { on };
-}
-
-/** `PUT /api/stt/whistle/host`. `body` is the parsed request body. */
-export async function whistleHost(deps: WhistleRouteDeps, body: JsonValue | undefined): Promise<WhistleRouteResult> {
-  const request = parseWhistleHost(body);
-  if (request === null) {
-    return { response: new Response("bad body", { status: 400 }), attempt: { status: 400, outcome: "invalid" } };
-  }
-  const flags = hostFlags(deps);
-  const files = deps.files ?? diskSttFileOps;
-  if (request.on) {
-    if (flags.hostTaken) return { ...refuse(409, "stt.whistle_provider_taken"), attempt: { status: 409, outcome: "taken", on: true } };
-    if ((await deps.store.ready()) === null) return { ...refuse(409, "stt.whistle_not_ready"), attempt: { status: 409, outcome: "not-ready", on: true } };
-    // `ready()` may have hashed 17 MB, and `collie stt setup` may have written in the meantime. Read
-    // again, with no await between this read and the write, and refuse when anything changed: a
-    // provider the operator just set up is never overwritten by a tap that began before it.
-    const now = hostFlags(deps);
-    if (!sameFlags(flags, now)) return { ...refuse(409, "stt.whistle_provider_taken"), attempt: { status: 409, outcome: "taken", on: true } };
-    if (!now.hostEngine) writeSttSettingsFile(deps.stateDir, { provider: "whistle" }, files);
-  } else if (flags.hostEngine) {
-    // On, but from the environment: the deployment's statement, which no phone may change.
-    if (!flags.removable) return { ...refuse(409, "stt.whistle_provider_taken"), attempt: { status: 409, outcome: "taken", on: false } };
-    files.remove(sttSettingsPath(deps.stateDir));
-  } else if (flags.hostTaken) {
-    return { ...refuse(409, "stt.whistle_provider_taken"), attempt: { status: 409, outcome: "taken", on: false } };
-  }
-  return { response: json(await whistleStatus(deps), 200), attempt: { status: 200, outcome: "ok", on: request.on } };
 }
 
 /** The policy on the model's bytes: nothing in them may run, whatever a browser makes of them. */

@@ -34,10 +34,11 @@ import {
   sttTimeoutFor,
   startRun,
   transcribeAudio,
+  fetchSttHost,
   fetchSttModel,
   fetchWhistleStatus,
   removeWhistleModel,
-  setWhistleHostEngine,
+  setSttHost,
   startWhistleSetup,
   withTimeout,
   XHR_HEADER,
@@ -811,9 +812,8 @@ async function refusalCode(promise: Promise<unknown>): Promise<string | undefine
 describe("the Whistle calls", () => {
   const STATUS = { state: "absent", bytes: 16919407, hostEngine: false, hostTaken: false };
 
-  it("reads the status, starts the setup, removes the model and flips the host engine on the right routes", async () => {
+  it("reads the status, starts the setup and removes the model on the right routes", async () => {
     const seen: string[] = [];
-    let hostBody: unknown;
     server.use(
       http.get("/api/stt/whistle", () => {
         seen.push("GET /api/stt/whistle");
@@ -827,33 +827,47 @@ describe("the Whistle calls", () => {
         seen.push("DELETE /api/stt/whistle");
         return HttpResponse.json(STATUS);
       }),
-      http.put("/api/stt/whistle/host", async ({ request }) => {
-        hostBody = await request.json();
-        seen.push("PUT /api/stt/whistle/host");
-        return HttpResponse.json({ ...STATUS, state: "ready", hostEngine: true });
-      }),
     );
     expect((await fetchWhistleStatus()).state).toBe("absent");
     expect((await startWhistleSetup()).state).toBe("downloading");
     expect((await removeWhistleModel()).state).toBe("absent");
-    expect((await setWhistleHostEngine(true)).hostEngine).toBe(true);
-    expect(hostBody).toEqual({ on: true });
-    expect(seen).toEqual([
-      "GET /api/stt/whistle",
-      "POST /api/stt/whistle",
-      "DELETE /api/stt/whistle",
-      "PUT /api/stt/whistle/host",
+    expect(seen).toEqual(["GET /api/stt/whistle", "POST /api/stt/whistle", "DELETE /api/stt/whistle"]);
+  });
+
+  it("reads and switches the host's provider; Codex carries the consent id, the others carry none", async () => {
+    const HOST = {
+      provider: "none",
+      available: false,
+      configuredBy: "none",
+      switchable: { whistle: { ok: true }, codex: { ok: true }, off: { ok: true } },
+    };
+    const bodies: unknown[] = [];
+    server.use(
+      http.get("/api/stt/host", () => HttpResponse.json(HOST)),
+      http.put("/api/stt/host", async ({ request }) => {
+        bodies.push(await request.json());
+        return HttpResponse.json(HOST);
+      }),
+    );
+    expect((await fetchSttHost()).provider).toBe("none");
+    await setSttHost("whistle");
+    await setSttHost("off");
+    await setSttHost("codex", "codex-consent-80d08bef89cd");
+    expect(bodies).toEqual([
+      { provider: "whistle" },
+      { provider: "off" },
+      { provider: "codex", consent: "codex-consent-80d08bef89cd" },
     ]);
   });
 
   it("carries the host's refusal code, so Settings can say it in the operator's language", async () => {
     server.use(
-      http.put("/api/stt/whistle/host", () =>
-        HttpResponse.json({ error: "another provider", code: "stt.whistle_provider_taken" }, { status: 409 }),
+      http.put("/api/stt/host", () =>
+        HttpResponse.json({ error: "locked", code: "stt.host_provider_locked" }, { status: 409 }),
       ),
     );
-    await expect(setWhistleHostEngine(true)).rejects.toThrow(/409/);
-    expect(await refusalCode(setWhistleHostEngine(true))).toBe("stt.whistle_provider_taken");
+    await expect(setSttHost("off")).rejects.toThrow(/409/);
+    expect(await refusalCode(setSttHost("off"))).toBe("stt.host_provider_locked");
   });
 
   it("fetches the model by hash with the token and hands the stream back untouched", async () => {

@@ -8,9 +8,9 @@ import { CommandPicker } from "@/components/new-command-picker";
 import { NoPromptsSheet } from "@/components/no-prompts-sheet";
 import { NotifyPrefsCard } from "@/components/notify-prefs-control";
 import { SpaceOverview } from "@/components/space-overview";
-import { SpeechCards, type SpeechCardsProps } from "@/components/speech-control";
+import { CodexConsentSheet, SpeechCards, type SpeechCardsProps } from "@/components/speech-control";
 import { commandChoice, commandKey, commandOptions, offerFor, pickOfKey } from "@/lib/new-page";
-import type { LauncherItem, RecentRun, SttCapability, WhistleStatus } from "@/lib/types";
+import type { LauncherItem, RecentRun, SttCapability, SttHostStatus, WhistleStatus } from "@/lib/types";
 import {
   devicesPaired,
   devicesUnpaired,
@@ -84,7 +84,7 @@ function CommandPickerDemo({ run, pick, line = "" }: { run: boolean; pick: strin
   );
 }
 
-// ── Settings → Voice (ADR 0096) ─────────────────────────────────────────────────────────────────────
+// ── Settings → Voice (ADR 0096, ADR 0097) ───────────────────────────────────────────────────────────
 
 const WHISTLE_BYTES = 16_919_407;
 const WHISTLE_SHA = "b6e02f048568ac5d01a2042556c658061e699acbc0aa2a1439f52f3d461dffeb";
@@ -102,13 +102,39 @@ const HOST_WHISTLE: SttCapability = { provider: "whistle", available: true, inpu
 /** A copy on the phone, of the model the host holds. */
 const PHONE_COPY = { sha256: WHISTLE_SHA, bytes: WHISTLE_BYTES, revision: WHISTLE_REVISION };
 
-/** The Whistle card and the Speech engine card with every fact handed in, as the real control hands them. Taps do nothing. */
+/** Where the host's `codex` lives in these cards. */
+const CODEX_BIN = "/home/op/.local/bin/codex";
+const OPEN_ALL: SttHostStatus["switchable"] = { whistle: { ok: true }, codex: { ok: true }, off: { ok: true } };
+/** No provider on the host; Whistle not downloaded yet; Codex installed and signed in. */
+const PROVIDER_NONE: SttHostStatus = {
+  provider: "none",
+  available: false,
+  configuredBy: "none",
+  codexBin: CODEX_BIN,
+  switchable: { ...OPEN_ALL, whistle: { ok: false, reason: "not-ready" } },
+};
+/** No provider, the model is ready: all three choices open. */
+const PROVIDER_NONE_READY: SttHostStatus = { ...PROVIDER_NONE, switchable: OPEN_ALL };
+const PROVIDER_WHISTLE: SttHostStatus = { ...PROVIDER_NONE_READY, provider: "whistle", available: true, configuredBy: "file" };
+const PROVIDER_CODEX: SttHostStatus = { ...PROVIDER_WHISTLE, provider: "codex", identity: "honest" };
+const TERMINAL_LOCK: SttHostStatus["switchable"] = {
+  whistle: { ok: false, reason: "terminal" },
+  codex: { ok: false, reason: "terminal" },
+  off: { ok: false, reason: "terminal" },
+};
+
+/** The Voice page's cards with every fact handed in, as the real control hands them. Taps do nothing. */
 function SpeechDemo(over: Partial<SpeechCardsProps>) {
   return (
     <div className="space-y-4 p-4">
       <SpeechCards
         whistle={WHISTLE_ABSENT}
         hostStt={null}
+        host={PROVIDER_NONE}
+        switching={null}
+        providerError={null}
+        consentOpen={false}
+        consentError={null}
         canWrite
         engine="host"
         block={null}
@@ -124,7 +150,9 @@ function SpeechDemo(over: Partial<SpeechCardsProps>) {
         onAskRemove={() => {}}
         onCancelRemove={() => {}}
         onRemove={() => {}}
-        onHostEngine={() => {}}
+        onChooseProvider={() => {}}
+        onAcceptConsent={() => {}}
+        onCancelConsent={() => {}}
         onPhoneDownload={() => {}}
         onPhoneRemove={() => {}}
         {...over}
@@ -167,9 +195,9 @@ export function SettingsSection() {
           state="voice-nothing-installed"
           label="1: nothing installed"
           reach="open Settings, Voice, on a lead whose host has no Whistle model yet. The Download to host button is for a device with write access."
-          note="Both choices under Speech engine are off, and the reason for This phone is written once, under the choice. The phone step is not drawn: there is nothing yet to copy."
+          note="Both choices under Speech engine are off, and the reason for This phone is written once, under the choice. The phone step is not drawn: there is nothing yet to copy. Under Host speech provider, Whistle is off until the model is on the host."
         >
-          <Stage height={760}>
+          <Stage height={1300}>
             <SpeechDemo block="host-not-ready" />
           </Stage>
         </Card>
@@ -180,7 +208,7 @@ export function SettingsSection() {
           reach="tap Download to host. The bar follows the host's own count, asked once a second while this page is open, and ends when the host says ready or failed."
           note="There is no cancel in 1.20.0: the host finishes or fails on its own."
         >
-          <Stage height={640}>
+          <Stage height={1200}>
             <SpeechDemo whistle={{ ...WHISTLE_ABSENT, state: "downloading", received: 7_400_000 }} block="host-not-ready" />
           </Stage>
         </Card>
@@ -189,10 +217,10 @@ export function SettingsSection() {
           state="voice-host-ready"
           label="3: ready on the host, phone not set up"
           reach="after the host's download finishes. The details name the model, its version on Hugging Face, its size, a short checksum and when the host fetched it."
-          note="Use Whistle on the host is a host-wide switch, so it says it is for every device. It is off here, so the host has no speech provider and Host under Speech engine is off with its reason. Set up on this phone is the next step."
+          note="Whistle is now open under Host speech provider, the host-wide choice. The host has no provider yet, so Host under Speech engine is off with its reason. Set up on this phone is the next step."
         >
-          <Stage height={1040}>
-            <SpeechDemo whistle={WHISTLE_READY} />
+          <Stage height={1560}>
+            <SpeechDemo whistle={WHISTLE_READY} host={PROVIDER_NONE_READY} />
           </Stage>
         </Card>
 
@@ -202,8 +230,8 @@ export function SettingsSection() {
           reach="tap Set up on this phone. The bar takes the place of the button; the copy is checked against the host's hash before it is kept."
           note="Leaving the page ends a copy in progress, and nothing is kept from a half-finished one."
         >
-          <Stage height={1040}>
-            <SpeechDemo whistle={WHISTLE_READY} copy={{ received: 7_400_000, total: WHISTLE_BYTES }} />
+          <Stage height={1560}>
+            <SpeechDemo whistle={WHISTLE_READY} host={PROVIDER_NONE_READY} copy={{ received: 7_400_000, total: WHISTLE_BYTES }} />
           </Stage>
         </Card>
 
@@ -211,12 +239,13 @@ export function SettingsSection() {
           state="voice-both-ready"
           label="5: both ready, engine on This phone"
           reach="after the copy finishes, choose This phone under Speech engine."
-          note="Shown with the host's Whistle switch on, so the line under the choice says the host uses Whistle too. The version on the phone is the same short hash as on the host."
+          note="Shown with Whistle chosen as the host's provider, so the line under the choice says the host uses Whistle too. The version on the phone is the same short hash as on the host."
         >
-          <Stage height={1040}>
+          <Stage height={1560}>
             <SpeechDemo
               whistle={{ ...WHISTLE_READY, hostEngine: true }}
               hostStt={HOST_WHISTLE}
+              host={PROVIDER_WHISTLE}
               engine="phone"
               local={PHONE_COPY}
               persisted
@@ -230,10 +259,11 @@ export function SettingsSection() {
           reach="when the host's model changes after this phone copied it. The phone's version differs from the host's."
           note="The phone keeps working with its own copy. Update copies the new one over it."
         >
-          <Stage height={1040}>
+          <Stage height={1560}>
             <SpeechDemo
               whistle={{ ...WHISTLE_READY, hostEngine: true }}
               hostStt={HOST_WHISTLE}
+              host={PROVIDER_WHISTLE}
               engine="phone"
               local={{ sha256: "a".repeat(64), bytes: WHISTLE_BYTES, revision: "1f0e2d3c4b5a69788796a5b4c3d2e1f001122334" }}
               persisted={false}
@@ -247,8 +277,8 @@ export function SettingsSection() {
           reach="open Settings, Voice, over plain HTTP on a phone. The same card appears when the browser has no WebAssembly, or when it blocks the engine."
           note="The reason stands where the Set up on this phone button would be, and is not repeated under the choice. Host can still be chosen when the host has a provider."
         >
-          <Stage height={1040}>
-            <SpeechDemo whistle={{ ...WHISTLE_READY, hostEngine: true }} hostStt={HOST_WHISTLE} block="insecure" />
+          <Stage height={1560}>
+            <SpeechDemo whistle={{ ...WHISTLE_READY, hostEngine: true }} hostStt={HOST_WHISTLE} host={PROVIDER_WHISTLE} block="insecure" />
           </Stage>
         </Card>
 
@@ -256,10 +286,103 @@ export function SettingsSection() {
           state="voice-read-only"
           label="8: a read-only device"
           reach="open Settings, Voice, on a device that may not write. Downloading to the host is a write; copying to the phone is a read."
-          note="One sentence stands where the button would be. Once the host is ready, the same device sees the details, the switch disabled and no Remove button."
+          note="One sentence stands where the button would be. Once the host is ready, the same device sees the details and no Remove button. The Host speech provider card shows the status and no choice."
         >
-          <Stage height={640}>
+          <Stage height={980}>
             <SpeechDemo canWrite={false} block="host-not-ready" />
+          </Stage>
+        </Card>
+      </Group>
+
+      <Group title="Voice: Host speech provider">
+        <Card
+          state="voice-provider-none"
+          label="9: Host speech provider, nothing set up"
+          reach="open Settings, Voice, on a host with no speech provider, the model already downloaded and Codex signed in."
+          note="Off is chosen. Whistle and Codex are both open. Set up elsewhere names the one command for a key or a command, to copy and run on the host; there is no form."
+        >
+          <Stage height={620}>
+            <SpeechDemo whistle={null} host={PROVIDER_NONE_READY} />
+          </Stage>
+        </Card>
+
+        <Card
+          state="voice-provider-whistle"
+          label="10: Host speech provider, Whistle on"
+          reach="choose Whistle under Host speech provider. One tap: Whistle carries no key, no command and no audio off the host."
+          note="The status line says Working. Off and Codex stay open."
+        >
+          <Stage height={620}>
+            <SpeechDemo whistle={null} host={PROVIDER_WHISTLE} />
+          </Stage>
+        </Card>
+
+        <Card
+          state="voice-provider-codex-honest"
+          label="11: Host speech provider, Codex on, honest identity"
+          reach="choose Codex and tap I accept; the endpoint took Collie under its own name."
+          note="The Identity row shows the recorded word, honest, and what it means."
+        >
+          <Stage height={680}>
+            <SpeechDemo whistle={null} host={PROVIDER_CODEX} />
+          </Stage>
+        </Card>
+
+        <Card
+          state="voice-provider-codex-fallback"
+          label="12: Host speech provider, Codex on, fallback identity"
+          reach="as 11, when the endpoint refused Collie's own name and accepted only the Codex CLI's headers."
+          note="The word codex-cli is shown as recorded, with what it means in plain words. Off ends it."
+        >
+          <Stage height={700}>
+            <SpeechDemo whistle={null} host={{ ...PROVIDER_CODEX, identity: "codex-cli" }} />
+          </Stage>
+        </Card>
+
+        <Card
+          state="voice-provider-terminal"
+          label="13: Host speech provider, an endpoint set up in a terminal"
+          reach="a host where the operator ran collie stt setup --provider openai-compatible, with a key."
+          note="Shown, never changed here. No choice is drawn; the commands that change it or turn it off are there to copy and run on the host."
+        >
+          <Stage height={560}>
+            <SpeechDemo whistle={null} host={{ provider: "openai-compatible", available: true, configuredBy: "file", switchable: TERMINAL_LOCK }} />
+          </Stage>
+        </Card>
+
+        <Card
+          state="voice-provider-codex-signed-out"
+          label="14: Host speech provider, Codex not signed in"
+          reach="a host where codex is installed but codex login status says Not logged in."
+          note="Codex is off, with the reason and codex login to copy. Whistle waits for the model here."
+        >
+          <Stage height={680}>
+            <SpeechDemo
+              whistle={null}
+              host={{ ...PROVIDER_NONE, switchable: { ...PROVIDER_NONE.switchable, codex: { ok: false, reason: "codex-signed-out" } } }}
+            />
+          </Stage>
+        </Card>
+
+        <Card
+          state="voice-provider-read-only"
+          label="15: Host speech provider, a read-only device"
+          reach="open Settings, Voice, on a device without the write grant."
+          note="The status and the identity only. One sentence where the choice would be."
+        >
+          <Stage height={460}>
+            <SpeechDemo whistle={null} host={PROVIDER_CODEX} canWrite={false} />
+          </Stage>
+        </Card>
+
+        <Card
+          state="voice-provider-consent"
+          label="16: Use Codex for speech?, the consent sheet"
+          reach="tap Codex under Host speech provider. Nothing is sent to the host before I accept."
+          note="The words are the ones collie stt setup prints, kept equal by a test. I accept sends the consent's id with the switch; the host then checks the sign-in and probes the endpoint, honest name first."
+        >
+          <Stage height={720}>
+            <CodexConsentSheet open codexBin={CODEX_BIN} busy={false} error={null} onAccept={() => {}} onCancel={() => {}} />
           </Stage>
         </Card>
       </Group>

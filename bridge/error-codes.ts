@@ -225,12 +225,30 @@ export const ERROR_CODES = {
   "stt.model_unknown": "this collie holds no speech model with that hash",
   /** Two copies of the model are already leaving this collie (503, `retry-after`). Try again in a moment. */
   "stt.model_busy": "two copies of the speech model are already being sent — try again in a moment",
-  /** Settings may not replace a provider the operator set up in the terminal (409). Nothing changed. */
-  "stt.whistle_provider_taken": "another speech-to-text provider is set up on this collie; change it with `collie stt`",
   /** The host engine needs the model first (409). Nothing changed. */
   "stt.whistle_not_ready": "the Whistle model is not on this collie yet",
   /** The download could not even start (the folder could not be made, a symlink was in the way). */
   "stt.whistle_download_failed": "the Whistle model could not be downloaded: {reason}",
+
+  // ── The host's speech provider: PUT /api/stt/host (bridge/stt/host-http.ts, ADR 0097) ──────────
+  /** Codex was asked for without the id of the consent text the app showed, or with another id (400). Nothing ran. */
+  "stt.consent_required": "turning on Codex needs the consent shown in Settings, accepted with I accept",
+  /** Another change of the provider is still running, a Codex probe say (409). Nothing changed. */
+  "stt.host_busy": "the speech provider is already being changed; try again in a moment",
+  /** The provider was set up in a terminal, by the environment, or `stt.json` cannot be read (409). Nothing changed. */
+  "stt.host_provider_locked": "this speech provider was set up on the host; change it there with `collie stt`",
+  /** `stt.json` or the environment changed while the switch was checking (409). Nothing was written. */
+  "stt.host_changed": "the speech settings on this collie changed while this was checked; nothing was written",
+  /** No `codex` binary on the host (409). */
+  "stt.codex_missing": "no `codex` binary was found on this collie",
+  /** `codex login status` says it is not signed in (409). */
+  "stt.codex_signed_out": "Codex is not signed in on this collie; run `codex login` there",
+  /** Signed in, but not with ChatGPT, which this endpoint needs (409). */
+  "stt.codex_other_login": "Codex on this collie is not signed in with ChatGPT; run `codex login` there and pick ChatGPT",
+  /** The sign-in could not be checked: a timeout, or an answer Collie does not understand (409). */
+  "stt.codex_unknown": "Collie could not check the Codex sign-in on this collie",
+  /** The honest-first identity probe failed (502). `detail.reason` is Collie's own sentence. Nothing was written. */
+  "stt.codex_probe_failed": "the Codex endpoint did not accept the probe: {reason}",
 
   // ── Device pairing: POST /api/pair, POST /api/devices/revoke ───────────────────────
   //

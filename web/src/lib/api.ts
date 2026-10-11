@@ -55,6 +55,8 @@ import type {
   PaneReadResponse,
   PairFailure,
   SnapshotResponse,
+  SttHostChoice,
+  SttHostStatus,
   UpdateCheckResponse,
   UpdateInfo,
   UpdateRun,
@@ -1965,10 +1967,30 @@ export function removeWhistleModel(): Promise<WhistleStatus> {
   return req<WhistleStatus>("/api/stt/whistle", { method: "DELETE" });
 }
 
-/** Turn the host's Whistle engine on or off (write-gated). A refusal carries `stt.whistle_provider_taken`
- *  or `stt.whistle_not_ready`, which {@link describeThrownError} says in the operator's language. */
-export function setWhistleHostEngine(on: boolean): Promise<WhistleStatus> {
-  return req<WhistleStatus>("/api/stt/whistle/host", { method: "PUT", body: JSON.stringify({ on }) });
+// ── THE HOST'S SPEECH PROVIDER (ADR 0097) ─────────────────────────────────────────────────────
+
+/**
+ * A Codex switch runs the honest-first identity probe on the host, which may take as long as one
+ * transcription (two minutes at most, bridge/stt/codex.ts) plus the sign-in check. The others are quick.
+ */
+const STT_HOST_SWITCH_TIMEOUT_MS = 150_000;
+
+/** Which provider the host runs, who set it, and which of the three choices Settings may make. A read. */
+export function fetchSttHost(signal?: AbortSignal): Promise<SttHostStatus> {
+  return req<SttHostStatus>("/api/stt/host", { signal });
+}
+
+/**
+ * Switch the host's speech provider (write-gated): Whistle, Codex or Off, and nothing else. Codex needs
+ * `consent`, the id of the consent text this app showed and the person accepted (lib/stt-consent.ts).
+ * A refusal carries a `stt.*` code, which {@link describeThrownError} says in the operator's language.
+ */
+export function setSttHost(provider: SttHostChoice, consent?: string): Promise<SttHostStatus> {
+  return req<SttHostStatus>("/api/stt/host", {
+    method: "PUT",
+    body: JSON.stringify(consent === undefined ? { provider } : { provider, consent }),
+    timeoutMs: provider === "codex" ? STT_HOST_SWITCH_TIMEOUT_MS : undefined,
+  });
 }
 
 /**
