@@ -332,7 +332,10 @@ export default defineConfig({
         // may carry the playground's — see vite-icons.ts's precacheIgnoresFor. Without this, a
         // release SW precached the dev AND playground icon sets too, every byte of it competing
         // with the app's own polls on a slow link (2026-09-12 proxy log on a phone).
-        globIgnores: precacheIgnoresFor(channel),
+        // The vendored speech engine (public/stt/, ADR 0096) stays out of the precache for the
+        // reason the Nerd Font faces do: its glue is a .js file the glob would otherwise take, and
+        // nobody who never taps Whistle should pay for it on install. It loads on first use.
+        globIgnores: [...precacheIgnoresFor(channel), "stt/**"],
       },
       // Over plain HTTP (insecure context) the SW can't register; in dev we don't want it anyway.
       devOptions: { enabled: false },
