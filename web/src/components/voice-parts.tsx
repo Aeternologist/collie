@@ -363,7 +363,7 @@ export function FactsSheet({
 export function HostCommand({ command }: { command: string }) {
   return (
     <CopyableBlock text={command} label={t("copyable.command")}>
-      <p className="break-all rounded-sm border border-border bg-background py-2 pr-10 pl-3 font-mono text-xs">{command}</p>
+      <p className="wrap-anywhere rounded-sm border border-border bg-background py-2 pr-10 pl-3 font-mono text-xs">{command}</p>
     </CopyableBlock>
   );
 }
