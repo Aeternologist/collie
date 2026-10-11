@@ -1278,6 +1278,7 @@ export const ko: Dictionary = {
   "apiError.stt.empty": "녹음 데이터가 비어 있습니다.",
   "apiError.stt.provider_failed": "음성 변환에 실패했습니다: {reason}",
   "apiError.stt.wav_required": "호스트 음성 엔진에는 WAV 녹음이 필요합니다.",
+  "apiError.stt.model_busy": "호스트가 이미 두 기기에 음성 모델을 보내고 있습니다. 잠시 후 다시 시도하십시오.",
   "apiError.stt.model_unknown": "호스트에 해당 음성 모델이 더 이상 없습니다.",
   "apiError.stt.whistle_provider_taken": "호스트에 다른 음성 서비스가 이미 설정되어 있습니다.",
   "apiError.stt.whistle_not_ready": "먼저 호스트에서 Whistle을 설정하십시오.",

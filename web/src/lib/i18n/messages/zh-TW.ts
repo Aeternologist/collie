@@ -1261,6 +1261,7 @@ export const zhTW: Dictionary = {
   "apiError.stt.empty": "錄音資料為空。",
   "apiError.stt.provider_failed": "語音轉錄失敗：{reason}",
   "apiError.stt.wav_required": "主機上的語音引擎需要 WAV 錄音。",
+  "apiError.stt.model_busy": "主機正在向兩台裝置傳送語音模型。請稍後再試。",
   "apiError.stt.model_unknown": "主機上已沒有該語音模型。",
   "apiError.stt.whistle_provider_taken": "主機上已設定其他語音服務。",
   "apiError.stt.whistle_not_ready": "請先在主機上設定 Whistle。",

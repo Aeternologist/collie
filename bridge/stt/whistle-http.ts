@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 
 import { apiError, type ApiErrorDetail, type ErrorCode } from "../error-codes.ts";
@@ -168,14 +167,28 @@ export async function whistleHost(deps: WhistleRouteDeps, body: JsonValue | unde
 /** The policy on the model's bytes: nothing in them may run, whatever a browser makes of them. */
 export const MODEL_CSP = "default-src 'none'; sandbox";
 
+/** How many copies of the model one process sends at once. A phone copies it once; two is plenty. */
+export const MODEL_MAX_CONCURRENT = 2;
+
+/** Copies in flight in this process: counted from the answer to the end, the cancel or the error of its body. */
+let modelSends = 0;
+
+/** Forget the copies in flight. For tests that leave a body unread. */
+export function resetModelSends(): void {
+  modelSends = 0;
+}
+
 /**
  * `GET /api/stt/model/<sha256>` (ADR 0096 Decision 9). The hash in the path is COMPARED, never joined
- * into a path: the file served is always the one at the fixed model path, and only when the bytes
- * read for this answer hash to exactly the asked value, and that value is one this build accepts.
+ * into a path: the file served is always the one at the fixed model path, and only when the store
+ * holds it with exactly the asked hash, a hash this build accepts. The store hashes the file once per
+ * change of its size, mtime or inode (`whistle-model.ts`), not once per request. A body that changed
+ * after that is caught by the phone, which hashes what it received before it keeps a byte.
  *
- * The bytes are read into memory and hashed for each answer rather than streamed from the file:
- * Bun answers a `Range` request on any file-backed body by itself, and this route serves whole
- * copies only. A phone copies the model once, so 17 MB and one hash per copy is the price of that.
+ * The body is a stream made here, not `Response(Bun.file(...))`: Bun answers a `Range` request on a
+ * file-backed body by itself (206), and this route serves whole copies only (a test sends a `Range`
+ * header to a real server and expects the whole 200). At most {@link MODEL_MAX_CONCURRENT} copies
+ * leave at once; a third gets 503 `stt.model_busy`.
  */
 export async function modelResponse(deps: Pick<WhistleRouteDeps, "store">, asked: string): Promise<WhistleRouteResult> {
   const unknown = (): WhistleRouteResult => refuse(404, "stt.model_unknown");
@@ -183,19 +196,51 @@ export async function modelResponse(deps: Pick<WhistleRouteDeps, "store">, asked
   // `ready()` is null unless the held file's hash is one this build accepts.
   const ready = await deps.store.ready();
   if (ready === null || ready.sha256 !== asked) return unknown();
-  let bytes: Uint8Array<ArrayBuffer>;
+  if (modelSends >= MODEL_MAX_CONCURRENT) {
+    const busy = refuse(503, "stt.model_busy");
+    busy.response.headers.set("retry-after", "5");
+    return busy;
+  }
+  modelSends++;
+  let released = false;
+  const release = (): void => {
+    if (released) return;
+    released = true;
+    modelSends--;
+  };
+  let reader: ReadableStreamDefaultReader<Uint8Array>;
   try {
-    bytes = new Uint8Array(await Bun.file(ready.path).arrayBuffer());
+    reader = Bun.file(ready.path).stream().getReader();
   } catch {
+    release();
     return unknown();
   }
-  if (createHash("sha256").update(bytes).digest("hex") !== asked) return unknown();
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const chunk = await reader.read();
+        if (chunk.done) {
+          release();
+          controller.close();
+        } else {
+          controller.enqueue(chunk.value);
+        }
+      } catch (err) {
+        release();
+        controller.error(err);
+      }
+    },
+    async cancel(reason) {
+      release();
+      await reader.cancel(reason).catch(() => undefined);
+    },
+  });
   return {
-    response: new Response(bytes, {
+    response: new Response(body, {
       status: 200,
       headers: {
         "content-type": "application/octet-stream",
-        "content-length": String(bytes.byteLength),
+        "content-length": String(ready.bytes),
         etag: `"${asked}"`,
         // The phone keeps its own copy in Cache Storage; the HTTP cache should not keep a second one.
         "cache-control": "no-store",

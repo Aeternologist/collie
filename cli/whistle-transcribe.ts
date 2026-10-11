@@ -20,7 +20,7 @@ import { EXIT, type Io } from "./io.ts";
 //
 //   1. Read the vendored engine (`needle.js`, `needle.wasm`) from the served `web/dist/stt/<v>/`, or,
 //      in a source checkout with no web build, from `web/public/stt/<v>/`, the folder Vite copies
-//      byte for byte (`whistleEngineDir`). Read the model from `<stateDir>/stt/whistle/`.
+//      byte for byte (`whistleEngineDir`). Read the model from `<stateDir>/whistle/`.
 //   2. Check all three against the pins compiled into this binary, BEFORE anything is compiled. The
 //      glue is then run from the bytes that were checked, not read from disk a second time.
 //   3. Read the WAV (the bridge already checked its header; it is checked again here, because this

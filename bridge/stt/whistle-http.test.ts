@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 import { createSttSettingsReader, sttSettingsPath } from "./config.ts";
 import { createWhistleModelStore, resetWhistleModelState, whistlePaths, type WhistleModelPin } from "./whistle-model.ts";
-import { MODEL_CSP, modelResponse, whistleGet, whistleHost, whistleRemove, whistleStart, type WhistleRouteDeps } from "./whistle-http.ts";
+import { MODEL_CSP, modelResponse, resetModelSends, whistleGet, whistleHost, whistleRemove, whistleStart, type WhistleRouteDeps } from "./whistle-http.ts";
 
 // The Whistle routes' rules, driven without Bun.serve. The gate in front of them (read vs write) is
 // pinned in server.test.ts, where the dispatch lives.
@@ -20,6 +20,7 @@ let fetches: number;
 
 beforeEach(() => {
   resetWhistleModelState();
+  resetModelSends();
   stateDir = mkdtempSync(join(tmpdir(), "collie-whistle-http-"));
   fetches = 0;
 });
@@ -57,7 +58,7 @@ describe("GET and POST /api/stt/whistle", () => {
 
     const started = await whistleStart(d);
     expect(started.response.status).toBe(202);
-    expect(await started.response.json()).toMatchObject({ state: "downloading", received: 0 });
+    expect(await started.response.json()).toMatchObject({ state: "downloading" });
     await d.store.settled();
     expect(await (await whistleGet(d)).json()).toEqual({ state: "ready", bytes: MODEL.byteLength, sha256: SHA, hostEngine: false, hostTaken: false });
 
@@ -70,7 +71,7 @@ describe("GET and POST /api/stt/whistle", () => {
   test("a start that cannot even begin is stt.whistle_download_failed, with a reason and no path", async () => {
     if (process.platform === "win32") return;
     const d = deps();
-    writeFileSync(join(stateDir, "stt"), "a file where the folder goes");
+    writeFileSync(join(stateDir, "whistle"), "a file where the folder goes");
     const result = await whistleStart(d);
     expect(result.response.status).toBe(500);
     const body = await result.response.json();
@@ -207,17 +208,64 @@ describe("GET /api/stt/model/<sha256>", () => {
     }
   });
 
-  test("bytes that changed on disk since they were hashed are not served", async () => {
+  test("a file that changed size since it was hashed is not served", async () => {
     const d = deps();
     await ready(d);
-    // Same size, mtime and inode, so the store's cache still says SHA; the answer hashes what it read.
+    writeFileSync(whistlePaths(stateDir).model, "different length now");
+    const { response } = await modelResponse(d, SHA);
+    expect(response.status).toBe(404);
+  });
+
+  test("the hash is cached by size and mtime: a request does not read the file to find it", async () => {
+    const d = deps();
+    await ready(d);
     const path = whistlePaths(stateDir).model;
     utimesSync(path, 1_700_000_000, 1_700_000_000);
+    // Same size, mtime and inode: the cache holds, so nothing is re-hashed per request. A change that
+    // keeps all three is the phone's to catch, which hashes what it received before keeping a byte.
     expect((await d.store.ready())?.sha256).toBe(SHA);
     writeFileSync(path, new Uint8Array(MODEL.byteLength).fill(66));
     utimesSync(path, 1_700_000_000, 1_700_000_000);
-    expect((await d.store.ready())?.sha256).toBe(SHA);
     const { response } = await modelResponse(d, SHA);
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-length")).toBe(String(MODEL.byteLength));
+    await response.body?.cancel();
+  });
+
+  test("a Range request to a real server still gets the whole body with a 200", async () => {
+    const d = deps();
+    await ready(d);
+    const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: async () => (await modelResponse(d, SHA)).response });
+    try {
+      const res = await fetch(`http://127.0.0.1:${server.port}/`, { headers: { range: "bytes=4-9" } });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-range")).toBeNull();
+      expect(new Uint8Array(await res.arrayBuffer())).toEqual(MODEL);
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  test("a third copy at the same time is 503 stt.model_busy, and a finished or cancelled one frees its place", async () => {
+    const d = deps();
+    await ready(d);
+    const first = await modelResponse(d, SHA);
+    const second = await modelResponse(d, SHA);
+    expect([first.response.status, second.response.status]).toEqual([200, 200]);
+    const third = await modelResponse(d, SHA);
+    expect(third.response.status).toBe(503);
+    expect((await third.response.json()).code).toBe("stt.model_busy");
+    expect(third.response.headers.get("retry-after")).toBe("5");
+
+    // One read to the end frees a place; so does a cancel (a phone that went away).
+    expect(new Uint8Array(await first.response.arrayBuffer())).toEqual(MODEL);
+    const fourth = await modelResponse(d, SHA);
+    expect(fourth.response.status).toBe(200);
+    await second.response.body?.cancel();
+    const fifth = await modelResponse(d, SHA);
+    expect(fifth.response.status).toBe(200);
+    await fourth.response.body?.cancel();
+    await fifth.response.body?.cancel();
+    expect((await modelResponse(d, SHA)).response.status).toBe(200);
   });
 });

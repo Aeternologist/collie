@@ -13,6 +13,7 @@ import {
   systemPlaces,
 } from "./acl-policy.ts";
 import { hostFor } from "./host.ts";
+import { WHISTLE_FOLDER_NAMES } from "./stt/whistle-model.ts";
 
 const WIN = hostFor("win32");
 const ENV = {
@@ -164,6 +165,16 @@ describe("names", () => {
     expect(isCollieEntry("uploads", at({ uploads: folder(["p1_2-mf3x9q-0a1b2c3d.png"]), "uploads/p1_2-mf3x9q-0a1b2c3d.png": file }))).toBe(true);
     expect(isCollieEntry("beacons", at({ beacons: folder(["w1.json"]), "beacons/w1.json": file }))).toBe(true);
     expect(isCollieEntry("acl-backups", at({ "acl-backups": folder(["acl-backup-2026-1.sddl"]), "acl-backups/acl-backup-2026-1.sddl": file }))).toBe(true);
+    // The Whistle model's folder: exactly the names bridge/stt/whistle-model.ts writes, and their temporaries.
+    for (const name of [...WHISTLE_FOLDER_NAMES, "whistle.json.tmp"]) {
+      expect(isCollieEntry("whistle", at({ whistle: folder([name]), [`whistle/${name}`]: file }))).toBe(true);
+    }
+    expect(isCollieEntry("whistle", at({ whistle: folder([]) }))).toBe(true);
+    expect(isCollieEntry("whistle", at({ whistle: folder(["whistle.cact", "notes.txt"]), "whistle/whistle.cact": file, "whistle/notes.txt": file }))).toBe(false);
+    expect(isCollieEntry("whistle", at({ whistle: folder(["whistle.cact.bak"]), "whistle/whistle.cact.bak": file }))).toBe(false);
+    expect(isCollieEntry("whistle", at({ whistle: folder(["whistle.cact"]), "whistle/whistle.cact": folder([]) }))).toBe(false);
+    // The old home, `stt/` holding the `whistle` subfolder, is not Collie's: one level too deep.
+    expect(isCollieEntry("stt", at({ stt: folder(["whistle"]), "stt/whistle": folder(["whistle.cact"]) }))).toBe(false);
     // The operator's own things under one of those names.
     expect(isCollieEntry("fonts", at({ fonts: folder(["Arial.ttf"]), "fonts/Arial.ttf": file }))).toBe(false);
     expect(isCollieEntry("uploads", at({ uploads: folder(["holiday.jpg"]), "uploads/holiday.jpg": file }))).toBe(false);

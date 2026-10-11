@@ -1180,6 +1180,7 @@ export const ru: Dictionary = {
   "apiError.stt.empty": "Эта запись пуста.",
   "apiError.stt.provider_failed": "Сбой транскрипции: {reason}",
   "apiError.stt.wav_required": "Движку речи на хосте нужна запись в формате WAV.",
+  "apiError.stt.model_busy": "Хост уже отправляет речевую модель на два устройства. Повторите попытку чуть позже.",
   "apiError.stt.model_unknown": "На хосте больше нет этой речевой модели.",
   "apiError.stt.whistle_provider_taken": "На хосте уже настроен другой сервис распознавания речи.",
   "apiError.stt.whistle_not_ready": "Сначала настройте Whistle на хосте.",

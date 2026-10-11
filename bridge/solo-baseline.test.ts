@@ -1021,10 +1021,6 @@ const STATE_DIR_ENTRIES = [
   "pairing-pending.json",
   "push-subscriptions.json",
   "snooze.json",
-  // The Whistle model's folder, `stt/whistle/` (ADR 0096): the model, its manifest and a download's
-  // part file. Absent until a write device taps "Set up Whistle" or the operator runs
-  // `collie stt whistle`; nothing else creates it.
-  "stt",
   // Speech-to-text settings. Absent until the operator runs `collie stt setup`. The bridge writes it
   // in one case only: the Whistle host engine's switch in Settings, which writes `{ "provider":
   // "whistle" }` when no other provider is set, and removes it again (bridge/stt/whistle-http.ts).
@@ -1040,6 +1036,10 @@ const STATE_DIR_ENTRIES = [
   "update.json",
   "update.lock",
   "uploads",
+  // The Whistle model's folder, `whistle/` (ADR 0096): the model, its manifest and a download's
+  // part file. Absent until a write device taps "Set up Whistle" or the operator runs
+  // `collie stt whistle`; nothing else creates it.
+  "whistle",
   // The ref each new worktree was cut from (ADR 0089, amended). Written by use and by nothing else:
   // absent until the first create that named a starting point succeeds. Driven in "the worktree
   // bases appear only on use".

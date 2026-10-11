@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
-import { chmod, lstat, mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { type FileHandle, chmod, lstat, mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { WhistleStatus } from "../types.ts";
@@ -8,7 +8,7 @@ import { ACCEPTED_WHISTLE_SHAS, NEEDLE_JS_BYTES, NEEDLE_VERSION_DIR, NEEDLE_WASM
 
 // ── THE WHISTLE MODEL ON THE HOST (ADR 0096 Decision 2) ──────────────────────────────────────
 //
-// One file, `<stateDir>/stt/whistle/whistle.cact`, with a manifest beside it. Two acts put it there
+// One file, `<stateDir>/whistle/whistle.cact`, with a manifest beside it. Two acts put it there
 // and nothing else does: a tap in Settings (`POST /api/stt/whistle`) and `collie stt whistle`. Both
 // come through {@link createWhistleModelStore}. This module is the bridge's SECOND outbound path,
 // beside the update check, and it is bounded like this:
@@ -18,6 +18,13 @@ import { ACCEPTED_WHISTLE_SHAS, NEEDLE_JS_BYTES, NEEDLE_VERSION_DIR, NEEDLE_WASM
 //     differs by region and has changed before (ADR 0096 Decision 7).
 //   • one download in flight per process — a second start joins the first, and a start when the
 //     held file already matches a pin answers "ready" without a request.
+//   • one download in flight per FOLDER, across processes: the bridge and a `collie stt whistle` run
+//     are separate processes, so the part file is the lock. It is created exclusively (`wx`); one
+//     younger than the deadline belongs to a download that may still be running, and a second
+//     downloader reports that and fetches nothing. One older than the deadline is a crash's, and is
+//     removed. (Two processes that both judge the same stale file can still race once. The loser's
+//     rename fails and it reports a failure; no corrupt model is ever renamed into place, because
+//     the hash gate comes first.)
 //   • a 32 MiB cap, counted on the bytes as they arrive, and a 10-minute deadline.
 //   • streamed to `whistle.cact.part` (0600, created exclusively) with a running sha256, and renamed
 //     into place only when the hash equals the pin. Any failure deletes the part file and records a
@@ -31,6 +38,13 @@ import { ACCEPTED_WHISTLE_SHAS, NEEDLE_JS_BYTES, NEEDLE_VERSION_DIR, NEEDLE_WASM
 export const WHISTLE_MODEL_FILENAME = "whistle.cact";
 export const WHISTLE_MANIFEST_FILENAME = "whistle.json";
 export const WHISTLE_PART_FILENAME = "whistle.cact.part";
+
+/**
+ * The names this module writes into the folder, for the Windows access-list rule that judges the
+ * folder "Collie's own" (bridge/acl-policy.ts `KNOWN_FOLDERS`, which keeps a pattern of its own;
+ * a test holds the two together).
+ */
+export const WHISTLE_FOLDER_NAMES = [WHISTLE_MODEL_FILENAME, WHISTLE_MANIFEST_FILENAME, WHISTLE_PART_FILENAME] as const;
 
 /** The most bytes a download may deliver before it is stopped. The pinned model is 16.9 MB. */
 export const WHISTLE_DOWNLOAD_CAP_BYTES = 32 * 1024 * 1024;
@@ -48,7 +62,9 @@ export interface WhistlePaths {
 
 export function whistlePaths(stateDir: string): WhistlePaths {
   // Spelled out rather than through a constant, so the state-dir guard (solo-baseline.test.ts) reads it.
-  const dir = join(stateDir, "stt", "whistle");
+  // A folder of its own, one level under the state dir: the Windows access-list rule judges a folder
+  // "Collie's own" one level deep, and a `stt/` holding a subfolder would fail it.
+  const dir = join(stateDir, "whistle");
   return {
     dir,
     model: join(dir, WHISTLE_MODEL_FILENAME),
@@ -122,10 +138,14 @@ export interface WhistleReady {
   bytes: number;
 }
 
-/** What `start()` did: joined or began a download, found the model already in place, or could not begin. */
+/**
+ * What `start()` did: joined or began a download, found the model already in place, or could not
+ * begin. `elsewhere` is set on "downloading" when the download belongs to ANOTHER process (a part file
+ * younger than the deadline): this one fetched nothing, and `status.received` is that file's size.
+ */
 export type WhistleStart =
   | { outcome: "ready"; status: WhistleModelStatus }
-  | { outcome: "downloading"; status: WhistleModelStatus }
+  | { outcome: "downloading"; status: WhistleModelStatus; elsewhere?: boolean }
   | { outcome: "refused"; reason: string };
 
 export interface WhistleModelStore {
@@ -145,6 +165,9 @@ export interface WhistleModelStore {
 
 /** A refusal whose message is Collie's own sentence and safe to report: no path, no upstream body. */
 class WhistleRefusal extends Error {}
+
+/** Another process owns the part file. Not a failure of this one, and nothing of theirs is touched. */
+class WhistleRunning extends Error {}
 
 /** A download in flight, shared by every store over the same folder in this process. */
 interface InFlight {
@@ -222,11 +245,26 @@ export function createWhistleModelStore(deps: WhistleModelDeps): WhistleModelSto
     return { kind: "held", sha256: cached.sha256, bytes: entry.size, accepted: accepted.includes(cached.sha256) };
   }
 
+  /** A download by another process: a part file younger than the deadline. Its size is what it received. */
+  async function runningElsewhere(): Promise<{ received: number } | null> {
+    let entry;
+    try {
+      entry = await lstat(paths.part);
+    } catch {
+      return null;
+    }
+    // A link or a folder is no download; `prepare` refuses it by name.
+    if (!entry.isFile() || Date.now() - entry.mtimeMs >= timeoutMs) return null;
+    return { received: entry.size };
+  }
+
   async function status(): Promise<WhistleModelStatus> {
     const flight = inFlight.get(paths.dir);
     if (flight !== undefined) return { state: "downloading", bytes: pin.bytes, received: flight.received };
     const held = await inspect();
     if (held.kind === "held" && held.accepted) return { state: "ready", bytes: pin.bytes, sha256: held.sha256 };
+    const other = await runningElsewhere();
+    if (other !== null) return { state: "downloading", bytes: pin.bytes, received: other.received };
     if (held.kind === "held") {
       return { state: "failed", bytes: pin.bytes, reason: "the model on this host is not one this version of Collie accepts; set it up again" };
     }
@@ -236,55 +274,64 @@ export function createWhistleModelStore(deps: WhistleModelDeps): WhistleModelSto
     return { state: "absent", bytes: pin.bytes };
   }
 
-  /** The folder, 0700, with nothing odd in it. Throws a refusal. */
-  async function prepare(): Promise<void> {
+  /**
+   * The folder, 0700, with nothing odd in it, and the part file created exclusively: holding the
+   * handle IS holding the cross-process lock. Throws a refusal, or {@link WhistleRunning}.
+   */
+  async function prepare(): Promise<FileHandle> {
     try {
       await mkdir(paths.dir, { recursive: true, mode: 0o700 });
     } catch {
       throw new WhistleRefusal("the model's folder could not be made in the state dir");
     }
-    // `mkdir -p` follows a symlinked `stt/`; lstat catches it afterwards. The state dir itself is
+    // `mkdir -p` follows a symlinked folder; lstat catches it afterwards. The state dir itself is
     // the operator's to place where they like, so it is not checked.
-    for (const folder of [join(deps.stateDir, "stt"), paths.dir]) {
-      const entry = await lstat(folder);
-      if (entry.isSymbolicLink() || !entry.isDirectory()) {
-        throw new WhistleRefusal("the model's folder in the state dir is a symlink or not a folder; Collie does not follow it");
-      }
+    const entry = await lstat(paths.dir);
+    if (entry.isSymbolicLink() || !entry.isDirectory()) {
+      throw new WhistleRefusal("the model's folder in the state dir is a symlink or not a folder; Collie does not follow it");
     }
     await chmod(paths.dir, 0o700);
     await refuseOddFile(paths.model, "model");
     await refuseOddFile(paths.manifest, "model's manifest");
     await refuseOddFile(paths.part, "download");
+    // A part file this young is another process's download. An older one is a crash's: start over.
+    if ((await runningElsewhere()) !== null) throw new WhistleRunning();
     await rm(paths.part, { force: true });
+    // `wx`, and BEFORE the request, so the lock exists while the connection is being made. Created
+    // here or not at all: nothing put at this path in the meantime is written through, and a second
+    // downloader's `wx` fails.
+    try {
+      return await open(paths.part, "wx", 0o600);
+    } catch (err) {
+      if (err instanceof Error && "code" in err && err.code === "EEXIST") throw new WhistleRunning();
+      throw err;
+    }
   }
 
   /** Fetch, stream, hash, rename. Throws a refusal with the reason to record. */
-  async function download(flight: InFlight): Promise<void> {
+  async function download(flight: InFlight, file: FileHandle): Promise<void> {
     const signal = AbortSignal.any([flight.controller.signal, AbortSignal.timeout(timeoutMs)]);
-    let res: Response;
-    try {
-      res = await fetchImpl(pin.url, {
-        redirect: "follow",
-        headers: { "user-agent": `Collie/${deps.version}`, accept: "application/octet-stream" },
-        signal,
-      });
-    } catch {
-      throw new WhistleRefusal(signal.aborted ? "the download took too long" : "the download could not reach Hugging Face");
-    }
-    if (!res.ok || res.body === null) {
-      await res.body?.cancel().catch(() => undefined);
-      throw new WhistleRefusal(`the download answered HTTP ${res.status}`);
-    }
-    const declared = Number(res.headers.get("content-length") ?? "");
-    if (Number.isFinite(declared) && declared > capBytes) {
-      await res.body.cancel().catch(() => undefined);
-      throw new WhistleRefusal(`the download is larger than ${capBytes / (1024 * 1024)} MiB`);
-    }
-
     const hash = createHash("sha256");
-    // `wx`: created here or not at all, so nothing put at this path in the meantime is written through.
-    const file = await open(paths.part, "wx", 0o600);
     try {
+      let res: Response;
+      try {
+        res = await fetchImpl(pin.url, {
+          redirect: "follow",
+          headers: { "user-agent": `Collie/${deps.version}`, accept: "application/octet-stream" },
+          signal,
+        });
+      } catch {
+        throw new WhistleRefusal(signal.aborted ? "the download took too long" : "the download could not reach Hugging Face");
+      }
+      if (!res.ok || res.body === null) {
+        await res.body?.cancel().catch(() => undefined);
+        throw new WhistleRefusal(`the download answered HTTP ${res.status}`);
+      }
+      const declared = Number(res.headers.get("content-length") ?? "");
+      if (Number.isFinite(declared) && declared > capBytes) {
+        await res.body.cancel().catch(() => undefined);
+        throw new WhistleRefusal(`the download is larger than ${capBytes / (1024 * 1024)} MiB`);
+      }
       const reader = res.body.getReader();
       for (;;) {
         let chunk: Awaited<ReturnType<typeof reader.read>>;
@@ -327,28 +374,39 @@ export function createWhistleModelStore(deps: WhistleModelDeps): WhistleModelSto
     if (joined !== undefined) return { outcome: "downloading", status: await status() };
     const held = await inspect();
     if (held.kind === "held" && held.accepted) return { outcome: "ready", status: await status() };
-    // Checked again after the await: a start that raced this one owns the download.
+    // Another process is downloading: report it, fetch nothing, touch nothing of theirs.
+    const other = await runningElsewhere();
+    // Checked again after the awaits: a start that raced this one owns the download.
     if (inFlight.has(paths.dir)) return { outcome: "downloading", status: await status() };
+    if (other !== null) return { outcome: "downloading", status: await status(), elsewhere: true };
 
     const flight: InFlight = { done: Promise.resolve(), received: 0, controller: new AbortController() };
     let prepared!: (refusal: string | null) => void;
+    /** Set when the part file turned out to be another process's. */
+    let elsewhere = false;
     const preparation = new Promise<string | null>((resolve) => {
       prepared = resolve;
     });
     flight.done = (async () => {
       try {
-        await prepare();
+        const file = await prepare();
         prepared(null);
-        await download(flight);
+        await download(flight, file);
         lastFailure.delete(paths.dir);
       } catch (err) {
+        if (err instanceof WhistleRunning) {
+          // Another process won the part file between the check and here. Theirs stays as it is.
+          elsewhere = true;
+          prepared(null);
+          return;
+        }
         const reason = err instanceof WhistleRefusal ? err.message : "the download could not be written to the state dir";
         prepared(reason);
         await rm(paths.part, { force: true }).catch(() => undefined);
         // A download stopped by `remove()` is not a failure: the person asked for nothing to be there.
         if (!flight.controller.signal.aborted) lastFailure.set(paths.dir, reason);
       } finally {
-        inFlight.delete(paths.dir);
+        if (inFlight.get(paths.dir) === flight) inFlight.delete(paths.dir);
       }
     })();
     inFlight.set(paths.dir, flight);
@@ -358,6 +416,10 @@ export function createWhistleModelStore(deps: WhistleModelDeps): WhistleModelSto
     if (refusal !== null) {
       await flight.done;
       return { outcome: "refused", reason: refusal };
+    }
+    if (elsewhere) {
+      await flight.done;
+      return { outcome: "downloading", status: await status(), elsewhere: true };
     }
     return { outcome: "downloading", status: await status() };
   }

@@ -222,20 +222,23 @@ describe("the Whistle model store", () => {
   test("a symlinked folder is refused before anything is fetched", async () => {
     if (process.platform === "win32") return;
     const away = mkdtempSync(join(tmpdir(), "collie-whistle-away-"));
-    symlinkSync(away, join(stateDir, "stt"));
+    symlinkSync(away, join(stateDir, "whistle"));
     const f = fakeFetch();
     const s = store(f.fn);
     const start = await s.start();
     expect(start).toMatchObject({ outcome: "refused" });
     expect(f.calls).toHaveLength(0);
-    expect(readdirSync(away)).toEqual(["whistle"]);
+    expect(readdirSync(away)).toEqual([]);
     rmSync(away, { recursive: true, force: true });
   });
 
-  test("a part file left by a crash is replaced, and a symlink there is refused", async () => {
+  test("a stale part file left by a crash is replaced, and a symlink there is refused", async () => {
     const paths = whistlePaths(stateDir);
     mkdirSync(paths.dir, { recursive: true });
     writeFileSync(paths.part, "half a model");
+    // A crash's: older than the deadline.
+    const old = new Date(Date.now() - 11 * 60 * 1000);
+    utimesSync(paths.part, old, old);
     const s = store(fakeFetch().fn);
     await s.start();
     await s.settled();
@@ -247,6 +250,64 @@ describe("the Whistle model store", () => {
     const again = await s.start();
     expect(again.outcome).toBe("refused");
     expect(existsSync(join(stateDir, "victim"))).toBe(false);
+  });
+
+  test("the model lives in <stateDir>/whistle/, one level down, and nothing is made under stt/", async () => {
+    const s = store(fakeFetch().fn);
+    await s.start();
+    await s.settled();
+    expect(whistlePaths(stateDir).dir).toBe(join(stateDir, "whistle"));
+    expect(readdirSync(stateDir)).toEqual(["whistle"]);
+    expect(readdirSync(join(stateDir, "whistle")).toSorted()).toEqual(["whistle.cact", "whistle.json"]);
+  });
+
+  test("a part file younger than the deadline is another process's download: nothing is fetched or touched", async () => {
+    const paths = whistlePaths(stateDir);
+    mkdirSync(paths.dir, { recursive: true });
+    writeFileSync(paths.part, "half of it");
+    const f = fakeFetch();
+    const s = store(f.fn);
+    // Its size is what the other process has received so far.
+    expect(await s.status()).toEqual({ state: "downloading", bytes: MODEL.byteLength, received: 10 });
+    const start = await s.start();
+    expect(start).toEqual({ outcome: "downloading", elsewhere: true, status: { state: "downloading", bytes: MODEL.byteLength, received: 10 } });
+    expect(f.calls).toHaveLength(0);
+    expect(readFileSync(paths.part, "utf8")).toBe("half of it");
+    await s.settled();
+    // The other process finishing (the file renamed away) ends it.
+    rmSync(paths.part);
+    expect((await s.status()).state).toBe("absent");
+  });
+
+  test("a part file at the deadline's edge is stale, and the next start replaces it", async () => {
+    const paths = whistlePaths(stateDir);
+    mkdirSync(paths.dir, { recursive: true });
+    writeFileSync(paths.part, "ancient");
+    const f = fakeFetch();
+    const s = createWhistleModelStore({ stateDir, version: "1.20.0", fetch: f.fn, pin: PIN, accepted: [SHA], timeoutMs: 60_000 });
+    const old = new Date(Date.now() - 61_000);
+    utimesSync(paths.part, old, old);
+    expect((await s.status()).state).toBe("absent");
+    expect((await s.start()).outcome).toBe("downloading");
+    await s.settled();
+    expect((await s.status()).state).toBe("ready");
+    expect(f.calls).toHaveLength(1);
+  });
+
+  test("the part file is created before the request, so a second process sees the lock while the first connects", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const f = fakeFetch(MODEL, { gate });
+    const first = store(f.fn);
+    await first.start();
+    expect(existsSync(whistlePaths(stateDir).part)).toBe(true);
+    // The file is the lock a second process sees, and it is fresh.
+    expect(Date.now() - statSync(whistlePaths(stateDir).part).mtimeMs).toBeLessThan(10_000);
+    release();
+    await first.settled();
+    expect((await first.status()).state).toBe("ready");
   });
 
   test("remove deletes the model, the manifest and the part, and stops a download in flight", async () => {

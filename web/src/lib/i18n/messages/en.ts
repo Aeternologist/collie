@@ -1370,6 +1370,7 @@ export const en = {
   "apiError.stt.empty": "That recording is empty.",
   "apiError.stt.provider_failed": "The transcription failed: {reason}",
   "apiError.stt.wav_required": "The host's speech engine needs a WAV recording.",
+  "apiError.stt.model_busy": "Your host is already sending the speech model to two devices. Try again in a moment.",
   "apiError.stt.model_unknown": "Your host no longer has that speech model.",
   "apiError.stt.whistle_provider_taken": "Another speech provider is set up on the host.",
   "apiError.stt.whistle_not_ready": "Set up Whistle on the host first.",
