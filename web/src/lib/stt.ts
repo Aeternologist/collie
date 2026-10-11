@@ -12,6 +12,7 @@ import {
   subscribeOperatorConfig,
 } from "@/lib/operator-config";
 import type { SttEngine, SttEngineErrorCode, SttProbe } from "@/lib/stt-engine";
+import { reloadOnChunkError } from "@/lib/chunk-reload";
 import { getEngineBytes, SttModelError, type SttModelErrorCode } from "@/lib/stt-model";
 import type { SttCapability, WhistleStatus } from "@/lib/types";
 
@@ -340,7 +341,7 @@ let enginePromise: Promise<SttEngine> | null = null;
 let lastBytesError: SttModelError | null = null;
 
 export function phoneEngine(): Promise<SttEngine> {
-  enginePromise ??= import("@/lib/stt-engine")
+  enginePromise ??= reloadOnChunkError(() => import("@/lib/stt-engine"))
     .then(({ createSttEngine }) =>
       createSttEngine({
         getBytes: async () => {

@@ -1,5 +1,6 @@
 import { basePath, mounted } from "./base-path";
 import { BUILD, isStaleBuild } from "./build";
+import { setChunkReloader } from "./chunk-reload";
 import { UPDATE_MODE_HOLD, isReloadHeld, isReloadHeldBy, subscribeReloadHeld } from "./reload-guard";
 import { getServerBuild, subscribeServerBuild } from "./server-build";
 import { isSttCacheName } from "./stt-cache";
@@ -212,6 +213,10 @@ function reloadOnce(lane: ReloadLane) {
   leaving();
   window.location.reload();
 }
+
+// A lazy chunk the new build no longer has reloads the page through the automatic lane, so it shares
+// that lane's latch and the `navigating` flag (lib/chunk-reload.ts holds the held-draft and loop checks).
+setChunkReloader(() => reloadOnce("auto"));
 
 // Last-resort reload that BYPASSES a wedged service worker: unregister every registration first, so
 // the ensuing navigation fetches straight from the bridge instead of being answered from the stale

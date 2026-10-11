@@ -78,6 +78,7 @@ const KEYS = new Map<string, KeyFate>([
   ["collie:update-mode:v1", { area: "session", prefix: false, fate: "kept", why: "update screen state" }],
   ["collie:auto-reloaded-for=", { area: "session", prefix: true, fate: "kept", why: "reload guard, a build id" }],
   ["collie:pwa:guardReload:v1", { area: "session", prefix: false, fate: "kept", why: "reload guard" }],
+  ["collie:preload-reload", { area: "session", prefix: false, fate: "kept", why: "reload guard, a timestamp" }],
   ["collie.nav.booted", { area: "session", prefix: false, fate: "kept", why: "navigation state" }],
   ["collie.nav.seeded", { area: "session", prefix: false, fate: "kept", why: "navigation state, an app path" }],
   ["collie.nav.pendingOpen", { area: "session", prefix: false, fate: "kept", why: "navigation state, an app path" }],
