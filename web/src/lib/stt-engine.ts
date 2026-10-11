@@ -87,6 +87,8 @@ export interface SttEngine {
   probe: () => Promise<SttProbe>;
   /** Transcribe 16 kHz mono PCM. The array's buffer is transferred, so it is detached on return. */
   transcribe: (pcm: Float32Array, options?: { signal?: AbortSignal }) => Promise<SttEngineOutcome>;
+  /** True once two crashes have switched the engine off for the page session. */
+  disabled: () => boolean;
   /** Terminate the worker and stop listening. The engine can still start a new worker afterwards. */
   dispose: () => void;
 }
@@ -402,6 +404,7 @@ export function createSttEngine(options: SttEngineOptions): SttEngine {
         armIdle();
       }
     },
+    disabled,
     dispose() {
       kill("aborted");
     },

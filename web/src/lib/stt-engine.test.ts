@@ -288,12 +288,14 @@ describe("crashes", () => {
     t.worker().fire("error");
     await expect(first).resolves.toEqual({ ok: false, code: "crashed" });
     expect(t.worker().terminated).toBe(true);
+    expect(t.engine.disabled()).toBe(false);
 
     const second = t.engine.transcribe(new Float32Array(8));
     await flush();
     expect(t.workers).toHaveLength(2);
     t.worker().fire("messageerror");
     await expect(second).resolves.toEqual({ ok: false, code: "crashed" });
+    expect(t.engine.disabled()).toBe(true);
 
     await expect(t.engine.transcribe(new Float32Array(8))).resolves.toEqual({ ok: false, code: "disabled" });
     await expect(t.engine.probe()).resolves.toEqual({ ok: false, reason: "disabled" });

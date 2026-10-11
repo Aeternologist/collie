@@ -274,6 +274,9 @@ export const ja: Dictionary = {
   "composer.voice.transcribing": "文字起こし中",
   "composer.voice.okAria": "完了して文字起こし",
   "composer.voice.okSendAria": "完了して文字起こしして送信",
+  "composer.voice.transcribingPhone": "この端末で文字起こし中",
+  "composer.voice.sendToHost": "ホストに送る",
+  "composer.voice.sendToHostAria": "録音をホストに送って文字起こしする",
   "composer.mic.discardAria": "録音を破棄",
   "composer.attach.aria": "ファイルを添付",
   "composer.attach.title": "添付",
@@ -1219,6 +1222,14 @@ export const ja: Dictionary = {
   "stt.error.nothingRecorded": "録音データが空です。",
   "stt.error.unsupportedBrowser": "使用中のブラウザは音声録音に対応していません。",
   "stt.error.micRefused": "マイクへのアクセスが拒否されました。",
+  "stt.error.phone.generic": "この端末では録音を文字起こしできませんでした。",
+  "stt.error.phone.undecodable": "この端末では録音を読み込めませんでした。",
+  "stt.error.phone.crashed": "音声エンジンが停止しました。",
+  "stt.error.phone.disabled": "音声エンジンが2回停止しました。アプリを再読み込みするまで、この端末では使えません。",
+  "stt.error.phone.memory": "この端末には音声処理に必要なメモリが足りません。",
+  "stt.error.phone.timeout": "文字起こしに時間がかかりすぎました。",
+  "stt.error.phone.unsupported": "このブラウザでは音声エンジンを実行できません。",
+  "stt.error.phone.engineFiles": "音声エンジンのファイルが壊れています。アプリを再読み込みしてください。",
 
   // --- directTyping (the composer's "Type into terminal" mode, hooks/use-direct-typing.ts) ---
   "directTyping.status.draftPending":

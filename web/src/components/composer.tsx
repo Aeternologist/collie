@@ -64,6 +64,7 @@ import { OfflineDraftNote, TerminalDraftPreview } from "@/components/terminal-dr
 import { scopeKey, type Scope } from "@/lib/scope";
 import { DirectTypingStrip } from "@/components/direct-typing-strip";
 import { VoiceTakeover } from "@/components/voice-takeover";
+import { usePhoneEngineUsable } from "@/hooks/use-phone-engine";
 import { useSttRecorder } from "@/hooks/use-stt-recorder";
 import { useHandsFree, useSttCapability } from "@/lib/stt";
 import { NoEchoNotice } from "@/components/no-echo-notice";
@@ -624,13 +625,23 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   // predicate in lib/stt.ts, so the button here and the row in Settings can never disagree. Absent
   // is the feature being off: no button at all, not a disabled one.
   const stt = useSttCapability();
+  // THE TWO ENGINES (ADR 0096). The microphone exists when the host has a provider, or when this
+  // device chose "This phone" and the phone can run it. It is ENABLED when the host's provider can
+  // serve, or the phone engine is the one that will run: a phone-only device has no host provider
+  // to be unavailable. The engine is the phone's whenever it is usable; the recorder reads that once,
+  // as the clip starts.
+  const phoneUsable = usePhoneEngineUsable();
+  const micShown = stt !== null || phoneUsable;
+  const micAvailable = phoneUsable || stt?.available === true;
   const handsFree = useHandsFree();
   // The microphone is armed state, and it obeys the same rules as "Type into terminal": it dies on a
   // pane switch, on any composer lock, and on a hidden page, and it is never persisted. The clip is
   // DISCARDED on each of those, not finished — see the hook's header for why an orphaned transcript
   // is worse than no transcript.
   const recorder = useSttRecorder({
-    enabled: stt?.available === true && !locked && !direct.active,
+    enabled: micAvailable && !locked && !direct.active,
+    engine: phoneUsable ? "phone" : "host",
+    host: stt,
     paneKey: `${scopeId}\0${paneId}`,
     suspended: locked || direct.active,
     onTranscript: acceptTranscript,
@@ -658,7 +669,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   // "stop typing into the terminal" control and that must not be displaceable.
   // A chip is something to send (ADR 0060), so a box holding only chips shows Send, not the mic.
   const hasDraft = input.trim() !== "" || attachments.length > 0;
-  const micIsPrimary = stt !== null && !direct.active && !hasDraft;
+  const micIsPrimary = micShown && !direct.active && !hasDraft;
 
   // ── THE VOICE TAKEOVER (design 3.3) ───────────────────────────────────────────────────────────
   //
@@ -2106,18 +2117,18 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               size="icon"
               variant={recorder.busy ? "destructive" : "default"}
               className={cn(TOOLBAR_TAP_TARGET, "size-9 shrink-0 rounded-full")}
-              disabled={!stt.available || locked || offline || sending || recorder.phase === "transcribing"}
+              disabled={!micAvailable || locked || offline || sending || recorder.phase === "transcribing"}
               aria-pressed={recorder.busy}
               // The bridge's own words when it cannot serve — the operator's next move is on the
               // host, so the button says what is wrong rather than just refusing.
               aria-label={
-                !stt.available
-                  ? (stt.reason ?? translate("composer.mic.unavailable"))
+                !micAvailable
+                  ? (stt?.reason ?? translate("composer.mic.unavailable"))
                   : recorder.phase === "recording"
                     ? translate("composer.mic.stopAria")
                     : translate("composer.mic.recordAria")
               }
-              title={stt.available ? undefined : stt.reason}
+              title={micAvailable ? undefined : stt?.reason}
               onPointerDown={(e) => e.preventDefault()}
               onClick={(e) => {
                 // `detail` is 0 for a click the keyboard made: the takeover then shows its focus mark.
@@ -2178,6 +2189,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           padClassName={blockPad}
           keyboardOpened={openedByKeyboard.current}
           sends={handsFree && !hasDraft && noEcho === null}
+          engine={recorder.engine}
+          failure={recorder.failure}
+          onSendToHost={recorder.canSendToHost ? recorder.sendToHost : null}
           onStop={recorder.stopAndSend}
           onDiscard={recorder.discard}
         />

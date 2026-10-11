@@ -277,6 +277,9 @@ export const es: Dictionary = {
   "composer.voice.transcribing": "Transcribiendo",
   "composer.voice.okAria": "Finalizar y transcribir",
   "composer.voice.okSendAria": "Finalizar, transcribir y enviar",
+  "composer.voice.transcribingPhone": "Transcribiendo en este teléfono",
+  "composer.voice.sendToHost": "Enviar al host",
+  "composer.voice.sendToHostAria": "Enviar la grabación al host para transcribirla",
   "composer.mic.discardAria": "Descartar grabación",
   "composer.attach.aria": "Adjuntar archivo",
   "composer.attach.title": "Adjuntar",
@@ -1228,6 +1231,14 @@ export const es: Dictionary = {
   "stt.error.nothingRecorded": "No se registró audio.",
   "stt.error.unsupportedBrowser": "Este navegador no soporta grabación de audio.",
   "stt.error.micRefused": "Permiso de micrófono denegado.",
+  "stt.error.phone.generic": "Este teléfono no pudo transcribir la grabación.",
+  "stt.error.phone.undecodable": "Este teléfono no pudo leer la grabación.",
+  "stt.error.phone.crashed": "El motor de voz se detuvo.",
+  "stt.error.phone.disabled": "El motor de voz se detuvo dos veces. Queda desactivado en este teléfono hasta que recargues la app.",
+  "stt.error.phone.memory": "No hay memoria suficiente en este teléfono para la voz.",
+  "stt.error.phone.timeout": "La transcripción tardó demasiado.",
+  "stt.error.phone.unsupported": "Este navegador no puede ejecutar el motor de voz.",
+  "stt.error.phone.engineFiles": "Los archivos del motor de voz están dañados. Recarga la app.",
 
   // --- directTyping (the composer's "Type into terminal" mode, hooks/use-direct-typing.ts) ---
   "directTyping.status.draftPending":
