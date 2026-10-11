@@ -285,10 +285,15 @@ entirely.
   the second: one file, from one pinned Hugging Face address, written only after its hash matched.
   A phone never calls Hugging Face. It copies the model from the host, with the pairing token. The
   routes need a write device, run on the lead only, allow one download at a time and are audited.
-- **Setup from Settings is the one exception to "setup is a CLI act".** The other providers store a
-  credential, name a command, or send audio off the host, so they stay in the terminal. Whistle does
-  none of these. A stolen write token can already type into terminals and start an update, so the
-  setup tap gives it nothing new.
+- **Setup from Settings is an exception to "setup is a CLI act".** Providers that store a credential
+  or name a command stay in the terminal. Whistle does none of these. A stolen write token can
+  already type into terminals and start an update, so the setup tap gives it nothing new.
+- **Switching to Codex from Settings is the other exception.** A write device may switch the host
+  between Whistle, Codex and Off, and nothing else. Codex needs the full consent, the same words
+  `collie stt setup` prints, and a tap on **I accept**; the bridge then runs the CLI's own probe. A
+  stolen write token could point the host's speech at the operator's signed-in ChatGPT account. It
+  cannot add a key or a command, or replace one. The token can already type `codex` into a
+  terminal. [ADR 0097](../.adr/0097-codex-speech-can-be-chosen-from-settings.md) weighs this.
 
 Why it is built this way: [ADR 0096](../.adr/0096-speech-can-stay-on-the-phone.md). The setup steps
 are in [Voice input and Web Push](voice-and-push.md#whistle-speech-to-text-on-your-phone-or-your-host).

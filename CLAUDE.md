@@ -722,8 +722,11 @@ fixed argv, under the same bounds, and its audio stays on the host. Every one of
 declined by doing nothing, the local-engine configuration keeps the egress on loopback, and the wire
 identity is probed honest-first and recorded
 ([ADR 0029](./.adr/0029-speech-to-text-is-a-provider-seam-collie-owns.md)). Setup is a CLI act, never
-a web form, for the reason pairing is, with one named exception: Whistle may be set up from Settings,
-because it holds no credential, runs no operator command and sends no audio off the host (ADR 0096).
+a web form, for the reason pairing is, with two named exceptions, neither of which takes a key or a
+command: Whistle may be set up from Settings (ADR 0096), and a write device may switch the host
+between Whistle, Codex and Off, Codex only after the CLI's own consent text and an "I accept" tap,
+then the CLI's own probe ([ADR 0097](./.adr/0097-codex-speech-can-be-chosen-from-settings.md)). A
+provider set up with a key or a command, or named by the environment, is never changed from the app.
 
 **Two device gates guard writes, independently, and compose by AND.** `COLLIE_DEVICE_HEADER` trusts
 a name a proxy injects; **pairing** (`bridge/pairing.ts`, `collie pair` / `collie devices`) requires a

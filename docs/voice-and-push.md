@@ -25,15 +25,19 @@ not disabled. Four providers:
 | provider | what it is |
 | --- | --- |
 | **`openai-compatible`** | Any endpoint that speaks `POST /audio/transcriptions` — the public OpenAI API, a cloud Whisper clone, or **a local engine on the same machine, which is the zero-egress choice** ([below](#zero-egress--point-it-at-your-own-engine)). |
-| **`codex`** | Borrows the `codex` binary you already trust for a short-lived token. No new account, no new key — and a **private, unsupported** endpoint that carries a consent step you have to type `yes` to ([below](#the-codex-provider--what-you-are-accepting)). |
+| **`codex`** | Borrows the `codex` binary you already trust for a short-lived token. No new account and no new key, but a **private, unsupported** endpoint that carries a consent step: you type `yes` in the terminal, or tap **I accept** in Settings ([below](#the-codex-provider--what-you-are-accepting)). |
 | **`local-cli`** | Runs a transcription command already on the host, such as `whisper-cli` or `muesli-cli`, once per recording, and reads the transcript from its stdout. No HTTP server needed ([below](#run-your-own-command-the-local-cli-provider)). |
 | **`whistle`** | Collie's own engine, [Whistle](#whistle-speech-to-text-on-your-phone-or-your-host). No key and no command to configure. A recording of up to 4 minutes goes to it as a WAV file, and the audio stays on the host. A phone can also run Whistle on itself, with no upload. |
 
 Setup is a CLI act for the reason [pairing](security.md#pair-a-device--the-write-credential) is one: this
-surface accepts a credential, so it belongs on the host's keyboard. There is no web setup form for
-the first three providers. **Whistle is the one exception.** It holds no credential, runs no command
-you chose and sends no audio off the host, so a device with write access may set it up from Settings
-([why](security.md#the-speech-engine-whistle)).
+surface accepts a credential, so it belongs on the host's keyboard. There is no web form for a key, an
+endpoint or a command. **Two exceptions take none of those.** Whistle holds no credential, runs no
+command you chose and sends no audio off the host, so a device with write access may set it up from
+Settings ([why](security.md#the-speech-engine-whistle)). And in **Settings → Voice → Host speech
+provider**, a device with write access may switch the host between Whistle, Codex and Off. Codex
+comes only after the same consent the terminal prints and a tap on **I accept**
+([below](#the-codex-provider--what-you-are-accepting)). A provider you set up in the terminal with a
+key or a command, or one your environment names, is shown there and never changed from the app.
 
 ```console
 $ bin/collie stt setup
@@ -131,10 +135,10 @@ write access can set this up." and cannot start the download.
    bar shows the progress. If it fails, the card says why. Tap **Try again**. When the model is
    there, the card lists its version (the first seven characters of the Hugging Face revision, a link
    to that revision), its size, a short checksum and when the host downloaded it.
-3. For the host engine, switch on **Use Whistle on the host**. It is for every device that uses the
-   host. It works when the host has no speech provider yet. If another provider is set up, the switch
-   is off and the card says "Another speech provider is set up on the host." Change that in the
-   terminal, below.
+3. For the host engine, choose **Whistle** in the **Host speech provider** card. It is for every
+   device that uses the host. It works when the host has no speech provider, or has Codex or Whistle.
+   If you set up another provider in the terminal, with a key or a command, the card shows it and the
+   command that changes it, and offers no choice. Change that in the terminal, below.
 4. For the phone engine, go to **On this phone** and tap **Set up on this phone (16.9 MB)**. The
    phone copies the model from the host and checks it. The step then says "Set up on this phone",
    names the version, and offers **Remove from this phone**. It also says whether the browser agreed
@@ -267,6 +271,16 @@ Collie asks that endpoint **under its own name first**. Only if the honest ident
 it fall back to the Codex CLI's headers — and that fallback is written into the config, in a word
 `collie stt status` reads back to you. Collie never reads or stores `~/.codex/auth.json`; the binary
 you already trust stays the only thing that touches it.
+
+**You can also choose it in Settings.** Open **Settings → Voice** on a device with write access. The
+**Host speech provider** card shows what the host uses now. For Codex it also shows the recorded
+identity: `honest`, or `codex-cli` when the fallback was needed. The **Codex (ChatGPT sign-in)** row
+is open only when `codex` is installed on the host and signed in with ChatGPT. Collie asks
+`codex login status` to find out. Otherwise the row says what to run on the host, usually
+`codex login`. Tap the row, and a sheet shows the same consent, word for word. Nothing is sent to the
+host until you tap **I accept**. Then the host runs the same probe as `collie stt setup`, honest
+identity first, and writes the same config. If the probe fails, nothing is written and the sheet says
+why. **Off** in the same card removes the provider. The terminal still works the same way.
 
 ### Run your own command: the local-cli provider
 
