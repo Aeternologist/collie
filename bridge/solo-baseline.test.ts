@@ -1261,7 +1261,9 @@ describe("solo zero-tax — the machine files", () => {
       now += 60_000;
       watch.observe(SOLO_MACHINE_ID, sample, now);
       watch.tick();
-      await Bun.sleep(5);
+      // The tick's save is already on the chain and the history is no longer dirty, so flush waits for
+      // that write and adds none. A fixed sleep listed the folder mid-rename on Windows (the .tmp file).
+      await watch.flush();
       expect(await readdir(stateDir)).toEqual(["machine-history.json"]);
 
       await watch.setAlerts(SOLO_MACHINE_ID, { cpu: { above: 0.9, forMin: 10 } });

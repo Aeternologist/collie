@@ -297,8 +297,12 @@ for (const size of [
     await expect.poll(() => page.evaluate(() => window.__voice?.recorded ?? 0)).toBeGreaterThan(0);
     await page.getByRole("button", { name: en["composer.voice.okAria"] }).click();
     await expect(status(page)).toHaveText(en["composer.voice.transcribing"]);
-    // More than one full turn of the arc (1 s), so every corner angle has been through a frame.
+    // More than one full turn of the arc (1 s), so every corner angle has been through a frame, and at
+    // least 41 sampled frames: WebKit on a CI runner samples about 20 a second, so 1.5 s alone gave 25.
     await page.waitForTimeout(1500);
+    await expect
+      .poll(() => page.evaluate(() => (window.__samples ?? []).filter((sample) => sample.transcribing).length), { timeout: 10_000 })
+      .toBeGreaterThan(40);
     gate.open = true;
     await expect(page.getByRole("textbox", { name: en["composer.placeholder.reply"] })).toHaveValue(TRANSCRIPT);
     await page.waitForTimeout(200);

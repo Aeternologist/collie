@@ -292,10 +292,12 @@ describe("GET /api/stt/model/<sha256>", () => {
     const d = deps();
     await ready(d);
     const unread = [];
-    for (let i = 0; i < MODEL_MAX_CONCURRENT; i++) unread.push(await modelResponse(d, SHA, undefined, 20));
-    expect((await modelResponse(d, SHA, undefined, 20)).response.status).toBe(503);
-    await Bun.sleep(60);
-    const after = await modelResponse(d, SHA, undefined, 20);
+    // A hold long enough that a slow Windows runner still opens all three before it runs out: at 20 ms
+    // the first two places came back before the third request and it was a 200, not a 503.
+    for (let i = 0; i < MODEL_MAX_CONCURRENT; i++) unread.push(await modelResponse(d, SHA, undefined, 400));
+    expect((await modelResponse(d, SHA, undefined, 400)).response.status).toBe(503);
+    await Bun.sleep(600);
+    const after = await modelResponse(d, SHA, undefined, 400);
     expect(after.response.status).toBe(200);
     // A slow copy that is still being read keeps streaming: the timer frees the place, not the body.
     expect(new Uint8Array(await unread[0]!.response.arrayBuffer())).toEqual(MODEL);
