@@ -5,7 +5,7 @@ browser notifications that trigger when an agent is waiting for input.
 
 ## Voice input (optional)
 
-A **microphone button in the composer**, and a **hands-free switch** in Settings. Tap the button,
+A **microphone button in the composer**, and a **hands-free switch** in **Settings → Voice**. Tap the button,
 speak, and the transcript lands in the message box for you to read and send. With hands-free on it is
 sent for you — down the same guarded reply path a typed message takes, never around it. The
 microphone **is** the round button at the end of the row, for as long as the box is empty; the first
@@ -125,18 +125,26 @@ copies it from the host, never from the internet. A clip takes about a second on
 [paired](security.md#pair-a-device--the-write-credential)). A read-only device sees "A device with
 write access can set this up." and cannot start the download.
 
-1. Open **Settings → Device**. Find the **Whistle** card.
-2. Tap **Set up Whistle (16.9 MB)**. The host downloads the model once. A bar shows the progress. If
-   it fails, the card says why. Tap **Try again**.
-3. For the host engine, switch on **Use on host**. This works when the host has no speech provider
-   yet. If another provider is set up, the switch is off and the card says "Another speech provider
-   is set up on the host." Change that in the terminal, below.
-4. For the phone engine, tap **Download to this phone**. The phone copies the model from the host and
-   checks it. Then, in the **Speech engine** card, choose **This phone**. The card shows "On this
-   phone" and offers **Remove from this phone**. The card also says whether the browser agreed to keep
-   the copy ("Kept") or may clear it when space runs low.
-5. To remove the model from the host, tap **Remove from host** and confirm. If Whistle was the host
-   engine, speech on the host stops until you set it up again.
+1. Open **Settings → Voice**. Find the **Whistle** card. It names the maker, Cactus Compute, and links
+   to their page and to the model page on Hugging Face.
+2. Under **On your host**, tap **Download to host (16.9 MB)**. The host downloads the model once. A
+   bar shows the progress. If it fails, the card says why. Tap **Try again**. When the model is
+   there, the card lists its version (the first seven characters of the Hugging Face revision, a link
+   to that revision), its size, a short checksum and when the host downloaded it.
+3. For the host engine, switch on **Use Whistle on the host**. It is for every device that uses the
+   host. It works when the host has no speech provider yet. If another provider is set up, the switch
+   is off and the card says "Another speech provider is set up on the host." Change that in the
+   terminal, below.
+4. For the phone engine, go to **On this phone** and tap **Set up on this phone (16.9 MB)**. The
+   phone copies the model from the host and checks it. The step then says "Set up on this phone",
+   names the version, and offers **Remove from this phone**. It also says whether the browser agreed
+   to keep the copy ("Kept") or may clear it when space runs low. If the host later gets a newer
+   model, the step says "A newer model is on your host." and offers **Update**.
+5. In the **Speech engine** card, choose **This phone** or **Host**. **This phone** is off until the
+   phone is set up. **Host** is off while the host has no speech provider. The line under the choice
+   says what the host uses. The choice is kept per device.
+6. To remove the model from the host, tap **Remove from host** and confirm. If Whistle was the host
+   engine, speech on the host stops until you download it again.
 
 **Or set it up in the terminal.**
 
@@ -161,8 +169,8 @@ address), and keeps the file only when its sha256 equals a hash that this releas
 engine code (about 1 MB) is part of every Collie release and comes from Collie's own files.
 
 **Nothing downloads on its own.** Not on install, not on an update, not when you pick an engine. The
-model arrives when a person taps **Set up Whistle** or runs `collie stt whistle`. A phone copies it
-from the host when its owner taps **Download to this phone**, and from no other place. The host sends
+model arrives when a person taps **Download to host** or runs `collie stt whistle`. A phone copies it
+from the host when its owner taps **Set up on this phone**, and from no other place. The host sends
 the model to at most two phones at once. A third gets "try again in a moment".
 
 **Limits.** The host engine takes a recording of up to 4 minutes, because a WAV is about four times

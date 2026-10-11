@@ -385,6 +385,7 @@ describe("parentChain: what a cold deep link gets behind it", () => {
     // section behind it — two taps back to home, matching the two pushes that would have got here.
     ["/settings/updates", "", ["/", "/settings", "/settings/system"]],
     ["/settings/device", "", ["/", "/settings"]],
+    ["/settings/voice", "", ["/", "/settings"]],
     ["/crew", "", ["/", "/settings", "/settings/system"]],
     // Machines sits under Settings, and one machine under Machines: a cold deep link gets both behind it.
     ["/machines", "", ["/", "/settings"]],

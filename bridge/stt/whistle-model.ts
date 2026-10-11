@@ -121,13 +121,16 @@ export function whistleEngineInPlace(root: string): boolean {
 }
 
 /** What the store reports. The route adds the host engine's two flags to make a `WhistleStatus`. */
-export type WhistleModelStatus = Pick<WhistleStatus, "state" | "bytes" | "received" | "sha256" | "reason">;
+export type WhistleModelStatus = Pick<WhistleStatus, "state" | "bytes" | "received" | "sha256" | "revision" | "fetchedAt" | "reason">;
 
 /** The manifest beside the model: where it came from, for `collie stt status` and `doctor`. */
 export interface WhistleManifest {
   version: 1;
   model: { sha256: string; bytes: number; revision: string; source: string; fetchedAt: string };
 }
+
+/** A revision is a plain name (a commit hash in production); anything else is not passed on. */
+const PLAIN_REVISION = /^[0-9A-Za-z._-]{1,64}$/;
 
 /** The model a download aims at. {@link WHISTLE_MODEL} unless a test pins a small one. */
 export interface WhistleModelPin {
@@ -461,11 +464,29 @@ export function createWhistleModelStore(deps: WhistleModelDeps): WhistleModelSto
     }
   }
 
+  /**
+   * The revision and fetch time for the Settings page, from the manifest, and only when the manifest
+   * describes THE FILE THAT IS HELD (same hash). Both reach a URL and a date in the browser, so each is
+   * checked for shape here rather than trusted: a hand-edited or stale manifest yields no field at all.
+   */
+  function provenance(manifest: WhistleManifest | null, sha256: string): Pick<WhistleModelStatus, "revision" | "fetchedAt"> {
+    const model = manifest?.model;
+    if (model === undefined || model.sha256 !== sha256) return {};
+    const out: Pick<WhistleModelStatus, "revision" | "fetchedAt"> = {};
+    const revision = PLAIN_REVISION.exec(String(model.revision))?.[0];
+    if (revision !== undefined) out.revision = revision;
+    const at = new Date(String(model.fetchedAt));
+    if (!Number.isNaN(at.getTime())) out.fetchedAt = at.toISOString();
+    return out;
+  }
+
   async function status(): Promise<WhistleModelStatus> {
     const flight = inFlight.get(paths.dir);
     if (flight !== undefined) return { state: "downloading", bytes: pin.bytes, received: flight.received };
     const held = await inspect();
-    if (held.kind === "held" && held.accepted) return { state: "ready", bytes: pin.bytes, sha256: held.sha256 };
+    if (held.kind === "held" && held.accepted) {
+      return { state: "ready", bytes: pin.bytes, sha256: held.sha256, ...provenance(await readManifest(), held.sha256) };
+    }
     const other = await runningElsewhere();
     if (other !== null) return { state: "downloading", bytes: pin.bytes, received: other.received };
     if (held.kind === "held") {

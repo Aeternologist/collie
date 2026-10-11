@@ -354,6 +354,39 @@ describe("downloadModel", () => {
   });
 });
 
+describe("the revision kept beside the copy", () => {
+  const REVISION = "ca5287601bef25af26dcf2e1b2bdc0843a7c19e5";
+
+  it("records the host's revision with the copy, and reads it back", async () => {
+    const h = harness();
+    const result = await downloadModel({ ...READY, revision: REVISION }, () => {}, undefined, h.deps);
+    expect(result).toEqual({ sha256: SHA, bytes: MODEL.byteLength, revision: REVISION, persisted: true });
+    expect(await storedModel(h.deps)).toEqual({ sha256: SHA, bytes: MODEL.byteLength, revision: REVISION });
+  });
+
+  it("keeps working for a host that names no revision: the copy has none either", async () => {
+    const h = harness();
+    await downloadModel(READY, () => {}, undefined, h.deps);
+    expect(await storedModel(h.deps)).not.toHaveProperty("revision");
+  });
+
+  it("does not record a revision that is not a plain name", async () => {
+    const h = harness();
+    await downloadModel({ ...READY, revision: "../../x y" }, () => {}, undefined, h.deps);
+    expect(await storedModel(h.deps)).not.toHaveProperty("revision");
+  });
+
+  it("reads a copy stored before the revision was recorded as a copy with no revision", async () => {
+    const h = harness();
+    const cache = await h.storage.open("collie-stt");
+    cache.entries.set(
+      `${ORIGIN}${sttModelPath(SHA)}`,
+      new Response(MODEL, { headers: { "content-type": "application/octet-stream", "content-length": String(MODEL.byteLength) } }),
+    );
+    expect(await storedModel(h.deps)).toEqual({ sha256: SHA, bytes: MODEL.byteLength });
+  });
+});
+
 describe("storedModel and hasModel", () => {
   it("read without creating a cache for a phone that never downloaded", async () => {
     const h = harness();

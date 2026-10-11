@@ -9,9 +9,8 @@ import { NoPromptsSheet } from "@/components/no-prompts-sheet";
 import { NotifyPrefsCard } from "@/components/notify-prefs-control";
 import { SpaceOverview } from "@/components/space-overview";
 import { SpeechCards, type SpeechCardsProps } from "@/components/speech-control";
-import type { WhistleStatus } from "@/lib/types";
 import { commandChoice, commandKey, commandOptions, offerFor, pickOfKey } from "@/lib/new-page";
-import type { LauncherItem, RecentRun } from "@/lib/types";
+import type { LauncherItem, RecentRun, SttCapability, WhistleStatus } from "@/lib/types";
 import {
   devicesPaired,
   devicesUnpaired,
@@ -85,19 +84,31 @@ function CommandPickerDemo({ run, pick, line = "" }: { run: boolean; pick: strin
   );
 }
 
-// ── Settings → Speech (ADR 0096) ────────────────────────────────────────────────────────────────────
+// ── Settings → Voice (ADR 0096) ─────────────────────────────────────────────────────────────────────
 
 const WHISTLE_BYTES = 16_919_407;
 const WHISTLE_SHA = "b6e02f048568ac5d01a2042556c658061e699acbc0aa2a1439f52f3d461dffeb";
+const WHISTLE_REVISION = "ca5287601bef25af26dcf2e1b2bdc0843a7c19e5";
 const WHISTLE_ABSENT: WhistleStatus = { state: "absent", bytes: WHISTLE_BYTES, hostEngine: false, hostTaken: false };
-const WHISTLE_READY: WhistleStatus = { ...WHISTLE_ABSENT, state: "ready", sha256: WHISTLE_SHA };
+const WHISTLE_READY: WhistleStatus = {
+  ...WHISTLE_ABSENT,
+  state: "ready",
+  sha256: WHISTLE_SHA,
+  revision: WHISTLE_REVISION,
+  fetchedAt: "2026-10-11T09:30:00.000Z",
+};
+/** The host runs Whistle: its provider is on and answers. */
+const HOST_WHISTLE: SttCapability = { provider: "whistle", available: true, input: "wav-16k", maxDurationMs: 240_000 };
+/** A copy on the phone, of the model the host holds. */
+const PHONE_COPY = { sha256: WHISTLE_SHA, bytes: WHISTLE_BYTES, revision: WHISTLE_REVISION };
 
-/** The two Speech cards with every fact handed in, as the real control hands them. Taps do nothing. */
+/** The Whistle card and the Speech engine card with every fact handed in, as the real control hands them. Taps do nothing. */
 function SpeechDemo(over: Partial<SpeechCardsProps>) {
   return (
     <div className="space-y-4 p-4">
       <SpeechCards
         whistle={WHISTLE_ABSENT}
+        hostStt={null}
         canWrite
         engine="host"
         block={null}
@@ -151,66 +162,104 @@ export function SettingsSection() {
         </Card>
       </Group>
 
-      <Group title="Speech">
+      <Group title="Voice">
         <Card
-          state="speech-whistle-absent"
-          label="1: Whistle not set up"
-          reach="open Settings, Device, on a lead whose host has no Whistle model yet. The setup button is for a device with write access; a read-only device reads one sentence instead."
-          note="This phone is off with its reason, because there is neither a host model nor a copy on the phone."
+          state="voice-nothing-installed"
+          label="1: nothing installed"
+          reach="open Settings, Voice, on a lead whose host has no Whistle model yet. The Download to host button is for a device with write access."
+          note="Both choices under Speech engine are off, and the reason for This phone is written once, under the choice. The phone step is not drawn: there is nothing yet to copy."
         >
-          <Stage height={560}>
+          <Stage height={760}>
             <SpeechDemo block="host-not-ready" />
           </Stage>
         </Card>
 
         <Card
-          state="speech-whistle-downloading"
+          state="voice-host-downloading"
           label="2: the host is downloading"
-          reach="tap Set up Whistle. The bar follows the host's own count, asked once a second while this page is open, and ends when the host says ready or failed."
+          reach="tap Download to host. The bar follows the host's own count, asked once a second while this page is open, and ends when the host says ready or failed."
           note="There is no cancel in 1.20.0: the host finishes or fails on its own."
         >
-          <Stage height={560}>
+          <Stage height={640}>
             <SpeechDemo whistle={{ ...WHISTLE_ABSENT, state: "downloading", received: 7_400_000 }} block="host-not-ready" />
           </Stage>
         </Card>
 
         <Card
-          state="speech-whistle-failed"
-          label="3: the download failed"
-          reach="tap Set up Whistle with the host offline, or on a link that blocks Hugging Face. The host's reason is shown as it sent it."
+          state="voice-host-ready"
+          label="3: ready on the host, phone not set up"
+          reach="after the host's download finishes. The details name the model, its version on Hugging Face, its size, a short checksum and when the host fetched it."
+          note="Use Whistle on the host is a host-wide switch, so it says it is for every device. It is off here, so the host has no speech provider and Host under Speech engine is off with its reason. Set up on this phone is the next step."
         >
-          <Stage height={560}>
-            <SpeechDemo
-              whistle={{ ...WHISTLE_ABSENT, state: "failed", reason: "Hugging Face did not answer. Check the host's connection." }}
-              block="host-not-ready"
-            />
-          </Stage>
-        </Card>
-
-        <Card
-          state="speech-whistle-ready"
-          label="4: ready on the host"
-          reach="after the download finishes. Remove from host takes two taps. Use on host is a switch; it is disabled with its reason when another speech provider is already set up on the host."
-          note="The phone has no copy yet, so Download to this phone is offered."
-        >
-          <Stage height={640}>
+          <Stage height={1040}>
             <SpeechDemo whistle={WHISTLE_READY} />
           </Stage>
         </Card>
 
         <Card
-          state="speech-whistle-on-phone"
-          label="5: on this phone"
-          reach="tap Download to this phone, then choose This phone. The copy is checked against the host's hash before it is kept."
-          note="Shown with the browser's promise to keep the copy. When the host's model changes, this row says so and offers a new download."
+          state="voice-phone-copying"
+          label="4: the phone is copying"
+          reach="tap Set up on this phone. The bar takes the place of the button; the copy is checked against the host's hash before it is kept."
+          note="Leaving the page ends a copy in progress, and nothing is kept from a half-finished one."
         >
-          <Stage height={640}>
+          <Stage height={1040}>
+            <SpeechDemo whistle={WHISTLE_READY} copy={{ received: 7_400_000, total: WHISTLE_BYTES }} />
+          </Stage>
+        </Card>
+
+        <Card
+          state="voice-both-ready"
+          label="5: both ready, engine on This phone"
+          reach="after the copy finishes, choose This phone under Speech engine."
+          note="Shown with the host's Whistle switch on, so the line under the choice says the host uses Whistle too. The version on the phone is the same short hash as on the host."
+        >
+          <Stage height={1040}>
             <SpeechDemo
-              whistle={WHISTLE_READY}
+              whistle={{ ...WHISTLE_READY, hostEngine: true }}
+              hostStt={HOST_WHISTLE}
               engine="phone"
-              local={{ sha256: WHISTLE_SHA, bytes: WHISTLE_BYTES }}
+              local={PHONE_COPY}
               persisted
             />
+          </Stage>
+        </Card>
+
+        <Card
+          state="voice-newer-on-host"
+          label="6: a newer model on the host"
+          reach="when the host's model changes after this phone copied it. The phone's version differs from the host's."
+          note="The phone keeps working with its own copy. Update copies the new one over it."
+        >
+          <Stage height={1040}>
+            <SpeechDemo
+              whistle={{ ...WHISTLE_READY, hostEngine: true }}
+              hostStt={HOST_WHISTLE}
+              engine="phone"
+              local={{ sha256: "a".repeat(64), bytes: WHISTLE_BYTES, revision: "1f0e2d3c4b5a69788796a5b4c3d2e1f001122334" }}
+              persisted={false}
+            />
+          </Stage>
+        </Card>
+
+        <Card
+          state="voice-browser-cannot"
+          label="7: this browser cannot run the engine"
+          reach="open Settings, Voice, over plain HTTP on a phone. The same card appears when the browser has no WebAssembly, or when it blocks the engine."
+          note="The reason stands where the Set up on this phone button would be, and is not repeated under the choice. Host can still be chosen when the host has a provider."
+        >
+          <Stage height={1040}>
+            <SpeechDemo whistle={{ ...WHISTLE_READY, hostEngine: true }} hostStt={HOST_WHISTLE} block="insecure" />
+          </Stage>
+        </Card>
+
+        <Card
+          state="voice-read-only"
+          label="8: a read-only device"
+          reach="open Settings, Voice, on a device that may not write. Downloading to the host is a write; copying to the phone is a read."
+          note="One sentence stands where the button would be. Once the host is ready, the same device sees the details, the switch disabled and no Remove button."
+        >
+          <Stage height={640}>
+            <SpeechDemo canWrite={false} block="host-not-ready" />
           </Stage>
         </Card>
       </Group>

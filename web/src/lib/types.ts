@@ -1822,6 +1822,10 @@ export interface WhistleStatus {
   received?: number;
   /** Present only when state is "ready": the held file's sha256, lowercase hex, a hash this build accepts. */
   sha256?: string;
+  /** Present only when state is "ready" and the manifest names it: the Hugging Face revision the file came from. */
+  revision?: string;
+  /** Present only when state is "ready" and the manifest names it: when the host fetched the file, an ISO 8601 time. */
+  fetchedAt?: string;
   /** Present when state is "failed": operator-facing prose, no paths. */
   reason?: string;
   /** True when the host STT provider is `whistle`. */

@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
-import { AudioLines, Download, Loader2, Mic, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { AudioLines, Cpu, Download, Loader2, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { SectionLabel } from "@/components/ui/section-label";
 import { Segmented } from "@/components/ui/segmented";
 import { Switch } from "@/components/ui/switch";
 import { useStoredModel } from "@/hooks/use-stored-model";
@@ -14,6 +15,7 @@ import {
   startWhistleSetup,
 } from "@/lib/api";
 import { describeThrownError } from "@/lib/api-error-message";
+import { dateTime } from "@/lib/format";
 import { t, type MessageKey } from "@/lib/i18n";
 import { formatDownloadSize, formatPercent } from "@/lib/machine-units";
 import { noteWhistleStatus, refreshOperatorConfig } from "@/lib/operator-config";
@@ -25,6 +27,7 @@ import {
   runSttProbe,
   setSttEnginePreference,
   sttModelErrorMessage,
+  useHostSttCapability,
   useSttEnginePreference,
   useSttProbeState,
   useWhistleStatus,
@@ -32,18 +35,20 @@ import {
   type SttEngineChoice,
 } from "@/lib/stt";
 import { downloadModel, removeModel, SttModelError, type StoredModel } from "@/lib/stt-model";
-import { isReadOnly, type WhistleStatus } from "@/lib/types";
+import { isReadOnly, type SttCapability, type WhistleStatus } from "@/lib/types";
 
-// SETTINGS → SPEECH: WHERE VOICE BECOMES TEXT, AND THE MODEL THAT LETS A PHONE DO IT (ADR 0096).
+// SETTINGS → VOICE: THE MODEL THAT LETS VOICE BECOME TEXT, AND WHERE IT RUNS (ADR 0096).
 //
-// Two cards. The first is the per-device engine choice, Host or This phone. The second is Whistle,
-// the small speech model both engines run: where the host stands with it, and whether this phone has
-// its own copy.
+// Two cards, in the order a person works through them. First Whistle, the small speech model both
+// engines run, with the credit to the people who made it and two steps: put it on the host, then set
+// it up on this phone. Then the Speech engine, the choice this device makes between the two, which
+// depends on what the steps above produced.
 //
-// THE HOST DOWNLOADS, NOT THE PHONE, AND ONLY ON A TAP. "Set up Whistle" asks the host to fetch the
-// 16.9 MB once; "Download to this phone" copies it from the host. Nothing here runs by itself, and a
-// phone never calls a third party (Decision 7). Setting up the host is a write, so a read-only device
-// sees one sentence instead of the button. Copying to the phone is a read, so any paired device may.
+// THE HOST DOWNLOADS, NOT THE PHONE, AND ONLY ON A TAP. "Download to host" asks the host to fetch the
+// 16.9 MB once; "Set up on this phone" copies it from the host. Nothing here runs by itself, and a
+// phone never calls a third party (Decision 7). Downloading to the host is a write, so a read-only
+// device sees one sentence instead of the button. Copying to the phone is a read, so any paired device
+// may.
 //
 // THIS FILE HAS TWO HALVES, as notify-prefs-control.tsx does. `SpeechCards` is the view: every fact
 // it draws arrives as a prop, so the playground can show each state with no host behind it.
@@ -51,17 +56,25 @@ import { isReadOnly, type WhistleStatus } from "@/lib/types";
 //
 // THE BOX DOES NOT MOVE ON A STATE (DESIGN.md §2). Each row is at least one 44px control tall, and a
 // download's bar takes the place of the button that started it, so a tap does not shift the rows
-// under it. The few rows that appear (the host-engine switch once the model is ready, the persist line
-// once a copy exists) do so because the person's own tap or the host's own answer made them true.
+// under it. The few rows that appear (the details once the model is ready, the phone step once the
+// host has something to copy) do so because the person's own tap or the host's own answer made them
+// true. A reason a choice is off is written once, under the choice, and nowhere else.
 
-/** The reason "This phone" is off, in words. */
+/** Cactus Compute made Whistle. The credit names them and links to them. */
+export const CACTUS_URL = "https://cactuscompute.com";
+/** The model's page, and the base of a link to one revision of it. */
+export const WHISTLE_PAGE_URL = "https://huggingface.co/Cactus-Compute/whistle";
+
+/** A full Hugging Face revision is a 40-character commit hash; only that shape becomes a link. */
+const FULL_REVISION = /^[0-9a-f]{40}$/;
+
+/** The reason "This phone" is off for a reason of the browser, in words. */
 const BLOCK_KEYS = {
   insecure: "settings.speech.engine.why.insecure",
   browser: "settings.speech.engine.why.browser",
   "wasm-csp": "settings.speech.engine.why.wasmCsp",
   engine: "settings.speech.engine.why.engine",
-  "host-not-ready": "settings.speech.engine.why.hostNotReady",
-} as const satisfies Record<PhoneEngineBlock, MessageKey>;
+} as const satisfies Record<Exclude<PhoneEngineBlock, "host-not-ready">, MessageKey>;
 
 /** The phone's own download, if one is under way. */
 export type PhoneCopy = { received: number; total: number } | null;
@@ -69,11 +82,13 @@ export type PhoneCopy = { received: number; total: number } | null;
 export interface SpeechCardsProps {
   /** The host's model status. `null`: this collie offers none (an older bridge, or a crew member). */
   whistle: WhistleStatus | null;
+  /** The host's speech provider, as `/api/config` says it. `null`: none is configured. */
+  hostStt: SttCapability | null;
   /** This device may set up and change the host's model (the same rule every other write uses). */
   canWrite: boolean;
   /** What this device asked for. */
   engine: SttEngineChoice;
-  /** Why "This phone" cannot be chosen, if it cannot. */
+  /** Why "This phone" cannot run, if it cannot. */
   block: PhoneEngineBlock | null;
   /** The phone's own copy: `null` none, `undefined` still looking. */
   local: StoredModel | null | undefined;
@@ -122,9 +137,48 @@ function Progress({ received, total, label }: { received: number; total: number;
     <div className="space-y-1.5">
       <Bar fraction={total > 0 ? received / total : 0} label={label} />
       <p className="text-xs tabular-nums text-muted-foreground">
-        {t("settings.speech.whistle.progress", { received: formatDownloadSize(received), total: formatDownloadSize(total) })}
+        {t("settings.speech.progress", { received: formatDownloadSize(received), total: formatDownloadSize(total) })}
       </p>
     </div>
+  );
+}
+
+/** How an outside link looks here, as in the cache sheet and the launcher help: underlined, no icon. */
+const LINK_CLASS =
+  "break-words underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring";
+
+function ExternalLink({ href, label, children }: { href: string; label?: string; children: ReactNode }) {
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer" aria-label={label} className={LINK_CLASS}>
+      {children}
+    </a>
+  );
+}
+
+/**
+ * A sentence with one link in it. The message carries `{link}` where the link goes, so a language
+ * that puts the name elsewhere in the sentence still reads right.
+ */
+function SentenceWithLink({ message, link }: { message: MessageKey; link: ReactNode }) {
+  const [before = "", after = ""] = t(message, { link: "{link}" }).split("{link}");
+  return (
+    <>
+      {before}
+      {link}
+      {after}
+    </>
+  );
+}
+
+/** The model's version: the first seven characters of the Hugging Face revision, linked to that revision. */
+function Version({ revision, sha256 }: { revision: string | undefined; sha256: string | undefined }) {
+  if (revision === undefined) return <>{sha256 === undefined ? "" : sha256.slice(0, 7)}</>;
+  const short = revision.slice(0, 7);
+  if (!FULL_REVISION.test(revision)) return <>{short}</>;
+  return (
+    <ExternalLink href={`${WHISTLE_PAGE_URL}/tree/${revision}`} label={t("settings.speech.detail.versionLink", { revision: short })}>
+      {short}
+    </ExternalLink>
   );
 }
 
@@ -136,41 +190,9 @@ export function SpeechCards(props: SpeechCardsProps) {
   if (whistle === null && !local) return null;
   return (
     <>
-      <EngineCard {...props} />
       <WhistleCard {...props} />
+      <EngineCard {...props} />
     </>
-  );
-}
-
-function EngineCard({ engine, block, local, onEngine }: SpeechCardsProps) {
-  // The row shows what will actually run: a stored "phone" the browser cannot honour reads as Host,
-  // while the stored choice itself is kept (a probe that failed once should not erase the preference).
-  const shown: SttEngineChoice = engine === "phone" && block === null ? "phone" : "host";
-  const needsModel = shown === "phone" && local === null;
-  const reason = block === null ? null : t(BLOCK_KEYS[block]);
-  const note = reason ?? (needsModel ? t("settings.speech.engine.needsModel") : null);
-  return (
-    <Card className="gap-0 py-0">
-      <div className="flex items-start gap-3 p-4">
-        <Mic className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
-        <div className="min-w-0">
-          <div className="font-medium">{t("settings.speech.engine.title")}</div>
-          <p className="text-sm text-muted-foreground">{t("settings.speech.engine.description")}</p>
-        </div>
-      </div>
-      <div className="border-t border-border px-4 py-3">
-        <Segmented
-          label={t("settings.speech.engine.label")}
-          value={shown}
-          onChange={onEngine}
-          options={[
-            { value: "host", label: t("settings.speech.engine.host") },
-            { value: "phone", label: t("settings.speech.engine.phone"), disabled: block !== null },
-          ]}
-        />
-        {note !== null && <p className="mt-2 text-xs text-muted-foreground">{note}</p>}
-      </div>
-    </Card>
   );
 }
 
@@ -180,20 +202,53 @@ function WhistleCard(props: SpeechCardsProps) {
     <Card className="gap-0 py-0">
       <div className="flex items-start gap-3 p-4">
         <AudioLines className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
-        <div className="min-w-0">
+        <div className="min-w-0 space-y-1">
           <div className="font-medium">{t("settings.speech.whistle.title")}</div>
           <p className="text-sm text-muted-foreground">
-            {t("settings.speech.whistle.description", { size: formatDownloadSize(whistle?.bytes ?? 0) })}
+            <SentenceWithLink
+              message="settings.speech.credit"
+              link={<ExternalLink href={CACTUS_URL}>{t("settings.speech.credit.maker")}</ExternalLink>}
+            />
+          </p>
+          <p className="text-sm text-muted-foreground">
+            <SentenceWithLink
+              message="settings.speech.licence"
+              link={<ExternalLink href={WHISTLE_PAGE_URL}>{t("settings.speech.licence.page")}</ExternalLink>}
+            />
           </p>
         </div>
       </div>
-      {whistle !== null && <HostRows {...props} whistle={whistle} />}
-      <PhoneRows {...props} />
+      {whistle !== null && <HostStep {...props} whistle={whistle} />}
+      <PhoneStep {...props} />
     </Card>
   );
 }
 
-function HostRows({
+function Step({ id, heading, children }: { id: string; heading: string; children: ReactNode }) {
+  return (
+    <section aria-labelledby={id} className="space-y-3 border-t border-border p-4">
+      <h3 id={id}>
+        <SectionLabel>{heading}</SectionLabel>
+      </h3>
+      {children}
+    </section>
+  );
+}
+
+function Details({ rows }: { rows: { label: string; value: ReactNode }[] }) {
+  return (
+    <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-sm">
+      {rows.map((row) => (
+        <div key={row.label} className="contents">
+          <dt className="text-muted-foreground">{row.label}</dt>
+          <dd className="min-w-0 break-words">{row.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function HostStep({
   whistle,
   canWrite,
   hostError,
@@ -208,157 +263,233 @@ function HostRows({
   const size = formatDownloadSize(whistle.bytes);
   const taken = whistle.hostTaken && !whistle.hostEngine;
   return (
-    <>
-      {whistle.state === "absent" && (
-        <div className="space-y-2 border-t border-border p-4">
-          <p className="text-sm text-muted-foreground">{t("settings.speech.whistle.absent")}</p>
-          {canWrite ? (
+    <Step id="speech-host-step" heading={t("settings.speech.host.heading")}>
+      {whistle.state === "absent" &&
+        (canWrite ? (
+          <div className="space-y-2">
             <Button className="h-11" disabled={hostBusy} onClick={onSetup}>
               {hostBusy ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
-              {t("settings.speech.whistle.setup", { size })}
+              {t("settings.speech.host.download", { size })}
             </Button>
-          ) : (
-            <p className="text-sm">{t("settings.speech.whistle.readOnly")}</p>
-          )}
-        </div>
-      )}
+            <p className="text-xs text-muted-foreground">{t("settings.speech.host.absent")}</p>
+          </div>
+        ) : (
+          <p className="text-sm">{t("settings.speech.host.readOnly")}</p>
+        ))}
 
       {whistle.state === "downloading" && (
-        <div className="space-y-2 border-t border-border p-4">
-          <p className="text-sm">{t("settings.speech.whistle.downloading")}</p>
-          <Progress
-            received={whistle.received ?? 0}
-            total={whistle.bytes}
-            label={t("settings.speech.whistle.progressAria")}
-          />
+        <div className="space-y-2">
+          <p className="text-sm">{t("settings.speech.host.downloading")}</p>
+          <Progress received={whistle.received ?? 0} total={whistle.bytes} label={t("settings.speech.progressAria")} />
         </div>
       )}
 
       {whistle.state === "failed" && (
-        <div className="space-y-2 border-t border-border p-4">
-          <p className="text-sm font-medium">{t("settings.speech.whistle.failed")}</p>
+        <div className="space-y-2">
+          <p className="text-sm font-medium">{t("settings.speech.host.failed")}</p>
           {whistle.reason !== undefined && <p className="text-xs text-muted-foreground">{whistle.reason}</p>}
           {canWrite ? (
             <Button className="h-11" variant="outline" disabled={hostBusy} onClick={onSetup}>
               {hostBusy && <Loader2 className="size-4 animate-spin" />}
-              {t("settings.speech.whistle.retry")}
+              {t("settings.speech.host.retry")}
             </Button>
           ) : (
-            <p className="text-sm">{t("settings.speech.whistle.readOnly")}</p>
+            <p className="text-sm">{t("settings.speech.host.readOnly")}</p>
           )}
         </div>
       )}
 
       {whistle.state === "ready" && (
         <>
-          <div className="flex items-center justify-between gap-3 border-t border-border px-4 py-3">
-            <div className="flex min-w-0 items-center gap-2 text-sm">
-              <span className="font-medium">{t("settings.speech.whistle.ready", { size })}</span>
+          <Details
+            rows={[
+              { label: t("settings.speech.detail.model"), value: t("settings.speech.whistle.title") },
+              { label: t("settings.speech.detail.version"), value: <Version revision={whistle.revision} sha256={whistle.sha256} /> },
+              { label: t("settings.speech.detail.size"), value: size },
+              ...(whistle.sha256 === undefined
+                ? []
+                : [
+                    {
+                      label: t("settings.speech.detail.checksum"),
+                      // The full value is one hover or long-press away; eight characters is what a person compares.
+                      value: (
+                        <span className="font-mono text-xs" title={whistle.sha256}>
+                          {`sha256 ${whistle.sha256.slice(0, 8)}…`}
+                        </span>
+                      ),
+                    },
+                  ]),
+              ...(whistle.fetchedAt === undefined || Number.isNaN(Date.parse(whistle.fetchedAt))
+                ? []
+                : [{ label: t("settings.speech.detail.downloaded"), value: dateTime(Date.parse(whistle.fetchedAt)) }]),
+            ]}
+          />
+          <div className="flex min-h-11 items-center justify-between gap-4">
+            <div className="min-w-0">
+              <div className="text-sm font-medium" id="speech-host-label">
+                {t("settings.speech.host.use.label")}
+              </div>
+              <p className="text-xs leading-snug text-muted-foreground">{t("settings.speech.host.use.description")}</p>
             </div>
-            {canWrite && !confirmingRemove && (
-              <Button variant="outline" className="h-11 shrink-0" onClick={onAskRemove}>
-                {t("settings.speech.whistle.remove")}
-              </Button>
-            )}
+            <div className="flex h-6 w-11 shrink-0 items-center justify-center">
+              <Switch
+                checked={whistle.hostEngine}
+                onCheckedChange={onHostEngine}
+                disabled={!canWrite || hostBusy || taken}
+                aria-labelledby="speech-host-label"
+                aria-describedby={taken ? "speech-host-taken" : undefined}
+              />
+            </div>
           </div>
+          {taken && (
+            <p id="speech-host-taken" className="text-xs text-muted-foreground">
+              {t("settings.speech.host.use.taken")}
+            </p>
+          )}
+          {canWrite && !confirmingRemove && (
+            <Button variant="outline" className="h-11" onClick={onAskRemove}>
+              {t("settings.speech.host.remove")}
+            </Button>
+          )}
           {canWrite && confirmingRemove && (
-            <div className="space-y-2 border-t border-border px-4 py-3">
-              <p className="text-xs text-foreground">{t("settings.speech.whistle.remove.confirm")}</p>
+            <div className="space-y-2">
+              <p className="text-xs text-foreground">{t("settings.speech.host.remove.confirm")}</p>
               <div className="flex gap-2">
                 <Button variant="ghost" className="h-11" disabled={hostBusy} onClick={onCancelRemove}>
-                  {t("settings.speech.whistle.remove.cancel")}
+                  {t("settings.speech.host.remove.cancel")}
                 </Button>
                 <Button variant="destructive" className="h-11" disabled={hostBusy} onClick={onRemove}>
                   {hostBusy ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
-                  {t("settings.speech.whistle.remove.action")}
+                  {t("settings.speech.host.remove.action")}
                 </Button>
               </div>
             </div>
           )}
-          <div className="border-t border-border px-4 py-3">
-            <div className="flex min-h-11 items-center justify-between gap-4">
-              <div className="min-w-0">
-                <div className="text-sm font-medium" id="speech-host-label">
-                  {t("settings.speech.whistle.host.label")}
-                </div>
-                <p className="text-xs leading-snug text-muted-foreground">{t("settings.speech.whistle.host.description")}</p>
-              </div>
-              <div className="flex h-6 w-11 shrink-0 items-center justify-center">
-                <Switch
-                  checked={whistle.hostEngine}
-                  onCheckedChange={onHostEngine}
-                  disabled={!canWrite || hostBusy || taken}
-                  aria-labelledby="speech-host-label"
-                  aria-describedby={taken ? "speech-host-taken" : undefined}
-                />
-              </div>
-            </div>
-            {taken && (
-              <p id="speech-host-taken" className="mt-1 text-xs text-muted-foreground">
-                {t("settings.speech.whistle.host.taken")}
-              </p>
-            )}
-          </div>
         </>
       )}
       {hostError !== null && (
-        <p role="status" className="border-t border-border px-4 py-2.5 text-xs text-status-blocked">
+        <p role="status" className="text-xs text-status-blocked">
           {hostError}
         </p>
       )}
-    </>
+    </Step>
   );
 }
 
-function PhoneRows({ whistle, block, local, persisted, copy, phoneError, onPhoneDownload, onPhoneRemove }: SpeechCardsProps) {
+/** The browser's own reason "This phone" cannot run the engine, or `null`. */
+function browserBlock(block: PhoneEngineBlock | null): Exclude<PhoneEngineBlock, "host-not-ready"> | null {
+  return block === null || block === "host-not-ready" ? null : block;
+}
+
+function PhoneStep({ whistle, block, local, persisted, copy, phoneError, onPhoneDownload, onPhoneRemove }: SpeechCardsProps) {
   const hostReady = whistle?.state === "ready";
-  const newer = local !== null && local !== undefined && hostReady && whistle?.sha256 !== undefined && whistle.sha256 !== local.sha256;
   // Nothing to say about the phone until the host has a model to copy, or the phone has one of its own.
   if (!hostReady && !local) return null;
-  const reason = block !== null && block !== "host-not-ready" ? t(BLOCK_KEYS[block]) : null;
+  const newer = local !== null && local !== undefined && hostReady && whistle?.sha256 !== undefined && whistle.sha256 !== local.sha256;
+  const why = browserBlock(block);
+  const size = formatDownloadSize(whistle?.bytes ?? local?.bytes ?? 0);
   return (
-    <div className="space-y-2 border-t border-border px-4 py-3">
+    <Step id="speech-phone-step" heading={t("settings.speech.phone.heading")}>
       {copy !== null ? (
-        <>
-          <p className="text-sm">{t("settings.speech.whistle.phone.copying")}</p>
-          <Progress received={copy.received} total={copy.total} label={t("settings.speech.whistle.progressAria")} />
-        </>
+        <div className="space-y-2">
+          <p className="text-sm">{t("settings.speech.phone.copying")}</p>
+          <Progress received={copy.received} total={copy.total} label={t("settings.speech.progressAria")} />
+        </div>
       ) : local ? (
         <>
-          <div className="flex min-h-11 items-center justify-between gap-3">
-            <span className="min-w-0 text-sm font-medium">
-              {t("settings.speech.whistle.phone.have", { size: formatDownloadSize(local.bytes) })}
-            </span>
-            <Button variant="outline" className="h-11 shrink-0" onClick={onPhoneRemove}>
-              {t("settings.speech.whistle.phone.remove")}
-            </Button>
-          </div>
+          <p className="text-sm font-medium">{t("settings.speech.phone.ready")}</p>
+          <Details
+            rows={[{ label: t("settings.speech.detail.version"), value: <Version revision={local.revision} sha256={local.sha256} /> }]}
+          />
           <p className="text-xs text-muted-foreground">
-            {persisted ? t("settings.speech.whistle.phone.kept") : t("settings.speech.whistle.phone.mayClear")}
+            {persisted ? t("settings.speech.phone.kept") : t("settings.speech.phone.mayClear")}
           </p>
           {newer && (
             <div className="flex min-h-11 items-center justify-between gap-3">
-              <span className="min-w-0 text-sm">{t("settings.speech.whistle.phone.newer")}</span>
-              <Button className="h-11 shrink-0" disabled={reason !== null} onClick={onPhoneDownload}>
-                {t("settings.speech.whistle.phone.update")}
+              <span className="min-w-0 text-sm">{t("settings.speech.phone.newer")}</span>
+              <Button className="h-11 shrink-0" disabled={why !== null} onClick={onPhoneDownload}>
+                {t("settings.speech.phone.update")}
               </Button>
             </div>
           )}
-        </>
-      ) : (
-        <>
-          <Button className="h-11" disabled={reason !== null || local === undefined} onClick={onPhoneDownload}>
-            <Download className="size-4" />
-            {t("settings.speech.whistle.phone.download")}
+          <Button variant="outline" className="h-11" onClick={onPhoneRemove}>
+            {t("settings.speech.phone.remove")}
           </Button>
         </>
+      ) : why !== null ? (
+        // This browser cannot run the engine, so a button would only lead to a dead end. The reason
+        // stands where the button would be, and is not repeated under the engine choice.
+        <p className="text-sm">{t(BLOCK_KEYS[why])}</p>
+      ) : (
+        <div className="space-y-2">
+          <Button className="h-11" disabled={local === undefined} onClick={onPhoneDownload}>
+            <Download className="size-4" />
+            {t("settings.speech.phone.setup", { size })}
+          </Button>
+          <p className="text-xs text-muted-foreground">{t("settings.speech.phone.setupNote")}</p>
+        </div>
       )}
       {phoneError !== null && (
         <p role="status" className="text-xs text-status-blocked">
           {phoneError}
         </p>
       )}
-    </div>
+    </Step>
+  );
+}
+
+/** What the host's provider is called on screen. Whistle has a name; any other shows its id. */
+function providerName(provider: string): string {
+  return provider === "whistle" ? t("settings.speech.whistle.title") : provider;
+}
+
+function EngineCard({ whistle, hostStt, engine, block, local, onEngine }: SpeechCardsProps) {
+  const hostReady = whistle?.state === "ready";
+  const hostAvailable = hostStt !== null && hostStt.available;
+  const why = browserBlock(block);
+  // Whether the phone step is on screen. It shows the browser's reason where its button would be, so
+  // the reason is written there and this card does not say it a second time.
+  const phoneStepShown = hostReady || Boolean(local);
+  const phoneOff = local === null || why !== null;
+  // The row shows what will actually run: a stored "phone" this device cannot honour reads as Host,
+  // while the stored choice itself is kept (a probe that failed once should not erase the preference).
+  const shown: SttEngineChoice = engine === "phone" && !phoneOff ? "phone" : "host";
+
+  let phoneReason: string | null = null;
+  if (local === null) {
+    if (!phoneStepShown) phoneReason = why !== null ? t(BLOCK_KEYS[why]) : t("settings.speech.engine.why.hostFirst");
+    else phoneReason = t("settings.speech.engine.why.setupFirst");
+  } else if (why !== null) {
+    phoneReason = t(BLOCK_KEYS[why]);
+  }
+
+  return (
+    <Card className="gap-0 py-0">
+      <div className="flex items-start gap-3 p-4">
+        <Cpu className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
+        <div className="min-w-0">
+          <div className="font-medium">{t("settings.speech.engine.title")}</div>
+          <p className="text-sm text-muted-foreground">{t("settings.speech.engine.description")}</p>
+        </div>
+      </div>
+      <div className="space-y-2 border-t border-border px-4 py-3">
+        <Segmented
+          label={t("settings.speech.engine.label")}
+          value={shown}
+          onChange={onEngine}
+          options={[
+            { value: "host", label: t("settings.speech.engine.host"), disabled: !hostAvailable },
+            { value: "phone", label: t("settings.speech.engine.phone"), disabled: phoneOff },
+          ]}
+        />
+        {phoneReason !== null && <p className="text-xs text-muted-foreground">{phoneReason}</p>}
+        <p className="text-xs text-muted-foreground">
+          {hostAvailable
+            ? t("settings.speech.engine.hostUses", { provider: providerName(hostStt.provider) })
+            : t("settings.speech.engine.why.noHost")}
+        </p>
+      </div>
+    </Card>
   );
 }
 
@@ -378,6 +509,7 @@ export function SpeechControl() {
   const { refused } = usePairing();
   const canWrite = !isReadOnly(root?.device) && !refused;
   const whistle = useWhistleStatus();
+  const hostStt = useHostSttCapability();
   const engine = useSttEnginePreference();
   const probe = useSttProbeState();
   const { model: local, persisted } = useStoredModel();
@@ -473,6 +605,7 @@ export function SpeechControl() {
   return (
     <SpeechCards
       whistle={whistle}
+      hostStt={hostStt}
       canWrite={canWrite}
       engine={engine}
       block={block}

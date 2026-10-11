@@ -79,10 +79,23 @@ export class SttModelError extends Error {
   }
 }
 
-/** What the phone holds. `bytes` is the length the entry declared when it was stored. */
+/**
+ * What the phone holds. `bytes` is the length the entry declared when it was stored. `revision` is the
+ * Hugging Face revision the host said the file came from, kept beside the entry so Settings can name
+ * the version; a copy stored before that was recorded has none, and Settings falls back to the hash.
+ */
 export interface StoredModel {
   sha256: string;
   bytes: number;
+  revision?: string;
+}
+
+/** The header the stored entry carries its revision in. Ours alone: nothing on the wire sets it. */
+export const MODEL_REVISION_HEADER = "x-collie-model-revision";
+
+/** A revision is shown and put in a link, so it is held to the shape of a plain name. */
+function plainRevision(value: string | null | undefined): string | undefined {
+  return value !== null && value !== undefined && /^[0-9A-Za-z._-]{1,64}$/.test(value) ? value : undefined;
 }
 
 /** The part of a `Cache` the store uses, so a test can hand in a fake. */
@@ -322,14 +335,11 @@ export async function downloadModel(
   const cache = await openCache(deps, true);
   if (cache === null) throw new SttModelError("unsupported");
   const modelKey = keyFor(deps, sttModelPath(sha256));
+  const revision = plainRevision(status.revision);
+  const headers = new Headers({ "content-type": "application/octet-stream", "content-length": String(bytes.byteLength) });
+  if (revision !== undefined) headers.set(MODEL_REVISION_HEADER, revision);
   try {
-    await cache.put(
-      modelKey,
-      new Response(bytes, {
-        status: 200,
-        headers: { "content-type": "application/octet-stream", "content-length": String(bytes.byteLength) },
-      }),
-    );
+    await cache.put(modelKey, new Response(bytes, { status: 200, headers }));
     for (const file of STT_ENGINE_FILES) {
       const stored = engine.get(file);
       if (stored === undefined) continue;
@@ -351,7 +361,9 @@ export async function downloadModel(
   verifiedThisSession.add(sha256);
   const persisted = await deps.persist().catch(() => false);
   changed();
-  return { sha256, bytes: bytes.byteLength, persisted };
+  const done: DownloadedModel = { sha256, bytes: bytes.byteLength, persisted };
+  if (revision !== undefined) done.revision = revision;
+  return done;
 }
 
 /** The mount-free path of a cache key. */
@@ -370,8 +382,12 @@ export async function storedModel(deps: SttModelDeps = realDeps()): Promise<Stor
   for (const request of await cache.keys()) {
     const sha256 = modelShaOfPath(pathOfKey(request, deps));
     if (sha256 === null || !ACCEPTED_WHISTLE_SHAS.includes(sha256)) continue;
-    const declared = Number((await cache.match(request.url))?.headers.get("content-length"));
-    return { sha256, bytes: Number.isFinite(declared) && declared > 0 ? declared : WHISTLE_MODEL_BYTES };
+    const entry = await cache.match(request.url);
+    const declared = Number(entry?.headers.get("content-length"));
+    const revision = plainRevision(entry?.headers.get(MODEL_REVISION_HEADER));
+    const held: StoredModel = { sha256, bytes: Number.isFinite(declared) && declared > 0 ? declared : WHISTLE_MODEL_BYTES };
+    if (revision !== undefined) held.revision = revision;
+    return held;
   }
   return null;
 }

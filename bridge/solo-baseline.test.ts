@@ -736,7 +736,7 @@ describe("solo zero-tax — routes", () => {
       "/api/stt",
       // The Whistle model and the host engine's switch (ADR 0096): SOLO routes that legitimately
       // extend this list, named here rather than exempted. Lead-local like `/api/stt`, gated like it,
-      // and none is forwardable. A bridge whose operator never taps "Set up Whistle" downloads nothing
+      // and none is forwardable. A bridge whose operator never taps "Download to host" downloads nothing
       // and writes nothing through them.
       "/api/stt/whistle",
       "/api/stt/whistle/host",
@@ -1037,7 +1037,7 @@ const STATE_DIR_ENTRIES = [
   "update.lock",
   "uploads",
   // The Whistle model's folder, `whistle/` (ADR 0096): the model, its manifest and a download's
-  // part file. Absent until a write device taps "Set up Whistle" or the operator runs
+  // part file. Absent until a write device taps "Download to host" or the operator runs
   // `collie stt whistle`; nothing else creates it.
   "whistle",
   // The ref each new worktree was cut from (ADR 0089, amended). Written by use and by nothing else:

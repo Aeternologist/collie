@@ -72,7 +72,16 @@ describe("GET and POST /api/stt/whistle", () => {
     expect(started.response.status).toBe(202);
     expect(await started.response.json()).toMatchObject({ state: "downloading" });
     await d.store.settled();
-    expect(await (await whistleGet(d)).json()).toEqual({ state: "ready", bytes: MODEL.byteLength, sha256: SHA, hostEngine: false, hostTaken: false });
+    expect(await (await whistleGet(d)).json()).toEqual({
+      state: "ready",
+      bytes: MODEL.byteLength,
+      sha256: SHA,
+      // From the manifest: the pin's revision, and the moment the fetch finished.
+      revision: "rev1",
+      fetchedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/),
+      hostEngine: false,
+      hostTaken: false,
+    });
 
     const again = await whistleStart(d);
     expect(again.response.status).toBe(200);

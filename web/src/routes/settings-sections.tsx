@@ -14,6 +14,7 @@ import { FontSettingsControl } from "@/components/font-settings";
 import { HandControl } from "@/components/hand-control";
 import { HandsFreeControl } from "@/components/hands-free-control";
 import { SpeechControl } from "@/components/speech-control";
+import { VoiceEmpty } from "@/components/voice-empty";
 import { HapticsControl } from "@/components/haptics-control";
 import { HarnessBarControl } from "@/components/harness-bar-control";
 import { LanguageControl } from "@/components/language-control";
@@ -55,6 +56,9 @@ import { useOptionalRootData } from "@/lib/route-data";
 //              different, including what the mirror renders with.
 // Device     — how this phone TREATS you. Feedback, input, and what the pane menu is allowed to
 //              offer. Nothing here changes a pixel until you do something.
+// Voice      — how your voice becomes text: the Whistle model on the host and on this phone, which
+//              engine this device uses, and whether a finished transcript is sent at once. Its row
+//              is never hidden; a host that offers nothing gets a page that says so.
 // Alerts     — when Collie speaks up, on this device and bridge-wide.
 // System     — what this thing is talking to, and whether it is well. Diagnostics and access.
 // Experiments— what is not finished. The odd one out: it is the only section that can be absent,
@@ -103,11 +107,6 @@ export function SettingsDeviceRoute() {
     <SettingsPage title="settings.section.device.title">
       {/* Renders nothing where vibrate is unsupported. */}
       <HapticsControl />
-      {/* Where voice becomes text, and the Whistle model that lets a phone do it itself (ADR 0096).
-          Renders nothing on a host that offers no Whistle unless this phone already holds a copy. */}
-      <SpeechControl />
-      {/* Renders nothing where no provider is configured or the browser cannot record. */}
-      <HandsFreeControl />
       {/* AVAILABILITY ONLY. This row does not turn zen on — it decides whether the pane's actions
           sheet offers the "Zen mode" row at all. Off by default, because zen takes away every way
           back except one floating button. */}
@@ -120,6 +119,22 @@ export function SettingsDeviceRoute() {
       {/* The ONLY way back to a tour that was interrupted — the tour is marked seen the moment it
           opens. An action, so the row ends in a button rather than a Switch. */}
       <TourControl />
+    </SettingsPage>
+  );
+}
+
+export function SettingsVoiceRoute() {
+  return (
+    <SettingsPage title="settings.section.voice.title">
+      {/* The Whistle model (on the host, then on this phone) and, under it, the engine this device
+          uses, because the choice depends on what the steps above produced (ADR 0096). Renders
+          nothing on a host that offers no Whistle unless this phone already holds a copy. */}
+      <SpeechControl />
+      {/* Hands-free sits with dictation: it decides what happens to the text the engine above made.
+          Renders nothing where no provider is configured or the browser cannot record. */}
+      <HandsFreeControl />
+      {/* The row in the index is never hidden, so a page with none of the above says why. */}
+      <VoiceEmpty />
     </SettingsPage>
   );
 }

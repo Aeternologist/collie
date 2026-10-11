@@ -8,6 +8,7 @@ import {
   getSttCapability,
   getWhistleStatus,
   loadOperatorCommands,
+  operatorConfigRead,
   subscribeOperatorConfig,
 } from "@/lib/operator-config";
 import type { SttEngine, SttEngineErrorCode, SttProbe } from "@/lib/stt-engine";
@@ -103,6 +104,27 @@ export function useSttCapability(): SttCapability | null {
   // Evaluated per render rather than memoised: it reads browser globals that do not change within a
   // page, and a memo keyed on nothing would only hide that.
   return capability !== null && sttRecordingSupported() ? capability : null;
+}
+
+/**
+ * What the HOST can do for speech, whatever this browser can record: the bridge's block as sent, or
+ * `null` when no provider is configured (or nothing has been read yet). Settings → Voice names the
+ * provider and the host's availability from this. The composer must keep using {@link useSttCapability},
+ * which also asks whether this browser can record.
+ */
+export function useHostSttCapability(): SttCapability | null {
+  useEffect(() => {
+    void loadOperatorCommands();
+  }, []);
+  return useSyncExternalStore(subscribeOperatorConfig, getSttCapability, getSttCapability);
+}
+
+/** Whether the config has been read at least once, so "nothing offered" can be told from "not asked yet". */
+export function useOperatorConfigRead(): boolean {
+  useEffect(() => {
+    void loadOperatorCommands();
+  }, []);
+  return useSyncExternalStore(subscribeOperatorConfig, operatorConfigRead, operatorConfigRead);
 }
 
 /**
@@ -423,7 +445,7 @@ export type PhoneEngineBlock = "insecure" | "browser" | "wasm-csp" | "engine" | 
 /**
  * The first reason "This phone" cannot be chosen (plan section 5 item 3).
  *
- * "Set up Whistle first" applies only while this phone holds no copy of its own: a phone that already
+ * "Set up Whistle on this phone first" applies only while this phone holds no copy of its own: a phone that already
  * has the model can run it whatever the host does next, so removing it from the host does not
  * silently take the phone's engine away.
  */

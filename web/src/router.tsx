@@ -20,6 +20,7 @@ import {
   SettingsAppearanceRoute,
   SettingsExperimentsRoute,
   SettingsDeviceRoute,
+  SettingsVoiceRoute,
   SettingsSystemRoute,
 } from "@/routes/settings-sections";
 import { CrewRoute } from "@/routes/crew";
@@ -104,6 +105,7 @@ export const router = createBrowserRouter([
       },
       { path: "settings/appearance", element: <SettingsAppearanceRoute /> },
       { path: "settings/device", element: <SettingsDeviceRoute /> },
+      { path: "settings/voice", element: <SettingsVoiceRoute /> },
       { path: "settings/alerts", element: <SettingsAlertsRoute /> },
       // The fifth section. It is routable whether or not the index offers a row for it — a page
       // reachable only by URL is the ordinary case for a section that comes and goes, and it is

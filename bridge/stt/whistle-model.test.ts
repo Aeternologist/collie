@@ -135,12 +135,44 @@ describe("the Whistle model store", () => {
       expect(statSync(paths.model).mode & 0o777).toBe(0o600);
       expect(statSync(paths.manifest).mode & 0o777).toBe(0o600);
     }
-    expect(await s.status()).toEqual({ state: "ready", bytes: MODEL.byteLength, sha256: SHA });
+    expect(await s.status()).toEqual({
+      state: "ready",
+      bytes: MODEL.byteLength,
+      sha256: SHA,
+      revision: "rev1",
+      fetchedAt: "2026-10-11T00:00:00.000Z",
+    });
     expect(await s.ready()).toEqual({ path: paths.model, sha256: SHA, bytes: MODEL.byteLength });
     expect(await s.manifest()).toEqual({
       version: 1,
       model: { sha256: SHA, bytes: MODEL.byteLength, revision: "rev1", source: PIN.url, fetchedAt: "2026-10-11T00:00:00.000Z" },
     });
+  });
+
+  test("the ready status carries the revision and fetch time only while the manifest describes the held file", async () => {
+    const s = store(fakeFetch().fn);
+    await s.start();
+    await s.settled();
+    const paths = whistlePaths(stateDir);
+    const write = (model: { sha256: string; revision: string; fetchedAt: string }) =>
+      writeFileSync(paths.manifest, JSON.stringify({ version: 1, model: { bytes: MODEL.byteLength, source: PIN.url, ...model } }));
+
+    // A manifest for a different file says nothing about this one.
+    write({ sha256: "0".repeat(64), revision: "rev1", fetchedAt: "2026-10-11T00:00:00.000Z" });
+    expect(await s.status()).toEqual({ state: "ready", bytes: MODEL.byteLength, sha256: SHA });
+
+    // A revision that is not a plain name, or a time that is not a time, is left out, not passed on.
+    write({ sha256: SHA, revision: "../etc/passwd", fetchedAt: "yesterday" });
+    expect(await s.status()).toEqual({ state: "ready", bytes: MODEL.byteLength, sha256: SHA });
+
+    // No manifest at all: still ready, with no provenance.
+    rmSync(paths.manifest);
+    expect(await s.status()).toEqual({ state: "ready", bytes: MODEL.byteLength, sha256: SHA });
+  });
+
+  test("a status that is not ready carries no revision", async () => {
+    const s = store(fakeFetch().fn);
+    expect(await s.status()).not.toHaveProperty("revision");
   });
 
   test("the request goes to the pinned URL, takes redirects by hand, and says who it is", async () => {
@@ -433,7 +465,7 @@ describe("the Whistle model store", () => {
       expect(start.outcome).toBe("downloading");
       await s.settled();
       expect(f.calls).toHaveLength(0);
-      expect(await s.status()).toEqual({ state: "ready", bytes: MODEL.byteLength, sha256: SHA });
+      expect(await s.status()).toEqual({ state: "ready", bytes: MODEL.byteLength, sha256: SHA, revision: "rev1", fetchedAt: "2026-10-11T00:00:00.000Z" });
       expect(readFileSync(whistlePaths(stateDir).model)).toEqual(Buffer.from(MODEL));
       expect(leftovers()).toEqual([]);
       expect((await s.manifest())?.model).toMatchObject({ sha256: SHA, source: "a file the operator supplied" });

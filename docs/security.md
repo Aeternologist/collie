@@ -388,8 +388,8 @@ The one unprompted outbound call is the update check: an anonymous HTTPS `GET` t
 tags API (`bridge/update.ts`) that compares your version to the newest tag. It carries no data about
 you or your machine, only the static user-agent `collie-update-check`.
 
-The Whistle model download is the other outbound call. It happens only when a person taps **Set up
-Whistle** or runs `collie stt whistle`, and it sends no data about you ([The speech engine
+The Whistle model download is the other outbound call. It happens only when a person taps **Download
+to host** or runs `collie stt whistle`, and it sends no data about you ([The speech engine
 (Whistle)](#the-speech-engine-whistle)).
 
 If you set `COLLIE_ACCESS_TEAM`, Collie also fetches that Cloudflare Access team's public keys, at

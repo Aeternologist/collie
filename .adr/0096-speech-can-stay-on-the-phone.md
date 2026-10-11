@@ -89,7 +89,7 @@ short-lived child of Collie's own binary. The model reaches the host by one deli
 Settings or `collie stt whistle`, and a phone by its own tap, always from the host, never from a third
 party and never by itself. The transcript lands where every transcript lands.**
 
-1. **Two engines, one device preference.** Settings → Device gets a *Speech engine* card: *Host* or *This
+1. **Two engines, one device preference.** Settings → Voice gets a *Speech engine* card: *Host* or *This
    phone*. *Host* is whatever provider the host runs, `whistle` included, and is the default. *This
    phone* runs Whistle in the browser. The value lives in `localStorage` per device, like the
    typeface (ADR 0033), because whether a phone is strong enough is a fact about that phone. A wipe
@@ -98,7 +98,7 @@ party and never by itself. The transcript lands where every transcript lands.**
 2. **One model on the host, fetched once, by a deliberate act.** Both engines read the same
    `whistle.cact`, kept at `<stateDir>/whistle/whistle.cact` with a manifest beside it. Two acts
    fetch it, and nothing else does:
-   - **A tap:** *Set up Whistle (16.9 MB)* in Settings → Device → Whistle, on a device with the write grant.
+   - **A tap:** *Download to host (16.9 MB)* in Settings → Voice → Whistle, on a device with the write grant.
      `POST /api/stt/whistle` starts the download on the bridge and answers `202`. It is idempotent: a
      model whose hash already matches answers "ready", and a download in flight is joined, not
      doubled. `GET /api/stt/whistle` reports `absent`, `downloading` (bytes received of bytes),
@@ -116,8 +116,8 @@ party and never by itself. The transcript lands where every transcript lands.**
      a pin compiled into this release. `whistle.lock` keeps a second process from starting a second
      download. A mismatch deletes the part file and reports both hashes.
    - **No phone ever fetches the model unasked**, not on install, not on an update, not when the
-     preference is set. After the host holds it, each phone that wants *This phone* taps *Download
-     to this phone*, which copies it from the host (Decision 7).
+     preference is set. After the host holds it, each phone that wants *This phone* taps *Set up on
+     this phone*, which copies it from the host (Decision 7).
 
 3. **Setting up Whistle from Settings is allowed, and is the one exception to "setup is a CLI act".**
    ADR 0029 kept setup in the terminal because setup can store a credential, name a command the
@@ -151,7 +151,7 @@ party and never by itself. The transcript lands where every transcript lands.**
      carries its own recording cap of **4 minutes** (`stt.maxDurationMs`), and the takeover shows that
      cap instead of five. The bridge accepts only `audio/wav` for this provider and checks the header
      (RIFF, PCM, one channel, 16 kHz, 16 bits) before the child starts.
-   - **It is turned on deliberately**, by *Use on host* in Settings, or by `collie stt whistle
+   - **It is turned on deliberately**, by *Use Whistle on the host* in Settings, or by `collie stt whistle
      --host`. From Settings, only when the host has no provider or already has `whistle`: replacing a
      provider the operator configured in the terminal stays a terminal act, and `--host` asks before
      it replaces one. Turning it off from Settings works only when the provider is `whistle`.
@@ -231,7 +231,9 @@ party and never by itself. The transcript lands where every transcript lands.**
    copy, and the HTTP cache should not keep a second one), `content-security-policy: default-src
    'none'; sandbox`, no gzip, and no ranges. `/api/config` carries `whistle: { state, sha256, bytes }`
    on a lead that knows this feature, so Settings can offer the setup tap; `sha256` is present only
-   while the bridge holds a model whose hash matches a pin this release accepts. The bridge hashes
+   while the bridge holds a model whose hash matches a pin this release accepts. Alongside it, while
+   the manifest names the held file, the status carries `revision` (the Hugging Face revision) and
+   `fetchedAt`, which Settings → Voice shows as the installed version and download time. The bridge hashes
    the file once per change of its size or mtime, not per request.
 
 10. **The phone checks the hash, keeps the copy, and asks to keep it.** The model is stored in Cache
@@ -279,7 +281,7 @@ party and never by itself. The transcript lands where every transcript lands.**
   subsets are, and the service worker caches it cache-first under its own name only after the
   person downloaded the model, so that the engine also works offline.
 - **A host engine dictation costs a child process**: about 165 MB for a second or two, at most two at
-  once. A host that cannot spare that should leave *Use on host* off.
+  once. A host that cannot spare that should leave *Use Whistle on the host* off.
 - **The host engine records for 4 minutes, not 5.** The WAV upload is about four times the size of
   the compressed one, and the 8 MiB cap stays.
 - **The phone needs a 17 MB copy per device**, about 30 s over a tailnet, restarted from zero if it
