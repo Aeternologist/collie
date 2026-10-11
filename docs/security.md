@@ -297,6 +297,9 @@ entirely.
   A switch from Settings also writes the paired device's name, as given at pairing, and the time into
   `stt.json`, so **Host speech** can say who changed it last. No token and no address is written.
   A run of `collie stt setup` drops that line.
+- **Paired devices can read what the host's speech settings name, by name only.** That is the
+  command's name, a model file's name and a speech service's host name, never a path, an argument,
+  a key or a URL path.
 
 Why it is built this way: [ADR 0096](../.adr/0096-speech-can-stay-on-the-phone.md). The setup steps
 are in [Voice input and Web Push](voice-and-push.md#whistle-speech-to-text-on-your-phone-or-your-host).

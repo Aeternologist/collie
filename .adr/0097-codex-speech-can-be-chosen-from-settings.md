@@ -50,7 +50,9 @@ shown and never changed from the app.**
 1. **One route family, lead-local.** `GET /api/stt/host` (a read: the pairing token) reports the
    provider (`whistle`, `codex`, `openai-compatible`, `local-cli`, `none`), whether it works and why
    not, the recorded identity for codex (`honest` or `codex-cli`), who names it (`file`, `env`,
-   `none`), and for each of the three choices whether it may be made now and why not, as a code the
+   `none`), what the settings name, by name only (`setup`: a command's basename, a model file's or a
+   service model's name, a service's host; never a path, another argument, a key or a URL's path),
+   and for each of the three choices whether it may be made now and why not, as a code the
    phone translates. `PUT /api/stt/host` (a write, gated like `POST /api/stt`) takes
    `{ provider: "whistle" | "codex" | "off", consent?: "<id>" }`. Neither reads `?host=` nor is in
    the crew's forwardable list. The write is one audit line: the choice, the outcome, the recorded

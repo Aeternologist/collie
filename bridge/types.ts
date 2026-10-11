@@ -1744,6 +1744,25 @@ export interface SttHostSwitch {
 }
 
 /**
+ * What the host's speech settings name, by name only (Settings → Voice titles its card with it).
+ * Every field is optional and is dropped when it holds a hidden character. Never a path, an argument
+ * other than the one model file's name, a key, an environment value, or a URL's path or query.
+ * Mirrors `SttHostSetup` in web/src/lib/types.ts.
+ */
+export interface SttHostSetup {
+  /** `local-cli`: the command's basename (`whistle-stt`, `whisper-cli`). */
+  command?: string;
+  /**
+   * `local-cli`: the basename of the first argument that names a model file (`ggml-base.bin`).
+   * `openai-compatible`: the configured model (`whisper-large-v3`). `whistle`: the pinned model's
+   * version, the first seven characters of its revision.
+   */
+  model?: string;
+  /** `openai-compatible`: the service's host, with its port when it has one (`api.groq.com`, `127.0.0.1:8080`). */
+  endpoint?: string;
+}
+
+/**
  * The host's speech provider, as `GET /api/stt/host` and `PUT /api/stt/host` report it (ADR 0097).
  * Mirrors `SttHostStatus` in web/src/lib/types.ts.
  */
@@ -1770,6 +1789,8 @@ export interface SttHostStatus {
   changedBy?: string;
   /** When that device changed it, an ISO 8601 time. Present exactly when `changedBy` is. */
   changedAt?: string;
+  /** What the settings name: the command, the model, the service's host. Absent when they name nothing, or do not resolve. */
+  setup?: SttHostSetup;
 }
 
 /** Where the host's copy of the Whistle model stands (ADR 0096 Decision 2). */

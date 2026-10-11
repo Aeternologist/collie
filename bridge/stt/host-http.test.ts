@@ -7,9 +7,10 @@ import { join } from "node:path";
 import type { CodexDetector, CodexSignIn } from "./codex-detect.ts";
 import { CODEX_CONSENT_ID } from "./codex-setup.ts";
 import { createSttSettingsReader, sttSettingsPath, type SttChangeStamp, type SttSettingsDocument, type SttWireIdentity } from "./config.ts";
-import { parseSttHostRequest, sttHostGet, sttHostPut, sttHostStatus, type SttHostRouteDeps } from "./host-http.ts";
+import { parseSttHostRequest, sttHostGet, sttHostPut, sttHostSetup, sttHostStatus, type SttHostRouteDeps } from "./host-http.ts";
 import type { SttProvider } from "./provider.ts";
 import { createWhistleModelStore, resetWhistleModelState, type WhistleModelPin } from "./whistle-model.ts";
+import { WHISTLE_MODEL } from "./whistle-pins.ts";
 
 // The Host speech provider routes (ADR 0097), driven without Bun.serve. The gate in front of them
 // (read vs write) and the audit line are pinned in server.test.ts, where the dispatch lives. No test
@@ -460,5 +461,89 @@ describe("Last changed by: the change stamp", () => {
     }
     seedText(JSON.stringify({ provider: "whistle", changedBy: "Pixel 8", changedAt: AT.toISOString() }));
     expect(await sttHostStatus(harness({ env: { COLLIE_STT_PROVIDER: "codex" } }).deps)).not.toHaveProperty("changedBy");
+  });
+});
+
+describe("setup: what the settings name, by name only", () => {
+  const WRAPPER = "/var/home/someone/.local/share/collie-whistle/whistle-stt";
+
+  test("local-cli: the command's basename, never its path; no model without a model argument", async () => {
+    seed({ provider: "local-cli", command: WRAPPER });
+    const status = await sttHostStatus(harness({ provider: provider("local-cli") }).deps);
+    expect(status.setup).toEqual({ command: "whistle-stt" });
+    expect(JSON.stringify(status)).not.toContain("/var/home");
+  });
+
+  test("local-cli: the first argument that names a model file, among others, and no other argument", async () => {
+    seed({
+      provider: "local-cli",
+      command: "/opt/whisper.cpp/build/bin/whisper-cli",
+      args: ["--api-key", "sk-or-v1-your-key-here", "-l", "de", "-m", "/models/ggml-base.bin", "--extra", "/models/second.gguf", "-f"],
+    });
+    const status = await sttHostStatus(harness().deps);
+    expect(status.setup).toEqual({ command: "whisper-cli", model: "ggml-base.bin" });
+    const wire = JSON.stringify(status);
+    for (const hidden of ["sk-or-v1-your-key-here", "/models", "/opt/whisper.cpp", "second.gguf", "--extra"]) expect(wire).not.toContain(hidden);
+  });
+
+  test("local-cli: a flag's own value, every listed extension in any case, and a Windows path", () => {
+    const local = (command: string, args: string[]) => sttHostSetup({ provider: "local-cli", command, args }, "rev1");
+    expect(local("whisper", ["--model=/m/tiny.en.GGUF"])).toEqual({ command: "whisper", model: "tiny.en.GGUF" });
+    for (const ext of ["bin", "gguf", "ggml", "cact", "onnx", "pt", "safetensors", "tflite"]) {
+      expect(local("stt", [`/m/model.${ext}`])?.model).toBe(`model.${ext}`);
+    }
+    expect(local("C:\\Tools\\whisper\\whisper.exe", ["C:\\Models\\ggml-small.bin"])).toEqual({ command: "whisper.exe", model: "ggml-small.bin" });
+    // A key-shaped argument is not a model file, and no other argument reaches the wire.
+    expect(local("stt", ["--token", "sk-or-v1-your-key-here", "--lang=de"])).toEqual({ command: "stt" });
+  });
+
+  test("openai-compatible: the model, and the endpoint's host only, never userinfo, path, query or key", async () => {
+    seed({
+      provider: "openai-compatible",
+      baseUrl: "https://user:pass@api.groq.com/openai/v1?token=abc",
+      model: "whisper-large-v3",
+      apiKey: "sk-test-placeholder",
+    });
+    const status = await sttHostStatus(harness({ provider: provider("openai-compatible") }).deps);
+    expect(status.setup).toEqual({ model: "whisper-large-v3", endpoint: "api.groq.com" });
+    const wire = JSON.stringify(status);
+    for (const hidden of ["user", "pass", "/openai", "token=abc", "sk-test-placeholder"]) expect(wire).not.toContain(hidden);
+  });
+
+  test("openai-compatible: a port is kept, the default model is named, and an unsafe model name is dropped", () => {
+    const service = (model: string) => sttHostSetup({ provider: "openai-compatible", baseUrl: "http://127.0.0.1:8080/v1", model }, "rev1");
+    expect(service("gpt-transcribe")).toEqual({ model: "gpt-transcribe", endpoint: "127.0.0.1:8080" });
+    expect(service("openai/whisper-1:latest")?.model).toBe("openai/whisper-1:latest");
+    for (const unsafe of ["whisper large", "a<b>", "x".repeat(65), "model?key=1"]) expect(service(unsafe)).toEqual({ endpoint: "127.0.0.1:8080" });
+  });
+
+  test("whistle: the pinned model's short version, also when the environment names it", async () => {
+    seed({ provider: "whistle" });
+    const h = harness();
+    h.deps.whistleRevision = "ca5287601bef25af26dcf2e1b2bdc0843a7c19e5";
+    expect((await sttHostStatus(h.deps)).setup).toEqual({ model: "ca52876" });
+    rmSync(sttSettingsPath(stateDir));
+    // Unset, the revision is the pin this build ships.
+    expect((await sttHostStatus(harness({ env: { COLLIE_STT_PROVIDER: "whistle" } }).deps)).setup).toEqual({ model: WHISTLE_MODEL.revision.slice(0, 7) });
+  });
+
+  test("codex names nothing; nothing configured, a provider this build cannot parse, or an unreadable file carry no setup", async () => {
+    seed({ provider: "codex", codexBin: CODEX });
+    expect(await sttHostStatus(harness().deps)).not.toHaveProperty("setup");
+    rmSync(sttSettingsPath(stateDir));
+    expect(await sttHostStatus(harness().deps)).not.toHaveProperty("setup");
+    for (const text of [JSON.stringify({ provider: "something-new", command: "/usr/bin/x" }), JSON.stringify({ provider: "local-cli" }), "{ not json"]) {
+      seedText(text);
+      expect(await sttHostStatus(harness().deps)).not.toHaveProperty("setup");
+    }
+  });
+
+  test("a hidden character drops the field it is in, and only that field", () => {
+    expect(sttHostSetup({ provider: "local-cli", command: "/usr/bin/whis\u202Eper", args: ["/m/ggml-base.bin"] }, "rev1")).toEqual({ model: "ggml-base.bin" });
+    expect(sttHostSetup({ provider: "local-cli", command: "whisper", args: ["/m/ggml\u200Bbase.bin"] }, "rev1")).toEqual({ command: "whisper" });
+    expect(sttHostSetup({ provider: "local-cli", command: "whisper\u0007", args: [] }, "rev1")).toBeUndefined();
+    expect(
+      sttHostSetup({ provider: "openai-compatible", baseUrl: "https://api.groq.com/openai/v1", model: "whisper\u2028large" }, "rev1"),
+    ).toEqual({ endpoint: "api.groq.com" });
   });
 });

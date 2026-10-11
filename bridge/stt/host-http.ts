@@ -2,8 +2,9 @@ import { homedir } from "node:os";
 
 import { apiError, type ApiErrorDetail, type ErrorCode } from "../error-codes.ts";
 import type { JsonValue } from "../json.ts";
+import { hasHiddenLabelChar } from "../pairing.ts";
 import { findTool } from "../tools.ts";
-import type { SttHostStatus, SttHostSwitch, SttHostSwitchReason } from "../types.ts";
+import type { SttHostSetup, SttHostStatus, SttHostSwitch, SttHostSwitchReason } from "../types.ts";
 import { CODEX_CONSENT_ID, probeCodexSetup, type CodexIdentityProbe } from "./codex-setup.ts";
 import { createCodexDetector, type CodexDetector, type CodexSignInState } from "./codex-detect.ts";
 import {
@@ -13,6 +14,7 @@ import {
   sttSettingsPath,
   writeSttSettingsFile,
   type SttChangeStamp,
+  type SttSettings,
   type SttSettingsDocument,
   type SttSettingsFileOps,
 } from "./config.ts";
@@ -21,6 +23,7 @@ import { jsonRecord, jsonStringField } from "./json.ts";
 import type { SttProvider } from "./provider.ts";
 import { diskSttFileOps, readSttSources, sameSttSources, type SttSources } from "./whistle-http.ts";
 import type { WhistleModelStore } from "./whistle-model.ts";
+import { WHISTLE_MODEL } from "./whistle-pins.ts";
 
 // ── THE HOST'S SPEECH PROVIDER, SEEN AND CHOSEN FROM SETTINGS (ADR 0097) ─────────────────────
 //
@@ -83,6 +86,8 @@ export interface SttHostRouteDeps {
   files?: SttSettingsFileOps;
   /** The clock for the change stamp. The real one unless a test sets it. */
   now?: () => Date;
+  /** The Whistle model's pinned revision, for `setup.model`. {@link WHISTLE_MODEL}'s unless a test pins its own. */
+  whistleRevision?: string;
 }
 
 /**
@@ -99,6 +104,87 @@ export function locateCodexBin(stateDir: string, env: Record<string, string | un
 /** A detector over {@link locateCodexBin}. One per bridge, so its cache is shared by every device. */
 export function createHostCodexDetector(stateDir: string, env: Record<string, string | undefined>): CodexDetector {
   return createCodexDetector({ locate: () => locateCodexBin(stateDir, env) });
+}
+
+// ── WHAT IS CONFIGURED, BY NAME ─────────────────────────────────────────────────────────────────
+//
+// Settings → Voice names the setup itself ("whistle-stt, model ggml-base.bin", "whisper-large-v3 at
+// api.groq.com"), not only its kind. Every paired device can read `GET /api/stt/host`, so this says
+// names and never locations or secrets: the BASENAME of a command, never its path; the basename of
+// ONE argument that looks like a model file, never the others (an argument may carry a token); a
+// service's HOST, never its path, query, userinfo or key. A string with a hidden character (the rule
+// pairing applies to labels) is dropped, field by field, and so is one longer than {@link MAX_SETUP_TEXT}.
+
+/** The longest name a setup field carries. A longer one is not a name. */
+const MAX_SETUP_TEXT = 64;
+
+/** File extensions a model file has. A `local-cli` argument names a model only with one of these. */
+const MODEL_FILE = /\.(?:bin|gguf|ggml|cact|onnx|pt|safetensors|tflite)$/i;
+
+/** A model name a speech service takes (`whisper-large-v3`, `openai/whisper-1`). */
+const SAFE_MODEL = /^[A-Za-z0-9._:/-]+$/;
+
+/** A model file's name, or a command's: one path segment, so no separator of either kind. */
+const SAFE_FILE_NAME = /^[^/\\]+$/;
+
+/** The text when it is a name the phone may show, else undefined. */
+function shown(text: string, pattern: RegExp): string | undefined {
+  if (text === "" || text.length > MAX_SETUP_TEXT || hasHiddenLabelChar(text) || !pattern.test(text)) return undefined;
+  return text;
+}
+
+/** The last segment of a path, on either kind of separator, so `C:\\x\\whisper.exe` reads `whisper.exe` here too. */
+function baseName(path: string): string {
+  return path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1);
+}
+
+/** The basename of the first argument that names a model file (`-m /m/ggml-base.bin`, `--model=/m/x.gguf`). */
+function modelArg(args: readonly string[]): string | undefined {
+  for (const arg of args) {
+    // A flag's own value (`--model=…`) is the part after its `=`; a path's name is its last segment.
+    const name = baseName(arg.slice(arg.indexOf("=") + 1));
+    if (MODEL_FILE.test(name)) return shown(name, SAFE_FILE_NAME);
+  }
+  return undefined;
+}
+
+/** A service's host (`api.groq.com`, `127.0.0.1:8080`), never its path, query or userinfo. */
+function endpointHost(baseUrl: string): string | undefined {
+  try {
+    return shown(new URL(baseUrl).host, /^[A-Za-z0-9.:[\]-]+$/);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * What the resolved settings name, for `setup` in `GET /api/stt/host`, or undefined when they name
+ * nothing a phone may show. `whistleRevision` is the pinned model's revision; its first seven
+ * characters are the version Settings shows elsewhere.
+ */
+export function sttHostSetup(settings: SttSettings | null, whistleRevision: string): SttHostSetup | undefined {
+  if (settings === null) return undefined;
+  const setup: SttHostSetup = {};
+  const put = (field: keyof SttHostSetup, value: string | undefined): void => {
+    if (value !== undefined) setup[field] = value;
+  };
+  switch (settings.provider) {
+    case "local-cli":
+      put("command", shown(baseName(settings.command), SAFE_FILE_NAME));
+      put("model", modelArg(settings.args));
+      break;
+    case "openai-compatible":
+      put("model", shown(settings.model, SAFE_MODEL));
+      put("endpoint", endpointHost(settings.baseUrl));
+      break;
+    case "whistle":
+      put("model", shown(whistleRevision.slice(0, 7), SAFE_FILE_NAME));
+      break;
+    case "codex":
+      // The codex settings name no model: the endpoint picks it.
+      break;
+  }
+  return Object.keys(setup).length === 0 ? undefined : setup;
 }
 
 /** Who names the provider: the environment wins over the file, as it does in the resolve. */
@@ -158,6 +244,8 @@ export async function sttHostStatus(deps: SttHostRouteDeps): Promise<SttHostStat
   const reason = capability?.reason ?? (provider !== "none" && capability === null ? warnings[0] : undefined);
   if (reason !== undefined) status.reason = reason;
   if (resolved?.provider === "codex") status.identity = resolved.wireIdentity;
+  const setup = sttHostSetup(resolved, deps.whistleRevision ?? WHISTLE_MODEL.revision);
+  if (setup !== undefined) status.setup = setup;
   // Who changed it from the app. Not when the environment names the provider: the stamp is about the
   // file, and the file is not what runs then.
   if (sources.stamp !== null && namedSttProvider({}, sources.env) === undefined) {
