@@ -224,6 +224,18 @@ export const ACK_MANIFEST = {
     channel: "echo",
     why: "The mic strip's `transcribing` phase holds while the clip is in flight and the transcript landing in the composer is the outcome; every refusal comes back as a VALUE and is spoken by the composer's onError on the status channel (hooks/use-stt-recorder.ts).",
   },
+  startWhistleSetup: {
+    channel: "inline",
+    why: "The Whistle card swaps the button for the host's own progress bar, and a refusal is written inside that card, where the person is still looking at the button they tapped.",
+  },
+  removeWhistleModel: {
+    channel: "inline",
+    why: "The two-tap confirm sits in the Whistle card and its outcome is the card itself going back to the setup button; a refusal is written under it.",
+  },
+  setWhistleHostEngine: {
+    channel: "inline",
+    why: "The switch is the acknowledgement, and a refusal (another provider, no model) is written under that same switch, because the reason is about that one row.",
+  },
 // `satisfies`, not an annotation: the KEYS stay known to the compiler (so a typo'd name is a type
 // error at any reader, rather than a silent `undefined`), while every entry is still checked against
 // the contract above. An open `Record<string, AckEntry>` annotation would throw that evidence away.

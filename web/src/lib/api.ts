@@ -63,6 +63,7 @@ import type {
   WorktreeBaseChoice,
   WorktreeCreateResponse,
   WorktreeFolderChoice,
+  WhistleStatus,
   WorktreePlanResponse,
 } from "./types";
 import type { SubscribeBody } from "./push";
@@ -1925,4 +1926,56 @@ export function transcribeAudio(audio: Blob, signal?: AbortSignal): Promise<SttR
       };
     })().finally(endLongUpload),
   );
+}
+
+// ── WHISTLE: THE MODEL ON THE HOST, AND THE PHONE'S COPY OF IT (ADR 0096) ───────────────────────
+
+/** The whole-request deadline for copying the model to the phone: 17 MB, 30 s over a tailnet, and a
+ *  slow cellular link still has to finish. The body is streamed, so this runs until the last byte. */
+const STT_MODEL_TIMEOUT_MS = 5 * 60_000;
+
+/** Where the host's copy of the model stands. A read; the poll reads it once a second while it downloads. */
+export function fetchWhistleStatus(signal?: AbortSignal): Promise<WhistleStatus> {
+  return req<WhistleStatus>("/api/stt/whistle", { signal, timeoutMs: POLL_TIMEOUT_MS });
+}
+
+/** Ask the host to download the model (write-gated). Answers `202` while it starts or joins one, `200`
+ *  when the model is already there; both carry the status. The bytes arrive on the host's own time. */
+export function startWhistleSetup(): Promise<WhistleStatus> {
+  return req<WhistleStatus>("/api/stt/whistle", { method: "POST" });
+}
+
+/** Remove the model from the host, and the `whistle` provider with it when it was the host's (write-gated). */
+export function removeWhistleModel(): Promise<WhistleStatus> {
+  return req<WhistleStatus>("/api/stt/whistle", { method: "DELETE" });
+}
+
+/** Turn the host's Whistle engine on or off (write-gated). A refusal carries `stt.whistle_provider_taken`
+ *  or `stt.whistle_not_ready`, which {@link describeThrownError} says in the operator's language. */
+export function setWhistleHostEngine(on: boolean): Promise<WhistleStatus> {
+  return req<WhistleStatus>("/api/stt/whistle/host", { method: "PUT", body: JSON.stringify({ on }) });
+}
+
+/**
+ * The model's bytes, as a STREAM, so the caller can count them and hash them as they come.
+ *
+ * A plain read: it needs the pairing token and nothing more (ADR 0096 Decision 9). It is not a JSON
+ * call and the body is far too big for the poll leash, so it takes its own deadline and hands the
+ * response back untouched on success. A refusal throws like every other call here. The path names the
+ * file by its hash, and the bridge answers only when that hash is the one it holds.
+ */
+export async function fetchSttModel(sha256: string, signal?: AbortSignal): Promise<Response> {
+  const path = `/api/stt/model/${encodeURIComponent(sha256)}`;
+  const res = await apiFetch(path, {
+    signal: withTimeout(signal, STT_MODEL_TIMEOUT_MS),
+    headers: { [XHR_HEADER]: XHR_HEADER_VALUE, ...authHeader() },
+  });
+  captureBuild(res);
+  if (!res.ok) {
+    const detail = await errorDetail(res);
+    notePairing("GET", res.status, detail);
+    notePairingAnswer(res.status, detail);
+    throw new ApiError(`${path} → ${res.status} ${detail}`, res.status, parseApiErrorFields(detail));
+  }
+  return res;
 }

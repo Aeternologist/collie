@@ -1,11 +1,18 @@
 import { useEffect, useSyncExternalStore } from "react";
 
-import type { SttResult } from "@/lib/api";
+import { apiErrorFields, type SttResult } from "@/lib/api";
 import { isApiErrorCode } from "@/lib/api-error-codes";
-import { describeApiError } from "@/lib/api-error-message";
-import { t } from "@/lib/i18n";
-import { getSttCapability, loadOperatorCommands, subscribeOperatorConfig } from "@/lib/operator-config";
-import type { SttCapability } from "@/lib/types";
+import { describeApiError, describeThrownError } from "@/lib/api-error-message";
+import { t, type MessageKey } from "@/lib/i18n";
+import {
+  getSttCapability,
+  getWhistleStatus,
+  loadOperatorCommands,
+  subscribeOperatorConfig,
+} from "@/lib/operator-config";
+import type { SttProbe } from "@/lib/stt-engine";
+import { SttModelError, type SttModelErrorCode } from "@/lib/stt-model";
+import type { SttCapability, WhistleStatus } from "@/lib/types";
 
 /** The refusal half of one transcription attempt — the only shape `sttErrorMessage` has words for. */
 type SttFailure = Extract<SttResult, { ok: false }>;
@@ -167,4 +174,216 @@ export function useHandsFree(): boolean {
 export function __resetHandsFree(): void {
   handsFree = false;
   handsFreeListeners.clear();
+}
+
+// ── THE SPEECH ENGINE IS A PER-DEVICE CHOICE (ADR 0096 Decision 1) ──────────────────────────────
+//
+// "Host" is whatever provider the host runs, `whistle` included, and is the default. "This phone"
+// runs Whistle in the browser (lib/stt-engine.ts) and sends nothing. The choice is per DEVICE for the
+// reason the typeface is (ADR 0033): whether a phone is strong enough is a fact about that phone. It
+// is a preference, not session content, so the wipe keeps it.
+//
+// Same shape as the hands-free switch above: module state, subscribe, a useSyncExternalStore hook.
+
+export type SttEngineChoice = "host" | "phone";
+
+const ENGINE_KEY = "collie:stt-engine:v1";
+
+function isEngineChoice(value: string | null): value is SttEngineChoice {
+  return value === "host" || value === "phone";
+}
+
+function loadEngine(): SttEngineChoice {
+  try {
+    const stored = localStorage.getItem(ENGINE_KEY);
+    return isEngineChoice(stored) ? stored : "host";
+  } catch {
+    return "host"; // private mode / no storage — the host is the default anyway
+  }
+}
+
+let engineChoice = loadEngine();
+const engineListeners = new Set<() => void>();
+
+/** The engine this device asked for. Whether it can run is {@link phoneEngineBlock}'s question. */
+export function sttEnginePreference(): SttEngineChoice {
+  return engineChoice;
+}
+
+export function setSttEnginePreference(choice: SttEngineChoice): void {
+  engineChoice = choice;
+  try {
+    localStorage.setItem(ENGINE_KEY, choice);
+  } catch {
+    // Quota or storage disabled — the in-memory value still applies for this session.
+  }
+  for (const fn of engineListeners) fn();
+}
+
+function subscribeEngine(cb: () => void): () => void {
+  engineListeners.add(cb);
+  return () => engineListeners.delete(cb);
+}
+
+export function useSttEnginePreference(): SttEngineChoice {
+  return useSyncExternalStore(subscribeEngine, sttEnginePreference, sttEnginePreference);
+}
+
+/** Test helper — back to the default, listeners dropped. */
+export function __resetSttEngine(): void {
+  engineChoice = "host";
+  engineListeners.clear();
+  probeState = "unknown";
+  probeListeners.clear();
+  probeRun = null;
+}
+
+// ── WHY "THIS PHONE" CANNOT BE CHOSEN ───────────────────────────────────────────────────────────
+//
+// One reason, the first that applies, in the order a person can act on them: the connection, then the
+// browser, then the engine, then the host. Absent means it can be chosen.
+
+/** What a browser must have for the phone engine. Read once from the globals; a test hands in its own. */
+export interface PhoneEngineEnv {
+  secureContext: boolean;
+  webAssembly: boolean;
+  worker: boolean;
+  subtleCrypto: boolean;
+  cacheStorage: boolean;
+  bigInt: boolean;
+}
+
+export function phoneEngineEnv(): PhoneEngineEnv {
+  return {
+    secureContext: globalThis.isSecureContext === true,
+    webAssembly: "WebAssembly" in globalThis,
+    worker: "Worker" in globalThis,
+    subtleCrypto: globalThis.crypto?.subtle !== undefined,
+    cacheStorage: "caches" in globalThis,
+    bigInt: "BigInt" in globalThis,
+  };
+}
+
+/** What the worker's own probe said: nothing yet, fine, or why the browser refused it. */
+export type SttProbeState = "unknown" | "ok" | "wasm-csp" | "glue-failed" | "crashed";
+
+let probeState: SttProbeState = "unknown";
+const probeListeners = new Set<() => void>();
+
+export function sttProbeState(): SttProbeState {
+  return probeState;
+}
+
+/** Record a probe's answer. An aborted probe says nothing about the browser and is dropped. */
+export function noteSttProbe(result: SttProbe): void {
+  if (result.ok) probeState = "ok";
+  else if (result.reason === "wasm-csp" || result.reason === "glue-failed") probeState = result.reason;
+  else if (result.reason === "crashed" || result.reason === "disabled") probeState = "crashed";
+  else return;
+  for (const fn of probeListeners) fn();
+}
+
+function subscribeProbe(cb: () => void): () => void {
+  probeListeners.add(cb);
+  return () => probeListeners.delete(cb);
+}
+
+export function useSttProbeState(): SttProbeState {
+  return useSyncExternalStore(subscribeProbe, sttProbeState, sttProbeState);
+}
+
+let probeRun: Promise<void> | null = null;
+
+/**
+ * Ask the speech worker whether this browser can run the engine, once per page session, and record the
+ * answer. A throwaway engine: it starts the worker, which compiles its eight-byte module, and stops
+ * it. It needs neither the model nor the network. The engine module loads on demand, so a page that
+ * never opens Settings never pays for it. A worker that came through the service worker also lands in
+ * the speech cache here (sw.ts), which is what makes the engine start offline.
+ */
+export function runSttProbe(): Promise<void> {
+  if (probeState !== "unknown") return Promise.resolve();
+  probeRun ??= (async () => {
+    try {
+      const { createSttEngine } = await import("@/lib/stt-engine");
+      const engine = createSttEngine({ getBytes: () => Promise.reject(new Error("probe only")) });
+      try {
+        noteSttProbe(await engine.probe());
+      } finally {
+        engine.dispose();
+      }
+    } catch {
+      // A probe that could not run says nothing; the state stays unknown and the engine decides at use.
+    } finally {
+      probeRun = null;
+    }
+  })();
+  return probeRun;
+}
+
+/** Why "This phone" is off, or `null` when it can be chosen. */
+export type PhoneEngineBlock = "insecure" | "browser" | "wasm-csp" | "engine" | "host-not-ready";
+
+/**
+ * The first reason "This phone" cannot be chosen (plan section 5 item 3).
+ *
+ * "Set up Whistle first" applies only while this phone holds no copy of its own: a phone that already
+ * has the model can run it whatever the host does next, so removing it from the host does not
+ * silently take the phone's engine away.
+ */
+export function phoneEngineBlock(input: {
+  env: PhoneEngineEnv;
+  probe: SttProbeState;
+  haveLocalModel: boolean;
+  hostReady: boolean;
+}): PhoneEngineBlock | null {
+  const { env, probe, haveLocalModel, hostReady } = input;
+  if (!env.secureContext) return "insecure";
+  if (!env.webAssembly || !env.worker || !env.subtleCrypto || !env.cacheStorage || !env.bigInt) return "browser";
+  if (probe === "wasm-csp") return "wasm-csp";
+  if (probe === "glue-failed" || probe === "crashed") return "engine";
+  if (!haveLocalModel && !hostReady) return "host-not-ready";
+  return null;
+}
+
+/**
+ * The host's Whistle model status, or `null` when this collie offers none (an older bridge, or a crew
+ * member's own answer). Settings draws its Whistle block from this and from nothing else.
+ */
+export function useWhistleStatus(): WhistleStatus | null {
+  useEffect(() => {
+    void loadOperatorCommands();
+  }, []);
+  return useSyncExternalStore(subscribeOperatorConfig, getWhistleStatus, getWhistleStatus);
+}
+
+// ── THE MODEL STORE'S WORDS ─────────────────────────────────────────────────────────────────────
+
+const MODEL_ERROR_KEYS = {
+  unsupported: "stt.model.error.unsupported",
+  "low-space": "stt.model.error.lowSpace",
+  "unknown-model": "stt.model.error.unknownModel",
+  "download-failed": "stt.model.error.downloadFailed",
+  busy: "stt.model.error.busy",
+  "hash-mismatch": "stt.model.error.hashMismatch",
+  "engine-mismatch": "stt.model.error.engineMismatch",
+  aborted: "stt.model.error.aborted",
+  "storage-failed": "stt.model.error.storageFailed",
+  damaged: "stt.model.error.damaged",
+  missing: "stt.model.error.missing",
+} as const satisfies Record<SttModelErrorCode, MessageKey>;
+
+/**
+ * The sentence for a failure of the phone's model store (lib/stt-model.ts), in the operator's language.
+ *
+ * A copy that broke because the HOST refused says the host's own refusal when it sent a code this
+ * build has a sentence for ("Your host no longer has that speech model"); any other break says
+ * "Download stopped". A throw that is not the store's own is described like any other.
+ */
+export function sttModelErrorMessage<TThrown>(error: TThrown): string {
+  if (!(error instanceof SttModelError)) return describeThrownError(error);
+  if (error.code === "download-failed" && isApiErrorCode(apiErrorFields(error.cause)?.code)) {
+    return describeThrownError(error.cause);
+  }
+  return t(MODEL_ERROR_KEYS[error.code]);
 }

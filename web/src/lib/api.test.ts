@@ -7,7 +7,9 @@ import { isConnecting } from "./connection";
 import { DEAD_DEBOUNCE_MS, isLive, resetLiveness } from "./liveness";
 import { resetBasePathForTests } from "./base-path";
 import { burstPaneId, resetPollIntent, sendCount } from "./poll-intent";
+import { setDeviceToken } from "./pairing";
 import {
+  apiErrorFields,
   checkForUpdates,
   checkRun,
   clearRecentRuns,
@@ -32,6 +34,11 @@ import {
   sttTimeoutFor,
   startRun,
   transcribeAudio,
+  fetchSttModel,
+  fetchWhistleStatus,
+  removeWhistleModel,
+  setWhistleHostEngine,
+  startWhistleSetup,
   withTimeout,
   XHR_HEADER,
   XHR_HEADER_VALUE,
@@ -772,6 +779,91 @@ describe("api client — identity proxy refusals", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 302 }));
     const result = await transcribeAudio(new Blob(["x"], { type: "audio/webm" }));
     expect(result).toMatchObject({ ok: false, status: 401 });
+  });
+});
+
+// WHISTLE (ADR 0096): the host's model and the phone's copy of it.
+/** The bridge's error code a promise rejected with, or undefined when it did not reject with one. */
+async function refusalCode(promise: Promise<unknown>): Promise<string | undefined> {
+  try {
+    await promise;
+  } catch (thrown) {
+    return apiErrorFields(thrown)?.code;
+  }
+  return undefined;
+}
+
+describe("the Whistle calls", () => {
+  const STATUS = { state: "absent", bytes: 16919407, hostEngine: false, hostTaken: false };
+
+  it("reads the status, starts the setup, removes the model and flips the host engine on the right routes", async () => {
+    const seen: string[] = [];
+    let hostBody: unknown;
+    server.use(
+      http.get("/api/stt/whistle", () => {
+        seen.push("GET /api/stt/whistle");
+        return HttpResponse.json(STATUS);
+      }),
+      http.post("/api/stt/whistle", () => {
+        seen.push("POST /api/stt/whistle");
+        return HttpResponse.json({ ...STATUS, state: "downloading", received: 0 }, { status: 202 });
+      }),
+      http.delete("/api/stt/whistle", () => {
+        seen.push("DELETE /api/stt/whistle");
+        return HttpResponse.json(STATUS);
+      }),
+      http.put("/api/stt/whistle/host", async ({ request }) => {
+        hostBody = await request.json();
+        seen.push("PUT /api/stt/whistle/host");
+        return HttpResponse.json({ ...STATUS, state: "ready", hostEngine: true });
+      }),
+    );
+    expect((await fetchWhistleStatus()).state).toBe("absent");
+    expect((await startWhistleSetup()).state).toBe("downloading");
+    expect((await removeWhistleModel()).state).toBe("absent");
+    expect((await setWhistleHostEngine(true)).hostEngine).toBe(true);
+    expect(hostBody).toEqual({ on: true });
+    expect(seen).toEqual([
+      "GET /api/stt/whistle",
+      "POST /api/stt/whistle",
+      "DELETE /api/stt/whistle",
+      "PUT /api/stt/whistle/host",
+    ]);
+  });
+
+  it("carries the host's refusal code, so Settings can say it in the operator's language", async () => {
+    server.use(
+      http.put("/api/stt/whistle/host", () =>
+        HttpResponse.json({ error: "another provider", code: "stt.whistle_provider_taken" }, { status: 409 }),
+      ),
+    );
+    await expect(setWhistleHostEngine(true)).rejects.toThrow(/409/);
+    expect(await refusalCode(setWhistleHostEngine(true))).toBe("stt.whistle_provider_taken");
+  });
+
+  it("fetches the model by hash with the token and hands the stream back untouched", async () => {
+    setDeviceToken("tok-model-1");
+    let auth: string | null = null;
+    const sha = "b".repeat(64);
+    server.use(
+      http.get(`/api/stt/model/${sha}`, ({ request }) => {
+        auth = request.headers.get("authorization");
+        return new HttpResponse(new Uint8Array([1, 2, 3]), { headers: { "content-type": "application/octet-stream" } });
+      }),
+    );
+    const res = await fetchSttModel(sha);
+    expect(auth).toBe("Bearer tok-model-1");
+    expect([...new Uint8Array(await res.arrayBuffer())]).toEqual([1, 2, 3]);
+  });
+
+  it("throws the host's refusal when it no longer holds that model", async () => {
+    const sha = "c".repeat(64);
+    server.use(
+      http.get(`/api/stt/model/${sha}`, () =>
+        HttpResponse.json({ error: "unknown model", code: "stt.model_unknown" }, { status: 404 }),
+      ),
+    );
+    expect(await refusalCode(fetchSttModel(sha))).toBe("stt.model_unknown");
   });
 });
 

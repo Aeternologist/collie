@@ -11,6 +11,7 @@ import type {
   OperatorQuickReplyRow,
   SttCapability,
   UploadCapability,
+  WhistleStatus,
 } from "@/lib/types";
 
 // The startup-resolved half of /api/config, read ONCE and held in module state: the operator's own
@@ -61,6 +62,11 @@ let currentStt: SttCapability | null = null;
 // on purpose: both mean "nothing said otherwise", and lib/attachments.ts answers both with the
 // contract that shipped before attachments existed — 10 MB, images only.
 let currentUpload: UploadCapability | null = null;
+// `null` until a read succeeds, on a bridge older than the field, and on a crew member's own answer.
+// All three mean "this collie offers no Whistle setup", which Settings answers by drawing nothing.
+// Unlike the rest of this store it moves at runtime: the setup tap starts a download and the poll
+// reports it, so `noteWhistleStatus` (below) writes the newest answer back.
+let currentWhistle: WhistleStatus | null = null;
 let inflight: Promise<void> | null = null;
 let loaded = false;
 const listeners = new Set<() => void>();
@@ -95,6 +101,7 @@ export function loadOperatorCommands(): Promise<void> {
       currentMux = cfg.mux ?? null;
       currentStt = cfg.stt ?? null;
       currentUpload = cfg.upload ?? null;
+      currentWhistle = cfg.whistle ?? null;
       loaded = true;
       emit();
     } catch {
@@ -104,6 +111,16 @@ export function loadOperatorCommands(): Promise<void> {
     }
   })();
   return inflight;
+}
+
+/**
+ * Read the config again, once, now. For the few facts a person's own tap changes on the host: the
+ * Whistle switch turns the `stt` provider on and off, and the composer's microphone follows it.
+ * Everything else here is startup config and is not asked twice.
+ */
+export function refreshOperatorConfig(): Promise<void> {
+  loaded = false;
+  return loadOperatorCommands();
 }
 
 export function getOperatorCommands(): readonly OperatorCommand[] {
@@ -296,8 +313,20 @@ export function __resetOperatorCommands(): void {
   currentFonts = [];
   currentMux = null;
   currentStt = null;
+  currentWhistle = null;
   currentUpload = null;
   inflight = null;
   loaded = false;
   listeners.clear();
+}
+
+/** The host's Whistle model status, or `null` when this collie offers none. Read through lib/stt.ts. */
+export function getWhistleStatus(): WhistleStatus | null {
+  return currentWhistle;
+}
+
+/** Record a newer Whistle status, from the setup tap, a poll or a switch, and tell every reader. */
+export function noteWhistleStatus(status: WhistleStatus): void {
+  currentWhistle = status;
+  emit();
 }

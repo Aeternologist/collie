@@ -59,6 +59,7 @@ const KEYS = new Map<string, KeyFate>([
   ["collie:harness-bar:v1", { area: "local", prefix: false, fate: "kept", why: "preference" }],
   ["collie:strips-collapsed:v1", { area: "local", prefix: false, fate: "kept", why: "preference" }],
   ["collie:stt-hands-free:v1", { area: "local", prefix: false, fate: "kept", why: "preference" }],
+  ["collie:stt-engine:v1", { area: "local", prefix: false, fate: "kept", why: "preference, Host or This phone for speech (ADR 0096)" }],
   ["collie:zen-enabled:v1", { area: "local", prefix: false, fate: "kept", why: "preference" }],
   ["collie:auto-zen-enabled:v1", { area: "local", prefix: false, fate: "kept", why: "preference" }],
   ["collie:pins:v1", { area: "local", prefix: false, fate: "kept", why: "pinned pane ids, no content" }],
