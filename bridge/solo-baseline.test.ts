@@ -648,8 +648,6 @@ describe("solo zero-tax — routes", () => {
       "/^\\/api\\/workspace\\/([^/]+)\\/files\\/exist$/",
       // The same picture read, asked by workspace (ADR 0090).
       "/^\\/api\\/workspace\\/([^/]+)\\/files\\/image$/",
-      "/^\\/api\\/workspace\\/([^/]+)\\/worktree(?:\\/(open))?$/",
-      "/^\\/api\\/workspace\\/([^/]+)\\/worktrees$/",
       // Default closed (ADR 0086): an `/api/*` path no route claims passes the read gate, pairing
       // included, and then answers 404 instead of the SPA's app shell. Not a route of its own, and it
       // registers nothing on the crew link.
@@ -759,7 +757,7 @@ describe("solo zero-tax — routes", () => {
       "/api/workspace",
       // The New sheet's branch from a FOLDER (M48, ADR 0093): the plan it shows before Start, and the
       // create. Two SOLO routes, named here rather than exempted. Session-scoped through the gate and
-      // lead-local like the space-scoped worktree routes: neither is forwardable.
+      // lead-local like the worktree create: neither is forwardable.
       "/api/worktree",
       "/api/worktree/plan",
       "/auth",

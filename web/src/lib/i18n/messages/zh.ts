@@ -1304,10 +1304,8 @@ export const zh: Dictionary = {
   "apiError.host.unknown": "当前机组中不存在名为 {host} 的 collie 实例。",
   "apiError.crew.not_lead": "当前 collie 不是机组 lead，无可展示的机组。",
   // --- worktrees (ADR 0032) ---
-  "apiError.worktree.list_failed": "获取 worktree 列表失败：{reason}",
   "apiError.worktree.create_failed": "创建 worktree 失败：{reason}",
   "apiError.worktree.created_not_opened": "分支创建成功，但无法在其上打开工作区：{reason}",
-  "apiError.worktree.open_failed": "打开 worktree 失败：{reason}",
   "apiError.worktree.busy": "另一个 worktree 操作正在执行，请稍后重试。",
   "apiError.worktree.ambiguous_branch": "分支名称存在多处匹配：{reason}",
   "apiError.worktree.branch_required": "请指定分支名称。",

@@ -1324,10 +1324,8 @@ export const ja: Dictionary = {
   "apiError.host.unknown": "このクルーに collie {host} は存在しません。",
   "apiError.crew.not_lead": "この collie はクルーを統括していないため、表示可能なクルーがありません。",
   // --- worktrees (ADR 0032) ---
-  "apiError.worktree.list_failed": "worktree の一覧取得に失敗しました: {reason}",
   "apiError.worktree.create_failed": "worktree の作成に失敗しました: {reason}",
   "apiError.worktree.created_not_opened": "ブランチは作成されましたが、起動に失敗しました: {reason}",
-  "apiError.worktree.open_failed": "worktree を開けませんでした: {reason}",
   "apiError.worktree.busy": "別の worktree 処理が実行中です。時間をおいて再試行してください。",
   "apiError.worktree.ambiguous_branch": "ブランチ名が複数の候補に一致します: {reason}",
   "apiError.worktree.branch_required": "ブランチ名を指定してください。",

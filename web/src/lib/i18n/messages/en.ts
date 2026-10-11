@@ -1410,10 +1410,8 @@ export const en = {
   // The key mirrors the wire code `crew.not_lead` (`bridge/error-codes.ts`). Both say crew from 1.8.0.
   "apiError.crew.not_lead": "This collie doesn't lead a crew, so there is no crew to show.",
   // --- worktrees (ADR 0032) ---
-  "apiError.worktree.list_failed": "The worktrees couldn't be listed: {reason}",
   "apiError.worktree.create_failed": "The worktree couldn't be created: {reason}",
   "apiError.worktree.created_not_opened": "The branch was created, but nothing could be opened on it: {reason}",
-  "apiError.worktree.open_failed": "The worktree couldn't be opened: {reason}",
   "apiError.worktree.busy": "Another worktree operation is still running — try again in a moment.",
   "apiError.worktree.ambiguous_branch": "That branch name matches more than one thing: {reason}",
   "apiError.worktree.branch_required": "Type a branch name first.",

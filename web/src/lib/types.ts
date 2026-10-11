@@ -1472,7 +1472,7 @@ export interface MuxConfig {
    * bridge/mux/capabilities.ts.
    *
    * **Absent on any bridge older than the field, and absent reads as `push`** — the same fail-open
-   * direction the capabilities take (lib/mux-capability.ts). Read it through `useTopologyLatency()`
+   * direction the capabilities take (lib/mux-capability.ts). Read it through `muxTopologyLatency()`
    * rather than here, so that rule lives in exactly one place.
    */
   topologyLatency?: MuxTopologyLatency;
@@ -1954,31 +1954,6 @@ export function statusLabelPast(status: AgentStatus): string {
   return t(`status.past.${status}`);
 }
 
-/** One Git worktree of the repo a space sits in. Mirrors `WorktreeView` in bridge/types.ts. */
-export interface WorktreeView {
-  path: string;
-  branch: string | null;
-  /** The space showing it, or `null` when nothing does — which is what hides its Remove row. */
-  openWorkspaceId: string | null;
-  /** `false` for the repo's own checkout: listed for context, never removable. */
-  linked: boolean;
-  prunable: boolean;
-}
-
-/**
- * GET /api/workspace/:id/worktrees. `defaultBranch` is the local branch a create with
- * `base: { kind: "default" }` starts from; `null` when the repo has none to name, absent from a
- * bridge that predates "Start from".
- */
-export type WorktreeListResponse =
-  | { ok: true; worktrees: WorktreeView[]; defaultBranch?: string | null }
-  | { ok: false; error: string; code?: ApiErrorCode; detail?: ApiErrorDetail };
-
-/** POST /api/workspace/:id/worktree[/open] — `alreadyOpen` is an answer, never a failure. */
-export type WorktreeOpenResponse =
-  | { ok: true; pane: CreatedPane; alreadyOpen: boolean }
-  | { ok: false; error: string; code?: ApiErrorCode; detail?: ApiErrorDetail };
-
 /**
  * Where a new worktree's branch starts (ADR 0089, amended): the repo's default branch, which the
  * bridge resolves, or a named ref (the page sends the pane's own branch). Mirrors
@@ -2010,7 +1985,7 @@ export type WorktreePlanResponse =
 export type WorktreeFolderChoice = { kind: "default" } | { kind: "parent"; parent: string };
 
 /**
- * POST /api/workspace/:id/worktree — the new space, and whether the launcher was typed into it
+ * POST /api/worktree — the new space, and whether the launcher was typed into it
  * (ADR 0089). Mirrors `WorktreeCreateResponse` in bridge/types.ts. A launcher that failed after the
  * create is still `ok: true`: the worktree exists, `pane` is where it is.
  */

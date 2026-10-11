@@ -1317,10 +1317,8 @@ export const ko: Dictionary = {
   "apiError.host.unknown": "해당 크루에 {host} collie가 없습니다.",
   "apiError.crew.not_lead": "해당 collie가 크루를 lead하지 않으므로 표시할 크루가 없습니다.",
   // --- worktrees (ADR 0032) ---
-  "apiError.worktree.list_failed": "worktree 목록을 가져오지 못했습니다: {reason}",
   "apiError.worktree.create_failed": "worktree를 생성하지 못했습니다: {reason}",
   "apiError.worktree.created_not_opened": "브랜치는 생성되었으나 대상 항목을 열지 못했습니다: {reason}",
-  "apiError.worktree.open_failed": "worktree를 열지 못했습니다: {reason}",
   "apiError.worktree.busy": "다른 worktree 작업이 진행 중입니다. 잠시 후 다시 시도하십시오.",
   "apiError.worktree.ambiguous_branch": "브랜치 이름이 여러 대상과 일치합니다: {reason}",
   "apiError.worktree.branch_required": "브랜치 이름을 먼저 입력하십시오.",

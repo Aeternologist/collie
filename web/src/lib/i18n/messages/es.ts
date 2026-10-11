@@ -1334,10 +1334,8 @@ export const es: Dictionary = {
   "apiError.host.unknown": "No existe el collie {host} en este equipo.",
   "apiError.crew.not_lead": "Este collie no lidera ningún equipo. No hay datos para mostrar.",
   // --- worktrees (ADR 0032) ---
-  "apiError.worktree.list_failed": "Error al listar los worktrees: {reason}",
   "apiError.worktree.create_failed": "Error al crear el worktree: {reason}",
   "apiError.worktree.created_not_opened": "La rama fue creada, pero falló la apertura del espacio: {reason}",
-  "apiError.worktree.open_failed": "Error al abrir el worktree: {reason}",
   "apiError.worktree.busy": "Hay otra operación de worktree en ejecución. Reintente en un momento.",
   "apiError.worktree.ambiguous_branch": "El nombre de rama es ambiguo: {reason}",
   "apiError.worktree.branch_required": "Indique un nombre de rama.",

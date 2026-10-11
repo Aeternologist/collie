@@ -1338,10 +1338,8 @@ export const de: Dictionary = {
   "apiError.host.unknown": "Kein collie namens {host} in dieser Crew vorhanden.",
   "apiError.crew.not_lead": "Dieser collie führt keine Crew. Es gibt keine Crew anzuzeigen.",
   // --- worktrees (ADR 0032) ---
-  "apiError.worktree.list_failed": "Worktrees konnten nicht aufgelistet werden: {reason}",
   "apiError.worktree.create_failed": "Worktree konnte nicht erstellt werden: {reason}",
   "apiError.worktree.created_not_opened": "Branch wurde erstellt, konnte jedoch nicht geöffnet werden: {reason}",
-  "apiError.worktree.open_failed": "Worktree konnte nicht geöffnet werden: {reason}",
   "apiError.worktree.busy": "Ein anderer Worktree-Vorgang läuft noch. Bitte kurz warten.",
   "apiError.worktree.ambiguous_branch": "Branch-Name ist mehrdeutig: {reason}",
   "apiError.worktree.branch_required": "Bitte zuerst einen Branch-Namen angeben.",

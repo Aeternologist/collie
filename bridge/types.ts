@@ -1085,47 +1085,8 @@ export type CreateResponse =
   | { ok: true; pane: CreatedPane; replayed?: true; noPrompts?: boolean }
   | { ok: false; error: string; code?: ErrorCode; detail?: ApiErrorDetail };
 
-/** One Git worktree of the repo a space sits in (ADR 0032). */
-export interface WorktreeView {
-  /** Absolute checkout path — the identity, and what `open` is asked with. */
-  path: string;
-  /** The branch checked out there; `null` for a detached head. */
-  branch: string | null;
-  /**
-   * The space showing it, or `null` when it exists on disk and nothing does.
-   *
-   * `null` is what hides the Remove row: removal is addressed by space, so a checkout nothing shows
-   * cannot be removed from the phone at all.
-   */
-  openWorkspaceId: string | null;
-  /** `false` for the repo's own checkout, which is listed for context and is never removable. */
-  linked: boolean;
-  /** The multiplexer believes the checkout is gone and its administrative files could be pruned. */
-  prunable: boolean;
-}
-
 /**
- * GET /api/workspace/:id/worktrees — the worktrees of the repo that space sits in.
- *
- * `defaultBranch` is the LOCAL branch a create with `base: { kind: "default" }` starts from
- * (`resolveDefaultBranch`, bridge/worktree-base.ts), or `null` when the repo has none to name.
- */
-export type WorktreeListResponse =
-  | { ok: true; worktrees: WorktreeView[]; defaultBranch: string | null }
-  | { ok: false; error: string; code?: ErrorCode; detail?: ApiErrorDetail };
-
-/**
- * POST /api/workspace/:id/worktree[/open] — the space now showing the checkout.
- *
- * `alreadyOpen` says the space was already there, which is an ANSWER and not a failure: the phone
- * navigates to `pane` either way.
- */
-export type WorktreeOpenResponse =
-  | { ok: true; pane: CreatedPane; alreadyOpen: boolean }
-  | { ok: false; error: string; code?: ErrorCode; detail?: ApiErrorDetail };
-
-/**
- * POST /api/workspace/:id/worktree — the new worktree's space, plus what happened to the launcher
+ * POST /api/worktree — the new worktree's space, plus what happened to the launcher
  * (ADR 0089).
  *
  * `launcherStarted` is false when no launcher was asked for AND when one was asked for and could not

@@ -144,9 +144,7 @@ export const ERROR_CODES = {
   /** Twelve favourites already. A star never drops one the operator chose, so nothing was stored. */
   "folders.favourites_full": "favourites are full ({max}); remove one first",
 
-  // ── Worktrees: /api/workspace/:id/worktree[s|/open|/remove] (ADR 0032) ─────────────
-  /** The list could not be read — the space is not in a Git work tree, or the mux refused. */
-  "worktree.list_failed": "{reason}",
+  // ── Worktrees: /api/worktree and its plan (ADR 0032, ADR 0093) ─────────────────────
   /** Creation refused. `{reason}` is the multiplexer's own words, Git's sentence included. */
   "worktree.create_failed": "{reason}",
   /**
@@ -155,7 +153,6 @@ export const ERROR_CODES = {
    * (a second create answers `create_failed`, the path being taken). Probed on herdr 0.8.2.
    */
   "worktree.created_not_opened": "the worktree was created but could not be opened: {reason}",
-  "worktree.open_failed": "{reason}",
   /** Another worktree operation is still running — herdr serialises them. Try again in a moment. */
   "worktree.busy": "{reason}",
   /** The branch name matched more than one thing, so the multiplexer would not guess. */

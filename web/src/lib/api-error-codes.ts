@@ -80,11 +80,9 @@ export const API_ERROR_CODES = [
   "folders.unknown",
   "folders.favourites_full",
 
-  // Worktrees — /api/workspace/:id/worktree[s|/open|/remove] (ADR 0032)
-  "worktree.list_failed",
+  // Worktrees — /api/worktree and its plan (ADR 0032, ADR 0093)
   "worktree.create_failed",
   "worktree.created_not_opened",
-  "worktree.open_failed",
   "worktree.busy",
   "worktree.ambiguous_branch",
   "worktree.branch_required",
