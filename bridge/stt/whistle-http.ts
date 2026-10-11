@@ -22,9 +22,11 @@ import type { WhistleModelStore } from "./whistle-model.ts";
 //   PUT    /api/stt/whistle/host    write  `{ "on": boolean }`, the host engine's switch
 //   GET    /api/stt/model/<sha256>  read   the model's bytes, content-addressed
 //
-// All lead-local: none is in the crew's FORWARDABLE list and none reads `?host=`, exactly like
-// `/api/stt`, because speech is lead-only (ADR 0029). server.ts does the gating and the audit line;
-// everything the routes decide lives here so `bun test` can drive it.
+// None is forwarded: none is in the crew's FORWARDABLE list and none reads `?host=`, exactly like
+// `/api/stt`, because speech is lead-only (ADR 0029). A crew member answers them about its own model
+// and `stt.json`, as it answers its own `/api/stt`; only `/api/config` leaves `whistle` out on a peer.
+// server.ts does the gating and the audit line; everything the routes decide lives here so `bun test`
+// can drive it.
 //
 // THE SWITCH IS NOT A SETUP FORM (ADR 0096 Decision 3). It writes one document, `{ "provider":
 // "whistle" }`, through the same writer `collie stt setup` uses, and only when nothing else is
@@ -48,13 +50,15 @@ export interface WhistleRouteDeps {
   files?: SttSettingsFileOps;
 }
 
-/** The disk, for {@link writeSttSettingsFile}. The temporary is created exclusively, never written through. */
+/**
+ * The disk, for {@link writeSttSettingsFile}. The temporary is created exclusively, never written
+ * through. Its name is unique to one write (pid and sequence), so nothing is removed first: a name
+ * already there is a leftover of a dead process with the same pid, and the write fails rather than
+ * touching it.
+ */
 export const diskSttFileOps: SttSettingsFileOps = {
   mkdirp: (path, mode) => mkdirSync(path, { recursive: true, mode }),
-  write: (path, text, mode) => {
-    rmSync(path, { force: true });
-    writeFileSync(path, text, { mode, flag: "wx" });
-  },
+  write: (path, text, mode) => writeFileSync(path, text, { mode, flag: "wx" }),
   rename: (from, to) => renameSync(from, to),
   remove: (path) => rmSync(path, { force: true }),
 };
@@ -65,6 +69,8 @@ interface HostFlags {
   hostTaken: boolean;
   /** The file names `whistle` and the environment names nothing: a phone may turn it off. */
   removable: boolean;
+  /** What `stt.json` held when it was read (null: no file, or not readable), to see a change by. */
+  seen: string | null;
 }
 
 /**
@@ -89,13 +95,24 @@ function hostFlags(deps: WhistleRouteDeps): HostFlags {
     }
   }
   const env = sttEnvSettings(deps.env);
-  if (unreadable) return { hostEngine: false, hostTaken: true, removable: false };
+  if (unreadable) return { hostEngine: false, hostTaken: true, removable: false, seen: text };
   const effective = namedSttProvider(file, env);
   return {
     hostEngine: effective === "whistle",
     hostTaken: effective !== undefined && effective !== "whistle",
     removable: namedSttProvider(file, {}) === "whistle" && namedSttProvider({}, env) === undefined,
+    seen: text,
   };
+}
+
+/** Whether `stt.json` and the environment still say what they said when `before` was read. */
+function sameFlags(before: HostFlags, now: HostFlags): boolean {
+  return (
+    before.seen === now.seen &&
+    before.hostEngine === now.hostEngine &&
+    before.hostTaken === now.hostTaken &&
+    before.removable === now.removable
+  );
 }
 
 /** The whole `WhistleStatus`: the store's half and the switch's half. `/api/config` carries this too. */
@@ -153,7 +170,12 @@ export async function whistleHost(deps: WhistleRouteDeps, body: JsonValue | unde
   if (request.on) {
     if (flags.hostTaken) return { ...refuse(409, "stt.whistle_provider_taken"), attempt: { status: 409, outcome: "taken", on: true } };
     if ((await deps.store.ready()) === null) return { ...refuse(409, "stt.whistle_not_ready"), attempt: { status: 409, outcome: "not-ready", on: true } };
-    if (!flags.hostEngine) writeSttSettingsFile(deps.stateDir, { provider: "whistle" }, files);
+    // `ready()` may have hashed 17 MB, and `collie stt setup` may have written in the meantime. Read
+    // again, with no await between this read and the write, and refuse when anything changed: a
+    // provider the operator just set up is never overwritten by a tap that began before it.
+    const now = hostFlags(deps);
+    if (!sameFlags(flags, now)) return { ...refuse(409, "stt.whistle_provider_taken"), attempt: { status: 409, outcome: "taken", on: true } };
+    if (!now.hostEngine) writeSttSettingsFile(deps.stateDir, { provider: "whistle" }, files);
   } else if (flags.hostEngine) {
     // On, but from the environment: the deployment's statement, which no phone may change.
     if (!flags.removable) return { ...refuse(409, "stt.whistle_provider_taken"), attempt: { status: 409, outcome: "taken", on: false } };
@@ -170,7 +192,16 @@ export const MODEL_CSP = "default-src 'none'; sandbox";
 /** How many copies of the model one process sends at once. A phone copies it once; two is plenty. */
 export const MODEL_MAX_CONCURRENT = 2;
 
-/** Copies in flight in this process: counted from the answer to the end, the cancel or the error of its body. */
+/**
+ * The longest one copy holds its place. 17 MB took 29 s over a tailnet; a body nobody reads, from a
+ * client that went away without a cancel reaching the stream, gives its place back after this.
+ */
+export const MODEL_SEND_HOLD_MS = 5 * 60 * 1000;
+
+/**
+ * Copies in flight in this process: counted from the answer to the end, the cancel or the error of
+ * its body, the request's abort, or {@link MODEL_SEND_HOLD_MS}, whichever comes first.
+ */
 let modelSends = 0;
 
 /** Forget the copies in flight. For tests that leave a body unread. */
@@ -188,9 +219,15 @@ export function resetModelSends(): void {
  * The body is a stream made here, not `Response(Bun.file(...))`: Bun answers a `Range` request on a
  * file-backed body by itself (206), and this route serves whole copies only (a test sends a `Range`
  * header to a real server and expects the whole 200). At most {@link MODEL_MAX_CONCURRENT} copies
- * leave at once; a third gets 503 `stt.model_busy`.
+ * leave at once; a third gets 503 `stt.model_busy`. `signal` is the request's: a client that goes
+ * away gives its place back even when no cancel reaches the body.
  */
-export async function modelResponse(deps: Pick<WhistleRouteDeps, "store">, asked: string): Promise<WhistleRouteResult> {
+export async function modelResponse(
+  deps: Pick<WhistleRouteDeps, "store">,
+  asked: string,
+  signal?: AbortSignal,
+  holdMs: number = MODEL_SEND_HOLD_MS,
+): Promise<WhistleRouteResult> {
   const unknown = (): WhistleRouteResult => refuse(404, "stt.model_unknown");
   if (!/^[0-9a-f]{64}$/.test(asked)) return unknown();
   // `ready()` is null unless the held file's hash is one this build accepts.
@@ -203,11 +240,19 @@ export async function modelResponse(deps: Pick<WhistleRouteDeps, "store">, asked
   }
   modelSends++;
   let released = false;
+  // Idempotent: the end of the body, a cancel, the abort and the timer may each arrive, in any order.
   const release = (): void => {
     if (released) return;
     released = true;
     modelSends--;
+    clearTimeout(hold);
+    signal?.removeEventListener("abort", release);
   };
+  // The place only: a slow copy still being read keeps streaming, it just no longer counts.
+  const hold = setTimeout(release, holdMs);
+  hold.unref?.();
+  if (signal?.aborted === true) release();
+  else signal?.addEventListener("abort", release, { once: true });
   let reader: ReadableStreamDefaultReader<Uint8Array>;
   try {
     reader = Bun.file(ready.path).stream().getReader();

@@ -1141,8 +1141,10 @@ export function startServer(opts: {
   // One gate per Bun server, not per request: two slow uploads and their two provider calls share
   // the same bounded process-local capacity (bridge/stt/http.ts).
   const sttAdmission = createSttAdmission();
-  // The Whistle routes' world (ADR 0096): the model store, and where `stt.json` is. Lead-local, like
-  // `/api/stt`: a crew member answers none of them, and nothing here is ever forwarded.
+  // The Whistle routes' world (ADR 0096): the model store, and where `stt.json` is. Never forwarded,
+  // like `/api/stt`: no whistle route reads `?host=` or is in the crew's FORWARDABLE list. A crew
+  // member answers its own whistle routes about its own model and `stt.json`, as it answers its own
+  // `/api/stt`; the one difference on a peer is that `/api/config` leaves `whistle` out.
   const whistleDeps: WhistleRouteDeps = {
     store: opts.whistle ?? createWhistleModelStore({ stateDir: cfg.stateDir, version: opts.version }),
     stateDir: cfg.stateDir,
@@ -2768,7 +2770,7 @@ export function startServer(opts: {
         // nothing. The hash is compared with the held file's, never joined into a path.
         const denied = guard(req, cfg, "read", pairingGate);
         if (denied) return denied;
-        const { response, attempt } = await modelResponse(whistleDeps, sttModelMatch[1]!);
+        const { response, attempt } = await modelResponse(whistleDeps, sttModelMatch[1]!, req.signal);
         audit.record({ action: "stt.model.read", device: whois(req).device, detail: { ...attempt } });
         return secure(response);
       }

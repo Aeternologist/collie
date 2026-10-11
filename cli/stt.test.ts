@@ -139,7 +139,12 @@ describe("collie stt setup — openai-compatible", () => {
     });
     expect(d.files.entries.get(CONFIG_PATH)?.mode).toBe(0o600);
     // Never written through: the temporary is what carried the bytes, and the rename is the commit.
-    expect(d.files.ops).toEqual([`mv ${CONFIG_PATH}.tmp ${CONFIG_PATH}`]);
+    // The temporary's name is this write's alone (pid and sequence), never a shared `stt.json.tmp`.
+    expect(d.files.ops).toHaveLength(1);
+    const [verb, from, to] = d.files.ops[0]!.split(" ");
+    expect([verb, to]).toEqual(["mv", CONFIG_PATH]);
+    expect(from).toMatch(/\.\d+\.\d+\.tmp$/);
+    expect(from!.startsWith(`${CONFIG_PATH}.${process.pid}.`)).toBe(true);
     expect(said(d)).toContain("no restart needed");
     // The key is in the file and nowhere on the screen.
     expect(said(d)).not.toContain("sk-abcd1234");

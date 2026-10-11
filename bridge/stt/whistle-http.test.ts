@@ -1,12 +1,23 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createSttSettingsReader, sttSettingsPath } from "./config.ts";
+import { createSttSettingsReader, sttSettingsPath, writeSttSettingsFile, type SttSettingsFileOps } from "./config.ts";
 import { createWhistleModelStore, resetWhistleModelState, whistlePaths, type WhistleModelPin } from "./whistle-model.ts";
-import { MODEL_CSP, modelResponse, resetModelSends, whistleGet, whistleHost, whistleRemove, whistleStart, type WhistleRouteDeps } from "./whistle-http.ts";
+import {
+  diskSttFileOps,
+  MODEL_CSP,
+  MODEL_MAX_CONCURRENT,
+  modelResponse,
+  resetModelSends,
+  whistleGet,
+  whistleHost,
+  whistleRemove,
+  whistleStart,
+  type WhistleRouteDeps,
+} from "./whistle-http.ts";
 
 // The Whistle routes' rules, driven without Bun.serve. The gate in front of them (read vs write) is
 // pinned in server.test.ts, where the dispatch lives.
@@ -113,7 +124,7 @@ describe("PUT /api/stt/whistle/host", () => {
     expect(await result.response.json()).toMatchObject({ state: "ready", hostEngine: true, hostTaken: false });
     expect(JSON.parse(sttJson()!)).toEqual({ provider: "whistle" });
     if (process.platform !== "win32") expect(statSync(sttSettingsPath(stateDir)).mode & 0o777).toBe(0o600);
-    expect(existsSync(`${sttSettingsPath(stateDir)}.tmp`)).toBe(false);
+    expect(readdirSync(stateDir).filter((name) => name.endsWith(".tmp"))).toEqual([]);
     expect(await read()).toEqual({ provider: "whistle" });
 
     // Off removes it, and the same reader sees speech-to-text off.
@@ -137,6 +148,53 @@ describe("PUT /api/stt/whistle/host", () => {
     const off = await whistleHost(d, { on: false });
     expect(off.response.status).toBe(409);
     expect(sttJson()).toBe(theirs);
+  });
+
+  test("on refuses with 409 when the operator wrote stt.json while the model was being checked", async () => {
+    const d = deps();
+    await ready(d);
+    const theirs = JSON.stringify({ provider: "local-cli", command: "/usr/bin/whisper" });
+    // `collie stt setup` lands during the (slow) `ready()`: after the first read, before the write.
+    const racing: WhistleRouteDeps = {
+      ...d,
+      store: {
+        ...d.store,
+        ready: async () => {
+          const held = await d.store.ready();
+          writeFileSync(sttSettingsPath(stateDir), theirs);
+          return held;
+        },
+      },
+    };
+    const result = await whistleHost(racing, { on: true });
+    expect(result.response.status).toBe(409);
+    expect((await result.response.json()).code).toBe("stt.whistle_provider_taken");
+    expect(result.attempt).toEqual({ status: 409, outcome: "taken", on: true });
+    expect(sttJson()).toBe(theirs);
+  });
+
+  test("two writers never share a temporary name, and neither removes the other's", () => {
+    const names: string[] = [];
+    const watching: SttSettingsFileOps = {
+      ...diskSttFileOps,
+      write: (path, text, mode) => {
+        names.push(path);
+        diskSttFileOps.write(path, text, mode);
+      },
+    };
+    // Another writer's temporary, mid-write, at the old shared name and at a name of another pid.
+    const shared = `${sttSettingsPath(stateDir)}.tmp`;
+    const other = `${sttSettingsPath(stateDir)}.999999.1.tmp`;
+    writeFileSync(shared, "theirs");
+    writeFileSync(other, "theirs");
+    writeSttSettingsFile(stateDir, { provider: "whistle" }, watching);
+    writeSttSettingsFile(stateDir, { provider: "whistle" }, watching);
+    expect(names).toHaveLength(2);
+    expect(names[0]).not.toBe(names[1]);
+    for (const name of names) expect(name.startsWith(`${sttSettingsPath(stateDir)}.${process.pid}.`)).toBe(true);
+    expect(readFileSync(shared, "utf8")).toBe("theirs");
+    expect(readFileSync(other, "utf8")).toBe("theirs");
+    expect(JSON.parse(sttJson()!)).toEqual({ provider: "whistle" });
   });
 
   test("off with nothing configured is a no-op, and off cannot undo an environment that names whistle", async () => {
@@ -267,5 +325,42 @@ describe("GET /api/stt/model/<sha256>", () => {
     await fourth.response.body?.cancel();
     await fifth.response.body?.cancel();
     expect((await modelResponse(d, SHA)).response.status).toBe(200);
+  });
+
+  test("a request that goes away gives its place back, even when no cancel reaches the body", async () => {
+    const d = deps();
+    await ready(d);
+    const callers = [new AbortController(), new AbortController()];
+    const held = [];
+    for (const caller of callers) held.push(await modelResponse(d, SHA, caller.signal));
+    expect(held.map((h) => h.response.status)).toEqual([200, 200]);
+    expect((await modelResponse(d, SHA)).response.status).toBe(503);
+    callers[0]!.abort();
+    // Twice is still one place: the release is idempotent.
+    callers[0]!.abort();
+    const next = await modelResponse(d, SHA);
+    expect(next.response.status).toBe(200);
+    expect((await modelResponse(d, SHA)).response.status).toBe(503);
+    // A cancel after the abort does not give a second place back.
+    await held[0]!.response.body?.cancel();
+    expect((await modelResponse(d, SHA)).response.status).toBe(503);
+    callers[1]!.abort();
+    await next.response.body?.cancel();
+    await held[1]!.response.body?.cancel();
+  });
+
+  test("a body nobody reads gives its place back after the hold time", async () => {
+    const d = deps();
+    await ready(d);
+    const unread = [];
+    for (let i = 0; i < MODEL_MAX_CONCURRENT; i++) unread.push(await modelResponse(d, SHA, undefined, 20));
+    expect((await modelResponse(d, SHA, undefined, 20)).response.status).toBe(503);
+    await Bun.sleep(60);
+    const after = await modelResponse(d, SHA, undefined, 20);
+    expect(after.response.status).toBe(200);
+    // A slow copy that is still being read keeps streaming: the timer frees the place, not the body.
+    expect(new Uint8Array(await unread[0]!.response.arrayBuffer())).toEqual(MODEL);
+    await after.response.body?.cancel();
+    await unread[1]!.response.body?.cancel();
   });
 });

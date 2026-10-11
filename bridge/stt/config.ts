@@ -475,6 +475,9 @@ export interface SttSettingsFileOps {
   remove(path: string): void;
 }
 
+/** Writes of `stt.json` by this process so far, for the temporary's name. */
+let sttWriteSeq = 0;
+
 /**
  * Write `<stateDir>/stt.json`, the one way it is ever written: 0600 into a 0700 state dir, through a
  * temporary name in the same directory and renamed into place. A write that died half way must leave
@@ -484,7 +487,10 @@ export interface SttSettingsFileOps {
  */
 export function writeSttSettingsFile(stateDir: string, document: SttSettingsDocument, ops: SttSettingsFileOps): string {
   const path = sttSettingsPath(stateDir);
-  const temporary = `${path}.tmp`;
+  // A name unique to this write, as `pairing.ts` does it: a shared `stt.json.tmp` let the bridge's
+  // Settings switch and a `collie stt setup` in a terminal delete or rename each other's temporary.
+  // The pid keeps another process off the name; the counter keeps another write in this one off it.
+  const temporary = `${path}.${process.pid}.${++sttWriteSeq}.tmp`;
   try {
     ops.mkdirp(stateDir, 0o700);
     ops.write(temporary, `${JSON.stringify(document, null, 2)}\n`, 0o600);
