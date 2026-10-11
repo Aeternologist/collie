@@ -1,6 +1,6 @@
 # 0096: Speech can stay on the phone: one vendored engine for phone and host, a model the host fetches on a tap
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-11
 - **Shipped in:** pending (1.20.0, with the voice takeover)
 - **Amends in scope:** [ADR 0029](./0029-speech-to-text-is-a-provider-seam-collie-owns.md), whose

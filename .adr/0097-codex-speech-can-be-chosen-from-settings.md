@@ -1,6 +1,6 @@
 # 0097: Codex speech can be chosen from Settings, after the same consent, with a tap
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-11
 - **Shipped in:** pending (1.20.0, with the voice takeover and ADR 0096)
 - **Amends in scope:** [ADR 0029](./0029-speech-to-text-is-a-provider-seam-collie-owns.md) and
