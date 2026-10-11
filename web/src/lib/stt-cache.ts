@@ -10,7 +10,7 @@
 // no route for `/api/`; only the page reads it, with `caches.match`. The worker's own route is
 // `stt/` and nothing else (ADR 0087: no service-worker cache of API answers).
 
-import { ACCEPTED_WHISTLE_SHAS, NEEDLE_VERSION_DIR } from "../stt/pins";
+import { ACCEPTED_WHISTLE_SHAS, NEEDLE_JS_SHA256, NEEDLE_VERSION_DIR, NEEDLE_WASM_SHA256 } from "../stt/pins";
 
 /** The cache's name at the origin root. A mount adds `:<mount>` (below), the way the font cache does. */
 export const STT_CACHE_PREFIX = "collie-stt";
@@ -80,4 +80,38 @@ export function sttStorable(response: Response, path: string): boolean {
   if (path.endsWith(".wasm")) return type.includes("wasm");
   if (path.endsWith(".js")) return type.includes("javascript");
   return false;
+}
+
+/** The engine's folder, mount-free: everything under it is pinned, file by file. */
+const ENGINE_DIR = `/stt/${NEEDLE_VERSION_DIR}/`;
+
+/** The sha256 each engine file must have to be stored, by its mount-free path. */
+const ENGINE_PINS: ReadonlyMap<string, string> = new Map([
+  [sttEnginePath("needle.js"), NEEDLE_JS_SHA256],
+  [sttEnginePath("needle.wasm"), NEEDLE_WASM_SHA256],
+]);
+
+function hex(digest: ArrayBuffer): string {
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * What the service worker puts in the cache for a response {@link sttStorable} already took, or null
+ * for nothing. A file in the engine's folder is stored only as the bytes whose sha256 is that file's
+ * pin (src/stt/pins.ts): this cache outlives every reload, so a wrong engine served once (a proxy,
+ * a half-deployed build) would otherwise be the engine from then on. The copy is built from exactly
+ * the bytes that were hashed. Any other file there is not stored at all, and everything outside the
+ * folder (the worker script) is stored as it came. The response passed in is consumed.
+ */
+export async function sttCopyToStore(
+  response: Response,
+  path: string,
+  digest: (bytes: ArrayBuffer) => Promise<ArrayBuffer> = (bytes) => crypto.subtle.digest("SHA-256", bytes),
+): Promise<Response | null> {
+  if (!path.startsWith(ENGINE_DIR)) return response;
+  const pin = ENGINE_PINS.get(path);
+  if (pin === undefined) return null;
+  const bytes = await response.arrayBuffer();
+  if (hex(await digest(bytes)) !== pin) return null;
+  return new Response(bytes, { status: response.status, statusText: response.statusText, headers: response.headers });
 }

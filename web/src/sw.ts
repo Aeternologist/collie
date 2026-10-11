@@ -7,7 +7,7 @@ import { decidePush, notificationPath, type NotifData, type PushPayload } from "
 import { askInApp, openNotificationTarget, type OpenOutcome, type OpenTargetClient } from "./lib/notification-open";
 import { readPushTitles } from "./lib/push-title-store";
 import { FONT_URLS, navigationNetworkOnlyUnder } from "./lib/sw-routes";
-import { stripMount, sttCacheName, sttStorable, sttSweepKeeps } from "./lib/stt-cache";
+import { stripMount, sttCacheName, sttCopyToStore, sttStorable, sttSweepKeeps } from "./lib/stt-cache";
 
 // Where this worker is mounted (ADR 0052): the directory it was fetched from, which is the mount
 // the app registered it under (lib/pwa.ts) — `/` at the origin root, `/collie/` behind a proxy that
@@ -144,7 +144,9 @@ self.addEventListener("activate", (event: ExtendableEvent) => {
 // The model itself is not served by this route. The page reads it from the same cache directly.
 // What may be stored is `sttStorable` (an unredirected 200 of the right type, the font cache's rule),
 // and the worker's response is stored whole, headers included: its own `Content-Security-Policy` is
-// what lets it compile wasm, and the copy must carry it.
+// what lets it compile wasm, and the copy must carry it. The two engine files are stored only when
+// their bytes hash to the pins (`sttCopyToStore`); a response that does not is passed through
+// uncached, so a wrong engine served once is never the engine from then on.
 const STT_CACHE = sttCacheName(MOUNT);
 
 registerRoute(
@@ -155,7 +157,14 @@ registerRoute(
     const hit = await cache.match(request);
     if (hit) return hit;
     const response = await fetch(request);
-    if (sttStorable(response, stripMount(url.pathname, MOUNT))) void cache.put(request, response.clone()).catch(() => null);
+    const path = stripMount(url.pathname, MOUNT);
+    // Hashing and writing are off the response path, like the font cache's write: a failure costs the
+    // cached copy, never this load.
+    if (sttStorable(response, path)) {
+      void sttCopyToStore(response.clone(), path)
+        .then((copy) => (copy === null ? null : cache.put(request, copy)))
+        .catch(() => null);
+    }
     return response;
   },
 );

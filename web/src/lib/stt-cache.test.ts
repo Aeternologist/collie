@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { ACCEPTED_WHISTLE_SHAS, NEEDLE_VERSION_DIR } from "@/stt/pins";
@@ -6,6 +8,7 @@ import {
   modelShaOfPath,
   stripMount,
   sttCacheName,
+  sttCopyToStore,
   sttEnginePath,
   sttModelPath,
   sttStorable,
@@ -96,5 +99,43 @@ describe("what may be stored", () => {
 
   it("stores nothing else under stt/", () => {
     expect(sttStorable(response({ type: "text/plain" }), "/stt/needle-3-93e88ede/LICENSE")).toBe(false);
+  });
+});
+
+describe("what the worker stores for an engine file", () => {
+  // The vendored engine, the bytes the pins were measured on.
+  const vendored = (file: string): Uint8Array<ArrayBuffer> =>
+    new Uint8Array(readFileSync(resolve(__dirname, "../../public/stt", NEEDLE_VERSION_DIR, file)));
+  const served = (bytes: Uint8Array<ArrayBuffer>, type: string): Response =>
+    new Response(bytes, { status: 200, headers: { "content-type": type, "content-security-policy": "default-src 'none'" } });
+
+  it("stores the pinned bytes, headers and all", async () => {
+    for (const [file, type] of [["needle.js", "text/javascript"], ["needle.wasm", "application/wasm"]] as const) {
+      const bytes = vendored(file);
+      const copy = await sttCopyToStore(served(bytes, type), sttEnginePath(file));
+      expect(copy).not.toBeNull();
+      expect(new Uint8Array(await copy!.arrayBuffer())).toEqual(bytes);
+      expect(copy!.status).toBe(200);
+      expect(copy!.headers.get("content-type")).toBe(type);
+      expect(copy!.headers.get("content-security-policy")).toBe("default-src 'none'");
+    }
+  });
+
+  it("stores nothing when the bytes are not the pinned ones", async () => {
+    const tampered = vendored("needle.js");
+    tampered[0] = tampered[0]! ^ 1;
+    expect(await sttCopyToStore(served(tampered, "text/javascript"), sttEnginePath("needle.js"))).toBeNull();
+    // The right bytes under the other file's name are not that file.
+    expect(await sttCopyToStore(served(vendored("needle.js"), "application/wasm"), sttEnginePath("needle.wasm"))).toBeNull();
+  });
+
+  it("stores no other file from the engine's folder", async () => {
+    const other = `/stt/${NEEDLE_VERSION_DIR}/extra.js`;
+    expect(await sttCopyToStore(served(vendored("needle.js"), "text/javascript"), other)).toBeNull();
+  });
+
+  it("stores the worker script, outside the engine's folder, as it came", async () => {
+    const worker = served(new TextEncoder().encode("self.onmessage = () => {};"), "text/javascript");
+    expect(await sttCopyToStore(worker, "/stt/worker-abc123.js")).toBe(worker);
   });
 });
