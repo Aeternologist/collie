@@ -269,7 +269,8 @@ export function useSttRecorder({
     void (async () => {
       let stream: MediaStream;
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // One channel: speech is mono, and a stereo stream would double the decode of a long clip.
+        stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } });
       } catch {
         fail(operation, t("stt.error.micRefused"));
         return;
