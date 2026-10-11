@@ -192,10 +192,12 @@ export const MODEL_CSP = "default-src 'none'; sandbox";
 export const MODEL_MAX_CONCURRENT = 2;
 
 /**
- * The longest one copy holds its place. 17 MB took 29 s over a tailnet; a body nobody reads, from a
- * client that went away without a cancel reaching the stream, gives its place back after this.
+ * The longest one copy holds its place. 17 MB took 29 s over a tailnet. Two minutes still carries the
+ * 16.9 MB model at about 1.1 Mbit/s, a poor mobile link; a body nobody reads, from a client that went
+ * away without a cancel reaching the stream, gives its place back after this. A slower copy keeps
+ * streaming, it just stops counting against {@link MODEL_MAX_CONCURRENT}.
  */
-export const MODEL_SEND_HOLD_MS = 5 * 60 * 1000;
+export const MODEL_SEND_HOLD_MS = 2 * 60 * 1000;
 
 /**
  * Copies in flight in this process: counted from the answer to the end, the cancel or the error of

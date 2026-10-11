@@ -219,6 +219,30 @@ describe("the Whistle model store", () => {
     }
   });
 
+  test("a body one byte over the pinned size stops there, before the hash, and leaves no part file", async () => {
+    const over = new Uint8Array(MODEL.byteLength + 1);
+    over.set(MODEL);
+    for (const length of [over.byteLength, null]) {
+      resetWhistleModelState();
+      const s = store(fakeFetch(over, { length, chunks: 4 }).fn);
+      await s.start();
+      await s.settled();
+      const status = await s.status();
+      expect(status.state).toBe("failed");
+      expect(status.reason).toBe(`the download is larger than ${MODEL.byteLength} bytes`);
+      expect(leftovers()).toEqual([]);
+      expect(existsSync(whistlePaths(stateDir).model)).toBe(false);
+      expect(existsSync(whistlePaths(stateDir).manifest)).toBe(false);
+    }
+  });
+
+  test("a body of exactly the pinned size still lands", async () => {
+    const s = store(fakeFetch(MODEL).fn);
+    await s.start();
+    await s.settled();
+    expect((await s.status()).state).toBe("ready");
+  });
+
   test("an HTTP error and a network error each fail with a short reason", async () => {
     const s = store(fakeFetch(MODEL, { status: 404 }).fn);
     await s.start();
@@ -478,7 +502,8 @@ describe("the Whistle model store", () => {
 
   test("importFile of the wrong bytes keeps nothing and names both hashes", async () => {
     const src = join(stateDir, "..", `collie-whistle-wrong-${process.pid}.cact`);
-    const wrong = new TextEncoder().encode("some other file entirely, but of a plausible size");
+    // The pinned size exactly: a longer file is refused by the cap before it is ever hashed.
+    const wrong = new TextEncoder().encode("x".repeat(MODEL.byteLength));
     writeFileSync(src, wrong);
     try {
       const s = store(fakeFetch().fn);
@@ -657,7 +682,7 @@ describe("the download's redirects", () => {
       ["https://127.0.0.1/x", "the download was sent to a local or private address"],
       ["https://2130706433/x", "the download was sent to a local or private address"],
       ["https://10.1.2.3/x", "the download was sent to a local or private address"],
-      ["https://100.64.0.5/x", "the download was sent to a local or private address"],
+      ["https://100.64.0.1/x", "the download was sent to a local or private address"],
       ["https://169.254.169.254/latest/meta-data", "the download was sent to a local or private address"],
       ["https://192.168.1.1/x", "the download was sent to a local or private address"],
       ["https://[::1]/x", "the download was sent to a local or private address"],

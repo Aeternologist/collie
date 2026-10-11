@@ -230,6 +230,20 @@ describe("collie stt whistle --host", () => {
     expect(said(d)).toContain("already Whistle");
   });
 
+  test("a file holding only a change stamp names no provider: no question, Whistle is written", async () => {
+    const stamp = JSON.stringify({ changedBy: "Pixel 8", changedAt: "2026-10-11T08:00:00.000Z" });
+    // "n" is queued so that a question would stop the run; the run must not ask.
+    const d = deps({ seed: { [sttJson()]: stamp }, answers: ["n"] });
+    expect(await cmdSttWhistle(d, ["--host"])).toBe(EXIT.OK);
+    expect(said(d)).not.toContain("Replace it with Whistle");
+    expect(said(d)).not.toContain("already has");
+    expect(writtenDocument(d)).toEqual({ provider: "whistle" });
+
+    const quiet = deps({ seed: { [sttJson()]: stamp } });
+    expect(await cmdSttWhistle(quiet, ["--host"])).toBe(EXIT.OK);
+    expect(writtenDocument(quiet)).toEqual({ provider: "whistle" });
+  });
+
   const OTHER = () => ({ [sttJson()]: JSON.stringify({ provider: "local-cli", command: "/opt/engine" }) });
 
   test("another provider and no terminal and no --yes: refused, nothing written, nothing fetched", async () => {

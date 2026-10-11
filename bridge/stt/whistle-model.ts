@@ -35,7 +35,7 @@ import { ACCEPTED_WHISTLE_SHAS, NEEDLE_JS_BYTES, NEEDLE_VERSION_DIR, NEEDLE_WASM
 //     part files no live lock names. (Two processes that both judge the same stale lock can still
 //     race once and both download. Each writes its OWN part file and renames only that one, after
 //     its own hash gate, so the model that lands is whole either way.)
-//   • a 32 MiB cap, counted on the bytes as they arrive, and a 10-minute deadline.
+//   • a cap at the pinned size, counted on the bytes as they arrive, and a 10-minute deadline.
 //   • streamed to `whistle.cact.<pid>.<seq>.part` (0600, created exclusively, this download's
 //     alone) with a running sha256, and renamed into place only when the hash equals the pin. Any
 //     failure deletes that part file and records a short reason, which `GET /api/stt/whistle`
@@ -68,9 +68,6 @@ export const WHISTLE_FOLDER_NAMES = [WHISTLE_MODEL_FILENAME, WHISTLE_MANIFEST_FI
 
 /** How many redirects a download follows before it gives up. */
 export const WHISTLE_MAX_REDIRECTS = 5;
-
-/** The most bytes a download may deliver before it is stopped. The pinned model is 16.9 MB. */
-export const WHISTLE_DOWNLOAD_CAP_BYTES = 32 * 1024 * 1024;
 
 /** How long one download may take, request to rename. 18 MB took 29 s over a tailnet. */
 export const WHISTLE_DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1000;
@@ -158,6 +155,7 @@ export interface WhistleModelDeps {
   pin?: WhistleModelPin;
   /** The hashes this build accepts. {@link ACCEPTED_WHISTLE_SHAS} unless a test names its own. */
   accepted?: readonly string[];
+  /** The most bytes a download or an import may deliver. The pin's size unless a test names its own. */
   capBytes?: number;
   timeoutMs?: number;
 }
@@ -326,7 +324,8 @@ export function createWhistleModelStore(deps: WhistleModelDeps): WhistleModelSto
   const paths = whistlePaths(deps.stateDir);
   const pin = deps.pin ?? WHISTLE_MODEL;
   const accepted = deps.accepted ?? ACCEPTED_WHISTLE_SHAS;
-  const capBytes = deps.capBytes ?? WHISTLE_DOWNLOAD_CAP_BYTES;
+  // The pinned size: a body that runs one byte past it cannot be the pinned model, so stop there.
+  const capBytes = deps.capBytes ?? pin.bytes;
   const timeoutMs = deps.timeoutMs ?? WHISTLE_DOWNLOAD_TIMEOUT_MS;
   const fetchImpl: WhistleFetch = deps.fetch ?? ((url, init) => fetch(url, init));
   const lookupImpl: WhistleLookup = deps.lookup ?? dnsLookup;
@@ -619,7 +618,7 @@ export function createWhistleModelStore(deps: WhistleModelDeps): WhistleModelSto
       const declared = Number(res.headers.get("content-length") ?? "");
       if (Number.isFinite(declared) && declared > capBytes) {
         await res.body.cancel().catch(() => undefined);
-        throw new WhistleRefusal(`the download is larger than ${capBytes / (1024 * 1024)} MiB`);
+        throw new WhistleRefusal(`the download is larger than ${capBytes} bytes`);
       }
       const reader = res.body.getReader();
       for (;;) {
@@ -633,7 +632,7 @@ export function createWhistleModelStore(deps: WhistleModelDeps): WhistleModelSto
         flight.received += chunk.value.byteLength;
         if (flight.received > capBytes) {
           await reader.cancel().catch(() => undefined);
-          throw new WhistleRefusal(`the download is larger than ${capBytes / (1024 * 1024)} MiB`);
+          throw new WhistleRefusal(`the download is larger than ${capBytes} bytes`);
         }
         hash.update(chunk.value);
         await file.write(chunk.value);
@@ -687,13 +686,13 @@ export function createWhistleModelStore(deps: WhistleModelDeps): WhistleModelSto
       }
       const entry = await input.stat();
       if (!entry.isFile()) throw new WhistleRefusal("that is not a regular file");
-      if (entry.size > capBytes) throw new WhistleRefusal(`the file is larger than ${capBytes / (1024 * 1024)} MiB`);
+      if (entry.size > capBytes) throw new WhistleRefusal(`the file is larger than ${capBytes} bytes`);
       const buffer = new Uint8Array(1024 * 1024);
       for (;;) {
         const { bytesRead } = await input.read(buffer, 0, buffer.byteLength, null);
         if (bytesRead === 0) break;
         flight.received += bytesRead;
-        if (flight.received > capBytes) throw new WhistleRefusal(`the file is larger than ${capBytes / (1024 * 1024)} MiB`);
+        if (flight.received > capBytes) throw new WhistleRefusal(`the file is larger than ${capBytes} bytes`);
         const piece = buffer.subarray(0, bytesRead);
         hash.update(piece);
         await file.write(piece);
@@ -774,7 +773,7 @@ export function createWhistleModelStore(deps: WhistleModelDeps): WhistleModelSto
     }
     if (entry.isSymbolicLink()) return { outcome: "refused", reason: "that is a symlink; Collie does not follow it, so name the file itself" };
     if (!entry.isFile()) return { outcome: "refused", reason: "that is not a regular file" };
-    if (entry.size > capBytes) return { outcome: "refused", reason: `that file is larger than ${capBytes / (1024 * 1024)} MiB` };
+    if (entry.size > capBytes) return { outcome: "refused", reason: `that file is larger than ${capBytes} bytes` };
     return begin((flight, file) => copyIn(source, flight, file));
   }
 

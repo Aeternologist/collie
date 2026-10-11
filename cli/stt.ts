@@ -763,7 +763,9 @@ export async function cmdSttStatus(deps: SttDeps): Promise<number> {
   if (settings === null) {
     if (warnings.length === 0) {
       deps.io.out("speech-to-text: off — nothing configured. Run `collie stt setup` to turn it on.");
-      deps.io.out(`  config    ${path} (absent)`);
+      // A file that names no provider (a bare change stamp, written when a paired device turned speech
+      // Off) is there, so "absent" would be wrong.
+      deps.io.out(`  config    ${path} (${deps.files.exists(path) ? "no provider" : "absent"})`);
       await heldModelRow(deps);
       return EXIT.OK;
     }
@@ -872,18 +874,19 @@ function keyLabel(apiKey: string | undefined): string {
 export function cmdSttOff(deps: SttDeps): number {
   const path = settingsPath(deps);
   const existed = deps.files.exists(path);
-  const wasWhistle = readFileSettings(deps).provider === "whistle";
+  const named = readFileSettings(deps).provider;
+  const wasWhistle = named === "whistle";
   try {
     deps.files.remove(path);
   } catch (err) {
     deps.io.err(`error: could not remove ${path} — ${err instanceof Error ? err.message : String(err)}`);
     return EXIT.FAIL;
   }
-  deps.io.out(
-    existed
-      ? `✓ removed ${path} — speech-to-text is off from the next request (no restart needed).`
-      : `speech-to-text was already off — no ${path} to remove.`,
-  );
+  // A file with no provider (a bare change stamp from a paired device) is removed, but it was not
+  // switching anything on, so "off from the next request" would be a claim about a change that is not one.
+  if (!existed) deps.io.out(`speech-to-text was already off — no ${path} to remove.`);
+  else if (named === undefined) deps.io.out(`speech-to-text was already off — removed ${path}, which named no provider.`);
+  else deps.io.out(`✓ removed ${path} — speech-to-text is off from the next request (no restart needed).`);
   if (wasWhistle) {
     deps.io.out(`  The Whistle model stays in ${join(deps.ctx.stateDir, "whistle")}, so phones can still use it.`);
     deps.io.out("  To delete it, run `collie stt whistle --remove`.");

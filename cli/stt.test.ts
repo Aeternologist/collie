@@ -507,6 +507,22 @@ describe("collie stt status", () => {
     expect(heard).not.toContain("sk-secret-9999");
   });
 
+  test("a file holding only a change stamp is there, so it is not called absent", async () => {
+    const stamp = JSON.stringify({ changedBy: "Pixel 8", changedAt: "2026-10-11T08:00:00.000Z" });
+    const d = deps({ seed: { [CONFIG_PATH]: stamp } });
+    expect(await cmdSttStatus(d)).toBe(EXIT.OK);
+    expect(said(d)).toContain("speech-to-text: off");
+    expect(said(d)).toContain(`${CONFIG_PATH} (no provider)`);
+    expect(said(d)).not.toContain("(absent)");
+    expect(d.files.entries.has(CONFIG_PATH)).toBe(true);
+  });
+
+  test("with no file at all it still says absent", async () => {
+    const d = deps();
+    expect(await cmdSttStatus(d)).toBe(EXIT.OK);
+    expect(said(d)).toContain(`${CONFIG_PATH} (absent)`);
+  });
+
   test("`codex-cli` is labelled as impersonation, in those words", async () => {
     const d = deps({
       seed: { [CONFIG_PATH]: '{"provider":"codex","codexBin":"/opt/bin/codex","wireIdentity":"codex-cli"}' },
@@ -526,12 +542,22 @@ describe("collie stt status", () => {
 describe("collie stt off", () => {
   test("removes stt.json and only stt.json", () => {
     const d = deps({
-      seed: { [CONFIG_PATH]: "{}", [`${STATE}/paired-devices.json`]: "{}" },
+      seed: { [CONFIG_PATH]: '{"provider":"local-cli","command":"/opt/engine"}', [`${STATE}/paired-devices.json`]: "{}" },
     });
     expect(cmdSttOff(d)).toBe(EXIT.OK);
     expect(d.files.entries.has(CONFIG_PATH)).toBe(false);
     expect(d.files.entries.has(`${STATE}/paired-devices.json`)).toBe(true);
     expect(said(d)).toContain("no restart needed");
+  });
+
+  test("a file holding only a change stamp is removed, and speech was already off", () => {
+    const stamp = JSON.stringify({ changedBy: "Pixel 8", changedAt: "2026-10-11T08:00:00.000Z" });
+    const d = deps({ seed: { [CONFIG_PATH]: stamp, [`${STATE}/paired-devices.json`]: "{}" } });
+    expect(cmdSttOff(d)).toBe(EXIT.OK);
+    expect(said(d)).toContain("was already off");
+    expect(said(d)).not.toContain("off from the next request");
+    expect(d.files.entries.has(CONFIG_PATH)).toBe(false);
+    expect(d.files.entries.has(`${STATE}/paired-devices.json`)).toBe(true);
   });
 
   test("a second off is a clean no-op", () => {

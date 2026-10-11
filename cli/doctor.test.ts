@@ -2493,6 +2493,14 @@ describe("stt.whistle-model", () => {
     expect(f?.detail).toContain("cannot be read");
   });
 
+  test("a stt.json holding only a change stamp names no provider: no finding, no warning", async () => {
+    const stamp = JSON.stringify({ changedBy: "Pixel 8", changedAt: "2026-10-11T08:00:00.000Z" });
+    const { byCheck, code } = await run(() => undefined, (dir) => ({ [join(dir, "stt.json")]: stamp }));
+    expect(byCheck.has("stt.whistle-model")).toBe(false);
+    expect([...byCheck.keys()].filter((c) => c.startsWith("stt."))).toEqual([]);
+    expect(code).toBe(EXIT.OK);
+  });
+
   test("the host engine is Whistle and the model is missing: a warning naming the verb", async () => {
     const { byCheck } = await run(() => undefined, (dir) => ({ [join(dir, "stt.json")]: JSON.stringify({ provider: "whistle" }) }));
     expect(byCheck.get("stt.whistle-model")).toMatchObject({ status: "warn", remedy: "run `collie stt whistle`" });

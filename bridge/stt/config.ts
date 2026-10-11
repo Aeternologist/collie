@@ -2,6 +2,7 @@ import { join } from "node:path";
 
 import { HOST, type Host } from "../host.ts";
 import type { JsonValue } from "../json.ts";
+import { hasHiddenLabelChar } from "../pairing.ts";
 import { diskIo, type OperatorFileIo } from "../operator-file.ts";
 import { jsonRecord, jsonStringField } from "./json.ts";
 
@@ -491,8 +492,8 @@ export function sttChangeStamp(raw: JsonValue | undefined): SttChangeStamp | nul
   const changedBy = optionalString(o.changedBy);
   const changedAt = optionalString(o.changedAt);
   if (changedBy === undefined || changedAt === undefined || changedBy.length > MAX_CHANGED_BY) return null;
-  // Control characters have no business in a label a screen prints.
-  if ([...changedBy].some((c) => c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f)) return null;
+  // The rule pairing applies to a new label: control, format (bidi, zero-width) and separator characters.
+  if (hasHiddenLabelChar(changedBy)) return null;
   if (!/^\d{4}-\d{2}-\d{2}T/.test(changedAt) || Number.isNaN(Date.parse(changedAt))) return null;
   return { changedBy, changedAt };
 }
