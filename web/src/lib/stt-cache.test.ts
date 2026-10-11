@@ -114,7 +114,9 @@ describe("what the worker stores for an engine file", () => {
       const bytes = vendored(file);
       const copy = await sttCopyToStore(served(bytes, type), sttEnginePath(file));
       expect(copy).not.toBeNull();
-      expect(new Uint8Array(await copy!.arrayBuffer())).toEqual(bytes);
+      // One compare of the buffers, not toEqual: an element-by-element walk of the 929 KB wasm took
+      // over the 5 s limit on a CI runner.
+      expect(Buffer.from(await copy!.arrayBuffer()).equals(bytes)).toBe(true);
       expect(copy!.status).toBe(200);
       expect(copy!.headers.get("content-type")).toBe(type);
       expect(copy!.headers.get("content-security-policy")).toBe("default-src 'none'");
