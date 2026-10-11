@@ -55,7 +55,8 @@ export function TierLabel({ children }: { children: ReactNode }) {
 export function ReadOnlyHostBanner() {
   useLocale();
   return (
-    <Notice tone="info" variant="box" icon={<Lock />}>
+    // shrink-0 for the reason LockedNote gives: a direct child of the settings scroller.
+    <Notice tone="info" variant="box" icon={<Lock />} className="shrink-0">
       {t("settings.voice.readOnly")}
     </Notice>
   );

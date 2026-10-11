@@ -808,7 +808,10 @@ function lockOf(host: SttHostStatus): LockReason | null {
 /** An option set up in a terminal, by the environment, or a file that cannot be read: what to run instead of a choice. */
 function LockedNote({ lock }: { lock: LockReason }) {
   return (
-    <Notice tone="info" variant="box" icon={<Info />}>
+    // shrink-0: a direct child of the settings scroller, which is a flex column. The box's own
+    // min-h-[42px] replaces min-height:auto, so without it the column squeezed this note to one
+    // line and its commands drew over the options below.
+    <Notice tone="info" variant="box" icon={<Info />} className="shrink-0">
       <div className="space-y-2">
         {lock === "terminal" ? (
           <>
