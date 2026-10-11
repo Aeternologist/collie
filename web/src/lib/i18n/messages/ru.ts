@@ -1286,6 +1286,7 @@ export const ru: Dictionary = {
   "settings.updateCard.summary.peers.few": "{count} узла",
   "settings.updateCard.summary.peers.many": "{count} узлов",
   "settings.updateCard.preflightUnavailable": "Не удалось выполнить предварительную проверку на этой машине.",
+  "settings.updateCard.bridgeUnreachable": "Не удалось связаться с мостом.",
   "settings.updateCard.packageManaged": "Эту установку обновляет ваш пакетный менеджер. Collie не будет продолжать отсюда.",
   "settings.updateCard.remedy": "Исправление: {command}",
   "settings.updateCard.confirmTitle": "Обновить до {version}?",

@@ -1362,6 +1362,7 @@ export const zhTW: Dictionary = {
   "settings.updateCard.summary.peers.one": "{count} 台節點",
   "settings.updateCard.summary.peers.other": "{count} 台節點",
   "settings.updateCard.preflightUnavailable": "無法在此機器上執行預檢。",
+  "settings.updateCard.bridgeUnreachable": "無法連線 Bridge。",
   "settings.updateCard.packageManaged": "此安裝由你的套件管理員更新，Collie 不會從這裡更新它。",
   "settings.updateCard.remedy": "修復指令：{command}",
   "settings.updateCard.confirmTitle": "更新至 {version}？",

@@ -1386,6 +1386,7 @@ export const ja: Dictionary = {
   "settings.updateCard.summary.peers.one": "{count}台のピア",
   "settings.updateCard.summary.peers.other": "{count}台のピア",
   "settings.updateCard.preflightUnavailable": "このマシンでは事前チェックを実行できませんでした。",
+  "settings.updateCard.bridgeUnreachable": "ブリッジに接続できませんでした。",
   "settings.updateCard.packageManaged": "このインストールはパッケージマネージャーが更新します。Collie はここからは更新しません。",
   "settings.updateCard.remedy": "対処法: {command}",
   "settings.updateCard.confirmTitle": "{version} に更新しますか？",

@@ -1224,6 +1224,7 @@ export const pt: Dictionary = {
   "settings.updateCard.summary.peers.one": "{count} peer",
   "settings.updateCard.summary.peers.other": "{count} peers",
   "settings.updateCard.preflightUnavailable": "A verificação prévia não pôde ser executada nesta máquina.",
+  "settings.updateCard.bridgeUnreachable": "Não foi possível acessar a bridge.",
   "settings.updateCard.packageManaged": "Seu gerenciador de pacotes atualiza esta instalação. O Collie não continuará daqui.",
   "settings.updateCard.remedy": "Correção: {command}",
   "settings.updateCard.confirmTitle": "Atualizar para {version}?",

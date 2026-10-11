@@ -1224,6 +1224,7 @@ export const fr: Dictionary = {
   "settings.updateCard.summary.peers.one": "{count} pair",
   "settings.updateCard.summary.peers.other": "{count} pairs",
   "settings.updateCard.preflightUnavailable": "Impossible d'exécuter la vérification préalable sur cette machine.",
+  "settings.updateCard.bridgeUnreachable": "Impossible de joindre le bridge.",
   "settings.updateCard.packageManaged": "Votre gestionnaire de paquets met à jour cette installation. Collie ne prendra pas le relais.",
   "settings.updateCard.remedy": "Correction : {command}",
   "settings.updateCard.confirmTitle": "Mettre à jour vers {version} ?",

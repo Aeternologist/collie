@@ -1224,6 +1224,7 @@ export const tr: Dictionary = {
   "settings.updateCard.summary.peers.one": "{count} eş",
   "settings.updateCard.summary.peers.other": "{count} eş",
   "settings.updateCard.preflightUnavailable": "Ön denetim bu makinede çalıştırılamadı.",
+  "settings.updateCard.bridgeUnreachable": "Bridge'e ulaşılamadı.",
   "settings.updateCard.packageManaged": "Bu kurulumu paket yöneticiniz günceller. Collie buradan sonrasını devralmaz.",
   "settings.updateCard.remedy": "Düzeltme: {command}",
   "settings.updateCard.confirmTitle": "{version} sürümüne güncellensin mi?",

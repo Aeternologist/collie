@@ -1366,6 +1366,7 @@ export const zh: Dictionary = {
   "settings.updateCard.summary.peers.one": "{count} 台节点",
   "settings.updateCard.summary.peers.other": "{count} 台节点",
   "settings.updateCard.preflightUnavailable": "无法在此机器上运行预检。",
+  "settings.updateCard.bridgeUnreachable": "无法连接网桥。",
   "settings.updateCard.packageManaged": "此安装由你的软件包管理器更新，Collie 不会从这里更新它。",
   "settings.updateCard.remedy": "修复命令：{command}",
   "settings.updateCard.confirmTitle": "更新至 {version}？",

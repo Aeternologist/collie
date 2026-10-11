@@ -1400,6 +1400,7 @@ export const de: Dictionary = {
   "settings.updateCard.summary.peers.one": "{count} Peer",
   "settings.updateCard.summary.peers.other": "{count} Peers",
   "settings.updateCard.preflightUnavailable": "Der Preflight konnte auf diesem Rechner nicht ausgeführt werden.",
+  "settings.updateCard.bridgeUnreachable": "Bridge nicht erreichbar.",
   "settings.updateCard.packageManaged": "Diese Installation wird von deiner Paketverwaltung aktualisiert. Collie übernimmt das hier nicht.",
   "settings.updateCard.remedy": "Behebung: {command}",
   "settings.updateCard.confirmTitle": "Auf {version} aktualisieren?",

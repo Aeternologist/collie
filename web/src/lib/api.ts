@@ -1651,8 +1651,8 @@ export function checkForUpdates(): Promise<UpdateInfo> {
  * preflight behind it is cached on the bridge, so polling it costs one `collie update --check` a
  * minute at most.
  */
-export function fetchUpdateState(signal?: AbortSignal): Promise<UpdateCheckResponse> {
-  return req<UpdateCheckResponse>("/api/update/check", signal ? { signal } : undefined);
+export function fetchUpdateState(signal?: AbortSignal, timeoutMs?: number): Promise<UpdateCheckResponse> {
+  return req<UpdateCheckResponse>("/api/update/check", { signal, timeoutMs });
 }
 
 /**

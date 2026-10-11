@@ -1472,6 +1472,7 @@ export const en = {
   "settings.updateCard.summary.peers.one": "{count} peer",
   "settings.updateCard.summary.peers.other": "{count} peers",
   "settings.updateCard.preflightUnavailable": "The preflight couldn't be run on this machine.",
+  "settings.updateCard.bridgeUnreachable": "Couldn't reach the bridge.",
   "settings.updateCard.packageManaged": "Your package manager updates this install. Collie won't take it from here.",
   "settings.updateCard.remedy": "Fix: {command}",
   "settings.updateCard.confirmTitle": "Update to {version}?",

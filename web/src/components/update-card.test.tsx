@@ -338,6 +338,29 @@ describe("preflight red — the button is disabled with the red's own reason", (
     await waitFor(() => expect(screen.getByRole("button", { name: "Update to 1.4.0" })).toBeEnabled());
   });
 
+  it("a read that failed says the bridge was not reached, with a Retry, and not the preflight's sentence (issue 400)", async () => {
+    server.use(http.get("/api/update/check", () => HttpResponse.error()));
+    renderCard(info());
+    const button = await screen.findByRole("button", { name: "Update to 1.4.0" });
+    expect(await screen.findByText("Couldn't reach the bridge.")).toBeInTheDocument();
+    expect(button).toBeDisabled();
+    expect(screen.queryByText("The preflight couldn't be run on this machine.")).not.toBeInTheDocument();
+
+    // Retry reads again, and the answer clears the line and frees the button.
+    serveCheck(info(), GREEN);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Update to 1.4.0" })).toBeEnabled());
+    expect(screen.queryByText("Couldn't reach the bridge.")).not.toBeInTheDocument();
+  });
+
+  it("an answer of preflight: null keeps the preflight sentence and offers no Retry", async () => {
+    serveCheck(info(), null);
+    renderCard(info());
+    expect(await screen.findByText("The preflight couldn't be run on this machine.")).toBeInTheDocument();
+    expect(screen.queryByText("Couldn't reach the bridge.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+  });
+
   it("a preflight that could not be run is asked again when the card opens next", async () => {
     serveCheck(info(), null);
     const first = renderCard(info());

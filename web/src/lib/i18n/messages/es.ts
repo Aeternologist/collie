@@ -1396,6 +1396,7 @@ export const es: Dictionary = {
   "settings.updateCard.summary.peers.one": "{count} equipo",
   "settings.updateCard.summary.peers.other": "{count} equipos",
   "settings.updateCard.preflightUnavailable": "No se pudo ejecutar la comprobación previa en este equipo.",
+  "settings.updateCard.bridgeUnreachable": "No se pudo conectar con el bridge.",
   "settings.updateCard.packageManaged": "Tu gestor de paquetes actualiza esta instalación. Collie no la actualizará desde aquí.",
   "settings.updateCard.remedy": "Solución: {command}",
   "settings.updateCard.confirmTitle": "¿Actualizar a {version}?",

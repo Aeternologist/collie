@@ -1379,6 +1379,7 @@ export const ko: Dictionary = {
   "settings.updateCard.summary.peers.one": "피어 {count}대",
   "settings.updateCard.summary.peers.other": "피어 {count}대",
   "settings.updateCard.preflightUnavailable": "이 머신에서 사전 점검을 실행할 수 없습니다.",
+  "settings.updateCard.bridgeUnreachable": "브리지에 연결할 수 없습니다.",
   "settings.updateCard.packageManaged": "이 설치는 패키지 관리자가 업데이트합니다. Collie는 여기서 업데이트하지 않습니다.",
   "settings.updateCard.remedy": "해결 방법: {command}",
   "settings.updateCard.confirmTitle": "{version} 버전으로 업데이트하시겠습니까?",
