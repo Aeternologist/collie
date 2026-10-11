@@ -2407,6 +2407,10 @@ describe("the Whistle routes and the /api/config block", () => {
     expect(block('if (pathname === "/api/stt" && req.method === "POST")')).toContain('guard(req, cfg, "write", pairingGate)');
   });
 
+  test("a model copy is handed the request's signal, so a client that leaves frees its place", () => {
+    expect(block("const sttModelMatch = pathname.match(STT_MODEL_ROUTE);")).toContain("modelResponse(whistleDeps, sttModelMatch[1]!, req.signal)");
+  });
+
   test("every write and every model copy is audited; the status poll is not", () => {
     for (const action of ["stt.whistle.download", "stt.whistle.remove", "stt.whistle.host", "stt.model.read"]) {
       expect(src).toContain(action);
