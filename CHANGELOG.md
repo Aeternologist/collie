@@ -58,6 +58,11 @@ Running a crew? Update the lead first; members follow on their own. Details:
 - **Voice settings read correctly in every language.** German and Portuguese no longer call hands-free voice a speakerphone, Italian no longer says text-to-speech where it means speech-to-text, Turkish no longer puts a case suffix on a quoted option name, and each language now uses one word for download, transcribe, speech engine and the host.
 - **`collie stt test` checks a Whistle host the way phones use it.** With Whistle as the provider it sent an 8 kHz setup clip and the webm and mp4 clips, which the Whistle engine refuses, so all three failed with "exited with status 1" on a host that worked. It now sends one 0.2 s silent WAV at 16 kHz, which is what a phone sends to a Whistle host, says that webm and mp4 are skipped, and counts an empty transcript from silence as a pass. Other providers keep their three clips.
 
+### Packaging
+
+- **Intel Macs get a prebuilt binary.** Releases now publish a `macos-x64` payload, built with Bun's baseline target on the existing Apple Silicon runner, so `install.sh` and `collie update` work on an Intel Mac with macOS 13 or newer; a shell running under Rosetta on Apple Silicon still gets the native arm64 build. The Nix and AUR packages do not carry it. Thanks @nmehlei (#385).
+
+
 ## [1.19.2] - 2026-10-10
 
 ### Fixed
