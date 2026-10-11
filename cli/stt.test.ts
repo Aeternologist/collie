@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { STT_ENV_KEYS, STT_FILENAME, type CodexSttSettings, type SttSettings } from "../bridge/stt/config.ts";
 import { CODEX_CONSENT_ID } from "../bridge/stt/codex-setup.ts";
 import { sttHostPut } from "../bridge/stt/host-http.ts";
+import { wavHeaderProblem } from "../bridge/stt/wav.ts";
 import { createWhistleModelStore } from "../bridge/stt/whistle-model.ts";
 import { CODEX_TRANSCRIBE_URL } from "../bridge/stt/codex.ts";
 import { LocalCliEmptyTranscriptError } from "../bridge/stt/local-cli.ts";
@@ -408,6 +409,63 @@ describe("collie stt test", () => {
     expect(String.fromCharCode(...provider.seen.magic[2]!.subarray(4, 8))).toBe("ftyp");
     expect(said(d)).toContain("as audio/webm;codecs=opus (Chrome, Android, Firefox) … ✓ 0 ms");
     expect(said(d)).toContain("as audio/mp4 (Safari, iOS) … ✓ 0 ms");
+  });
+
+  test("a wav-16k provider gets one 16 kHz wav, and a line says why webm and mp4 are skipped", async () => {
+    const provider = fakeProvider("");
+    const problems: Array<string | null> = [];
+    const bytes: Uint8Array[] = [];
+    const whistle: SttProvider = {
+      ...provider,
+      id: "whistle",
+      input: "wav-16k",
+      async transcribe(input: SttAudio): Promise<SttResult> {
+        bytes.push(input.audio);
+        // The engine's own header check (bridge/stt/wav.ts): the child accepts 16 kHz mono s16 only.
+        problems.push(wavHeaderProblem(input.audio));
+        return provider.transcribe(input);
+      },
+    };
+    const d = deps({ seed: configured, create: () => whistle });
+    expect(await cmdSttTest(d)).toBe(EXIT.OK);
+    expect(provider.seen.mime).toEqual(["audio/wav"]);
+    expect(provider.seen.filenames).toEqual(["collie-stt-test.wav"]);
+    expect(problems).toEqual([null]);
+    expect(String.fromCharCode(...bytes[0]!.subarray(0, 4))).toBe("RIFF");
+    // 0.2 s of 16 kHz 16-bit mono is 6400 bytes of samples after the 44-byte header.
+    expect(bytes[0]!.byteLength).toBe(44 + 6_400);
+    expect(said(d)).toContain(
+      "sending:  0.2 s of generated silence as audio/wav, 16 kHz (what phones send to a Whistle host) … ✓ 0 ms",
+    );
+    expect(said(d)).toContain("webm and mp4 are skipped, because phones convert recordings to 16 kHz WAV");
+    // An empty transcript from silence is the pass it is for every other provider.
+    expect(said(d)).toContain("(empty)");
+    expect(said(d)).not.toContain("audio/webm");
+    expect(provider.seen.closed).toBe(1);
+  });
+
+  test("a wav-16k provider that refuses its clip fails with a count of one", async () => {
+    const whistle: SttProvider = {
+      id: "whistle",
+      input: "wav-16k",
+      status: async () => ({ available: true }),
+      transcribe: async () => {
+        throw new SttError("refused", "the Whistle engine exited with status 1");
+      },
+    };
+    const d = deps({ seed: configured, create: () => whistle });
+    expect(await cmdSttTest(d)).toBe(EXIT.FAIL);
+    expect(said(d)).toContain("✗ refused: the Whistle engine exited with status 1");
+    expect(said(d)).toContain("error: the provider refused 1 of 1 clip.");
+    expect(said(d)).not.toContain("takes audio/wav, but not");
+  });
+
+  test("a provider without an input rule keeps all three clips and prints no skip line", async () => {
+    const provider = fakeProvider("");
+    const d = deps({ seed: configured, create: () => provider });
+    expect(await cmdSttTest(d)).toBe(EXIT.OK);
+    expect(provider.seen.mime).toHaveLength(3);
+    expect(said(d)).not.toContain("are skipped");
   });
 
   test("a transcript is printed, with the provider and the round trip", async () => {

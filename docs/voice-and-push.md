@@ -103,6 +103,9 @@ sending:  0.2 s of generated silence as audio/webm;codecs=opus (Chrome, Android,
 sending:  0.2 s of generated silence as audio/mp4 (Safari, iOS) … ✓ 190 ms
 ```
 
+With Whistle on the host, `stt test` sends one clip, a 16 kHz WAV, and says that webm and mp4 are
+skipped, because the phone converts its recording to 16 kHz WAV before it sends it to that provider.
+
 An **empty transcript is a pass** — silence transcribes to nothing, and the round trip is what was
 being proved. If it fails, the error names its kind (auth, endpoint, response shape). Then reload
 Collie on the phone: a microphone sits beside the message box. `collie stt status` says what is

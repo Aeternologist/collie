@@ -610,6 +610,46 @@ const STT_PROBE_CLIPS = [
 ] as const;
 
 /**
+ * The one clip `stt test` sends to a provider that takes `wav-16k` only (the built-in Whistle host).
+ *
+ * Phones convert every recording to 16 kHz mono WAV before they upload it to such a provider, so the
+ * 8 kHz setup probe and the webm and mp4 clips are all things the provider would refuse and no phone
+ * would ever send. Testing it with them reports a failure that does not exist.
+ */
+const STT_WAV_16K_CLIP: SttProbeClip = {
+  mimeType: "audio/wav",
+  detail: ", 16 kHz",
+  filename: "collie-stt-test.wav",
+  audience: "what phones send to a Whistle host",
+  bytes: () => silentWavBytes(200, 16_000),
+};
+
+interface SttProbeClip {
+  mimeType: string;
+  /** Extra words after the content type in the printed label. */
+  detail?: string;
+  filename: string;
+  audience: string;
+  bytes: () => Uint8Array<ArrayBuffer>;
+}
+
+/** The clips to send to one provider, and the line that explains a shortened list (or `null`). */
+interface SttProbePlan {
+  clips: readonly SttProbeClip[];
+  note: string | null;
+}
+
+function probeClipsFor(provider: SttProvider): SttProbePlan {
+  if (provider.input === "wav-16k") {
+    return {
+      clips: [STT_WAV_16K_CLIP],
+      note: "note:     webm and mp4 are skipped, because phones convert recordings to 16 kHz WAV for this provider.",
+    };
+  }
+  return { clips: STT_PROBE_CLIPS, note: null };
+}
+
+/**
  * `collie stt test` — one real round trip per container the phone can produce.
  *
  * Each clip is a fifth of a second of generated digital silence. A silent clip legitimately
@@ -631,9 +671,11 @@ export async function cmdSttTest(deps: SttDeps): Promise<number> {
 
   const refused: string[] = [];
   let wavPassed = false;
+  const { clips, note } = probeClipsFor(provider);
+  if (note !== null) deps.io.out(note);
   try {
-    for (const clip of STT_PROBE_CLIPS) {
-      const label = `sending:  0.2 s of generated silence as ${clip.mimeType} (${clip.audience}) …`;
+    for (const clip of clips) {
+      const label = `sending:  0.2 s of generated silence as ${clip.mimeType}${clip.detail ?? ""} (${clip.audience}) …`;
       const started = clock();
       try {
         const result = await transcribeProbe(provider, {
@@ -669,7 +711,7 @@ export async function cmdSttTest(deps: SttDeps): Promise<number> {
   }
 
   if (refused.length === 0) return EXIT.OK;
-  deps.io.err(`error: the provider refused ${refused.length} of ${STT_PROBE_CLIPS.length} clips.`);
+  deps.io.err(`error: the provider refused ${refused.length} of ${clips.length} ${clips.length === 1 ? "clip" : "clips"}.`);
   if (wavPassed) sayContainerRefusal(deps, refused);
   return EXIT.FAIL;
 }
