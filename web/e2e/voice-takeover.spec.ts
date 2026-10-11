@@ -24,6 +24,8 @@ interface FakeVoice {
   context: AudioContext | null;
   opened: number;
   metered: AudioContext[];
+  /** Bytes the page's MediaRecorder has handed out so far: the encoder is armed once this is above 0. */
+  recorded: number;
 }
 declare global {
   interface Window {
@@ -58,8 +60,21 @@ test.beforeEach(async ({ page }) => {
       context: null,
       opened: 0,
       metered: [],
+      recorded: 0,
     };
     Object.defineProperty(window, "__voice", { value: voice });
+    // The recorder's own readiness, which the level meter's does not tell: a clip stopped before the
+    // encoder has produced its first bytes is empty ("Nothing was recorded"). The page asks for a
+    // chunk every second, so the first one is the signal. The stand-in below counts itself at once.
+    if ("MediaRecorder" in window) {
+      const start = MediaRecorder.prototype.start;
+      MediaRecorder.prototype.start = function (this: MediaRecorder, ...args: [number?]) {
+        this.addEventListener("dataavailable", (event) => {
+          if (event instanceof BlobEvent) voice.recorded += event.data.size;
+        });
+        return start.apply(this, args);
+      };
+    }
     // Every AudioContext the PAGE makes (the level meter's) is recorded; the fake microphone below
     // uses the original constructor, so it is not among them.
     const Original = window.AudioContext;
@@ -81,6 +96,8 @@ test.beforeEach(async ({ page }) => {
         mimeType = "audio/mp4";
         start() {
           this.state = "recording";
+          // Ready at once: its clip is made on stop, whenever that is.
+          voice.recorded += 1;
         }
         stop() {
           if (this.state === "inactive") return;
@@ -175,6 +192,10 @@ test("the takeover opens, records, transcribes and closes without moving anythin
   await expect(page.locator('[data-slot="voice-takeover"] [data-level]')).toHaveAttribute("data-level", "speaking");
   expect(await slots()).toEqual(quietSlots);
   expect(await rects(page)).toEqual(before);
+
+  // The encoder has produced bytes (the meter above is the graph, not the recorder): stopping any
+  // sooner is a real "Nothing was recorded", not the state under test.
+  await expect.poll(() => page.evaluate(() => window.__voice?.recorded ?? 0)).toBeGreaterThan(0);
 
   // Tapping the SAME spot again finishes: transcribing, OK dimmed and disabled, the bin still live.
   await page.mouse.click(micBox.x + micBox.width / 2, micBox.y + micBox.height / 2);
