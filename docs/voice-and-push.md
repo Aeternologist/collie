@@ -155,8 +155,8 @@ model stays. `collie doctor` warns when the model on the host is not the one thi
 The engine is live at once, with no restart. Check it with `collie stt test`.
 
 **What is downloaded, and from where.** The host fetches `whistle.cact` from one pinned Hugging Face
-address, follows the redirect to its CDN, and keeps the file only when its sha256 equals a hash that
-this release carries. A mismatch deletes the file and reports both hashes. The download is capped at
+address, follows the redirect to its CDN (at most five, HTTPS only, and never to a local or private
+address), and keeps the file only when its sha256 equals a hash that this release carries. A mismatch deletes the file and reports both hashes. The download is capped at
 32 MiB and has a 10-minute deadline. The file sits in the `whistle` folder of the state folder. The
 engine code (about 1 MB) is part of every Collie release and comes from Collie's own files.
 

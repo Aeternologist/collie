@@ -49,7 +49,7 @@ export const WHISTLE_USAGE = [
 ];
 
 /** What the tests may replace. Production leaves all of it. */
-export type WhistleSeams = Partial<Pick<WhistleModelDeps, "fetch" | "pin" | "accepted" | "capBytes" | "timeoutMs">>;
+export type WhistleSeams = Partial<Pick<WhistleModelDeps, "fetch" | "lookup" | "pin" | "accepted" | "capBytes" | "timeoutMs">>;
 
 const mb = (bytes: number): string => `${(bytes / 1e6).toFixed(1)} MB`;
 

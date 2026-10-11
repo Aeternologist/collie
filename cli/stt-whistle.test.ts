@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { STT_ENV_KEYS, STT_FILENAME } from "../bridge/stt/config.ts";
-import { resetWhistleModelState, whistlePaths, type WhistleFetch } from "../bridge/stt/whistle-model.ts";
+import { resetWhistleModelState, whistlePartName, whistlePaths, type WhistleFetch } from "../bridge/stt/whistle-model.ts";
 import { capture, context, fakeExec, fakeFiles, type FakeFiles } from "./fakes.ts";
 import { EXIT } from "./io.ts";
 import { cmdStt, cmdSttOff, cmdSttSetup, cmdSttStatus, type SttDeps } from "./stt.ts";
@@ -33,6 +33,28 @@ afterEach(() => {
 });
 
 const sttJson = (): string => join(stateDir, STT_FILENAME);
+
+/** Another process's download on disk: a lock naming its part file, and the part. Returns the part's path. */
+function otherDownload(content: string, ageMs = 0): string {
+  const paths = whistlePaths(stateDir);
+  mkdirSync(paths.dir, { recursive: true });
+  const name = whistlePartName(999_999, 1);
+  const part = join(paths.dir, name);
+  writeFileSync(part, content);
+  writeFileSync(paths.lock, JSON.stringify({ pid: 999_999, startedAt: new Date().toISOString(), part: name }));
+  if (ageMs > 0) {
+    const old = new Date(Date.now() - ageMs);
+    utimesSync(paths.lock, old, old);
+    utimesSync(part, old, old);
+  }
+  return part;
+}
+
+/** Part files, the lock and temporaries left in the model's folder. */
+const leftovers = (): string[] => {
+  const dir = whistlePaths(stateDir).dir;
+  return existsSync(dir) ? readdirSync(dir).filter((name) => name === "whistle.lock" || name.endsWith(".part") || name.endsWith(".tmp")) : [];
+};
 
 type Deps = SttDeps & { io: ReturnType<typeof capture>; files: FakeFiles; progressed: string[] };
 
@@ -62,7 +84,7 @@ function deps(
     exec: fakeExec(),
     interactive: over.tty ?? queued.length > 0,
     prompt: () => queued.shift() ?? null,
-    whistle: { fetch: over.fetch ?? fetchOf(), pin: PIN, accepted: [SHA] },
+    whistle: { fetch: over.fetch ?? fetchOf(), lookup: async () => ["203.0.113.7"], pin: PIN, accepted: [SHA] },
     progressed,
   };
   if (over.tty === true) built.progress = (text) => progressed.push(text);
@@ -125,26 +147,20 @@ describe("collie stt whistle: the model", () => {
     expect(said(d)).toContain("did not match the pinned model");
     expect(said(d)).toContain(SHA);
     expect(existsSync(whistlePaths(stateDir).model)).toBe(false);
-    expect(existsSync(whistlePaths(stateDir).part)).toBe(false);
+    expect(leftovers()).toEqual([]);
   });
 
   test("a download another process has running is reported, nothing is fetched, nothing is touched", async () => {
-    const paths = whistlePaths(stateDir);
-    mkdirSync(paths.dir, { recursive: true });
-    writeFileSync(paths.part, "partial");
+    const part = otherDownload("partial");
     const d = deps();
     expect(await cmdSttWhistle(d, [])).toBe(EXIT.FAIL);
     expect(said(d)).toContain("a download is already running");
     expect(calls).toBe(0);
-    expect(readFileSync(paths.part, "utf8")).toBe("partial");
+    expect(readFileSync(part, "utf8")).toBe("partial");
   });
 
-  test("a stale part file is a crash's and is replaced", async () => {
-    const paths = whistlePaths(stateDir);
-    mkdirSync(paths.dir, { recursive: true });
-    writeFileSync(paths.part, "partial");
-    const old = new Date(Date.now() - 11 * 60 * 1000);
-    utimesSync(paths.part, old, old);
+  test("a stale lock is a crash's and is replaced", async () => {
+    otherDownload("partial", 11 * 60 * 1000);
     const d = deps();
     expect(await cmdSttWhistle(d, [])).toBe(EXIT.OK);
     expect(calls).toBe(1);
@@ -161,7 +177,7 @@ describe("collie stt whistle --from", () => {
     expect(await cmdSttWhistle(d, ["--from", source()])).toBe(EXIT.OK);
     expect(calls).toBe(0);
     expect(readFileSync(whistlePaths(stateDir).model)).toEqual(Buffer.from(MODEL));
-    expect(existsSync(whistlePaths(stateDir).part)).toBe(false);
+    expect(leftovers()).toEqual([]);
   });
 
   test("a file of other bytes is refused with both hashes, and nothing is kept", async () => {
@@ -172,7 +188,7 @@ describe("collie stt whistle --from", () => {
     expect(said(d)).toContain(createHash("sha256").update(other).digest("hex"));
     expect(said(d)).toContain(SHA);
     expect(existsSync(whistlePaths(stateDir).model)).toBe(false);
-    expect(existsSync(whistlePaths(stateDir).part)).toBe(false);
+    expect(leftovers()).toEqual([]);
   });
 
   test("a symlink, a folder and a missing file are refused before anything is touched", async () => {
@@ -304,12 +320,11 @@ describe("collie stt whistle --remove", () => {
   });
 
   test("while another process downloads it removes nothing", async () => {
-    const paths = whistlePaths(stateDir);
-    mkdirSync(paths.dir, { recursive: true });
-    writeFileSync(paths.part, "partial");
+    const part = otherDownload("partial");
     const d = deps();
     expect(await cmdSttWhistle(d, ["--remove"])).toBe(EXIT.FAIL);
-    expect(existsSync(paths.part)).toBe(true);
+    expect(existsSync(part)).toBe(true);
+    expect(existsSync(whistlePaths(stateDir).lock)).toBe(true);
   });
 });
 
@@ -368,9 +383,7 @@ describe("collie stt status and off, with Whistle", () => {
   });
 
   test("a download in flight reads as downloading", async () => {
-    const paths = whistlePaths(stateDir);
-    mkdirSync(paths.dir, { recursive: true });
-    writeFileSync(paths.part, "12345");
+    otherDownload("12345");
     const d = deps({ seed: ON() });
     await cmdSttStatus(d);
     expect(said(d)).toMatch(/model +downloading — 0\.0 MB of 0\.0 MB/);

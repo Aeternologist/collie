@@ -46,6 +46,7 @@ function deps(env: Record<string, string | undefined> = {}): WhistleRouteDeps {
     version: "1.20.0",
     pin: PIN,
     accepted: [SHA],
+    lookup: async () => ["203.0.113.7"],
     fetch: async () => {
       fetches += 1;
       return new Response(MODEL, { headers: { "content-length": String(MODEL.byteLength) } });

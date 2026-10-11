@@ -109,9 +109,12 @@ party and never by itself. The transcript lands where every transcript lands.**
      host engine (Decision 4). `--from <path>` takes a file the operator already has, an air-gapped
      copy or the old quick start's, through the same check. `--remove` undoes it.
    - **The download** goes to a pinned Hugging Face commit URL (`resolve/<commit>/whistle.cact`) with
-     an honest `User-Agent: Collie/<version>`, redirects followed, a 32 MiB cap, a 10-minute deadline, streamed to a `.part`
-     file (0600) with a running sha256, renamed only when the hash equals a pin compiled into this
-     release. A mismatch deletes the part file and reports both hashes.
+     an honest `User-Agent: Collie/<version>`, redirects followed by hand (at most 5, each `https:`,
+     none to a loopback, private, link-local or unique-local address or a name that resolves to
+     one), a 32 MiB cap, a 10-minute deadline, streamed to a part file of that download's own
+     (`whistle.cact.<pid>.<seq>.part`, 0600) with a running sha256, renamed only when the hash equals
+     a pin compiled into this release. `whistle.lock` keeps a second process from starting a second
+     download. A mismatch deletes the part file and reports both hashes.
    - **No phone ever fetches the model unasked**, not on install, not on an update, not when the
      preference is set. After the host holds it, each phone that wants *This phone* taps *Download
      to this phone*, which copies it from the host (Decision 7).
