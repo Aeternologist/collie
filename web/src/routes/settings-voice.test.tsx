@@ -138,7 +138,7 @@ describe("Settings → Voice, the hub", () => {
     setSttEnginePreference("phone");
     server.use(config({ whistle: { ...READY, hostEngine: true }, stt: STT }), hostStatus(HOST_WHISTLE));
     renderRoute("voice");
-    expect(await screen.findByText("Dictation is paused. This phone's copy of Whistle is gone.")).toBeInTheDocument();
+    expect(await screen.findByText("Paused. This phone's copy of Whistle is gone.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Restore (16.9 MB)" })).toBeInTheDocument();
     expect(sttEnginePreference()).toBe("phone");
   });
@@ -182,6 +182,15 @@ describe("Settings → Voice → Host speech", () => {
     expect(await screen.findByRole("heading", { name: "Host speech" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Back" }));
     expect(router.state.location.pathname).toBe("/settings/voice");
+  });
+
+  it("is one tap from the hub's row for all five options, where every option says how to set it up", async () => {
+    server.use(config({ whistle: READY, stt: STT }), hostStatus(HOST_WHISTLE));
+    const { router } = renderRoute("voice");
+    await userEvent.click(await screen.findByRole("button", { name: "See all five options and how to set them up" }));
+    expect(router.state.location.pathname).toBe("/settings/voice/host");
+    expect(await screen.findByRole("heading", { name: "Host speech" })).toBeInTheDocument();
+    expect(await screen.findAllByRole("button", { name: "How to set up" })).toHaveLength(5);
   });
 
   it("Whistle from Off asks for every device first; Cancel sends nothing", async () => {

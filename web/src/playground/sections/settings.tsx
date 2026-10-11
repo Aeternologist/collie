@@ -207,7 +207,7 @@ export function SettingsSection() {
           state="voice-nothing-installed"
           label="1: the hub, nothing set up"
           reach="open Settings, Voice, on a host with no speech option and no Whistle model yet."
-          note="The status card says Needs setup and that nothing is recorded. On this phone offers Set up, which downloads to the host and then copies to the phone. On your host is off, and the host's row says it has no option yet."
+          note="The status card's five facts say Nothing, Not set up and that nothing is recorded. On this phone offers Set up, which downloads to the host and then copies to the phone. On your host is off, and the host's row says it has no option yet."
         >
           <Stage height={1100}>
             <SpeechDemo block="host-not-ready" />
@@ -251,7 +251,7 @@ export function SettingsSection() {
           state="voice-both-ready"
           label="5: the hub, both ready, On this phone"
           reach="after the copy finishes, choose On this phone."
-          note="Works, also offline. The host's row says Whistle on your host, so a phone without a copy still dictates there. The model's row says Both ready."
+          note="The facts name Whistle on this phone and the copy the status rests on (Ready. Whistle ca52876 is on this phone.). On this phone wears the selected look. The host's row says Whistle on your host. The model's row says Both ready."
         >
           <Stage height={1100}>
             <SpeechDemo
@@ -346,10 +346,10 @@ export function SettingsSection() {
           state="voice-provider-none"
           label="9: Host speech, nothing set up"
           reach="open Settings, Voice, Host speech, on a host with no option, the model already downloaded and Codex signed in."
-          note="Five options in two tiers, then Off on its own, chosen. Whistle and ChatGPT can be chosen. Your own command and A speech service are set up in a terminal: a tap shows the command to copy, never a form."
+          note="Five option cards in two tiers, then Off on its own, chosen. Whistle and ChatGPT can be chosen. Every card has How to set up; Your own command is open here: the commands to copy, the whisper-cli example and the docs link, never a form."
         >
           <Stage height={1100}>
-            <SpeechDemo page="host" whistle={WHISTLE_READY} host={PROVIDER_NONE_READY} initialTerminal="command" />
+            <SpeechDemo page="host" whistle={WHISTLE_READY} host={PROVIDER_NONE_READY} initialSetup="command" />
           </Stage>
         </Card>
 
@@ -357,7 +357,7 @@ export function SettingsSection() {
           state="voice-provider-whistle"
           label="10: Host speech, Whistle on"
           reach="choose Whistle on your host, then Change for every device."
-          note="Works. The line under the page names the device that changed it, and when."
+          note="Whistle wears the selected look: the primary edge all round, the tint, the filled radio and In use. The line under the page names the device that changed it, and when."
         >
           <Stage height={1000}>
             <SpeechDemo
@@ -394,7 +394,7 @@ export function SettingsSection() {
           state="voice-provider-terminal"
           label="13: Host speech, a speech service set up in a terminal"
           reach="a host where the operator ran collie stt setup --provider openai-compatible, with a key."
-          note="In use, never changed here. The other choices are closed, and the commands that change it or turn it off are there to copy and run on the host."
+          note="In use, never changed here. The other choices are closed, and the commands that change it or turn it off are there to copy and run on the host. Each option still says how to set it up; Whistle and ChatGPT start with collie stt off (card 21)."
         >
           <Stage height={1100}>
             <SpeechDemo
@@ -409,7 +409,7 @@ export function SettingsSection() {
           state="voice-provider-codex-signed-out"
           label="14: Host speech, Codex not signed in"
           reach="a host where codex is installed but codex login status says Not logged in."
-          note="ChatGPT is closed, with the reason and codex login to copy. Whistle waits for the model, with Download to host."
+          note="ChatGPT is closed and says why in one sentence. Its How to set up marks the sign-in step Next, with codex login to copy. Whistle waits for the model."
         >
           <Stage height={1100}>
             <SpeechDemo
@@ -449,6 +449,57 @@ export function SettingsSection() {
         >
           <Stage height={1000}>
             <SpeechDemo page="host" whistle={WHISTLE_READY} host={PROVIDER_NONE_READY} confirmTo="whistle" />
+          </Stage>
+        </Card>
+      </Group>
+
+      <Group title="Voice: the fixes of 2026-10-11">
+        <Card
+          state="voice-hub-codex-signed-out"
+          label="20: the hub, ChatGPT on the host, Codex signed out"
+          reach="a host on the ChatGPT subscription whose Codex was signed out since. The device that chose it is named."
+          note="The status card's facts: Engine, Runs on (the host by name in a crew), Set up from Settings by the device, Audio, and Status Not ready with what the host found. Fix opens Host speech, where ChatGPT's steps are already open."
+        >
+          <Stage height={1150}>
+            <SpeechDemo
+              whistle={WHISTLE_READY}
+              hostStt={{ provider: "codex", available: false, reason: "Codex is not signed in, run `codex login`" }}
+              host={{
+                ...PROVIDER_CODEX,
+                available: false,
+                changedBy: "Pixel 8",
+                changedAt: "2026-10-11T09:41:00.000Z",
+                switchable: { ...OPEN_ALL, codex: { ok: false, reason: "codex-signed-out" } },
+              }}
+              hostName="bluefin"
+            />
+          </Stage>
+        </Card>
+
+        <Card
+          state="voice-provider-terminal-steps"
+          label="21: Host speech, a terminal lock, Whistle's steps"
+          reach="as 13, then tap How to set up under Whistle on your host."
+          note="The app never changes a provider set up with a key or a command (ADR 0097), so the steps start on the host: collie stt off, then collie stt whistle --host."
+        >
+          <Stage height={1300}>
+            <SpeechDemo
+              page="host"
+              whistle={WHISTLE_READY}
+              host={{ provider: "openai-compatible", available: true, configuredBy: "file", switchable: TERMINAL_LOCK }}
+              initialSetup="whistle"
+            />
+          </Stage>
+        </Card>
+
+        <Card
+          state="voice-provider-chatgpt-steps"
+          label="22: Host speech, ChatGPT ready to choose, its steps"
+          reach="a host with Codex installed and signed in with ChatGPT, then tap How to set up under ChatGPT subscription."
+          note="Install and sign in are done; the last step is Next, and its button opens the consent sheet (card 16)."
+        >
+          <Stage height={1300}>
+            <SpeechDemo page="host" whistle={WHISTLE_READY} host={PROVIDER_WHISTLE} initialSetup="chatgpt" />
           </Stage>
         </Card>
       </Group>

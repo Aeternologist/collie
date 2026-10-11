@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   AudioLines,
-  Check,
   ChevronDown,
   ChevronRight,
   Download,
   Info,
+  ListChecks,
   Loader2,
   Mic,
+  RefreshCw,
   Server,
   Smartphone,
   Trash2,
@@ -20,25 +21,32 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Collapse } from "@/components/ui/collapse";
 import { Notice } from "@/components/ui/notice";
+import { OneOf } from "@/components/ui/one-of";
 import { SectionLabel } from "@/components/ui/section-label";
 import { BottomSheet } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import {
   AudioLine,
+  AudioValue,
+  COMMAND_DOCS_URL,
   FactsSheet,
   Facts,
   HostCommand,
   InfoButton,
+  InUseBadge,
+  OptionCard,
   optionName,
   ReadOnlyHostBanner,
   Ring,
+  SETUP_COMMANDS,
+  StateLine,
   StateWord,
-  TERMINAL_COMMANDS,
-  TerminalSetup,
+  StepList,
   terminalOnly,
   TierLabel,
   Zone,
   type AboutId,
+  type StepView,
 } from "@/components/voice-parts";
 import { VoiceEmpty } from "@/components/voice-empty";
 import { useStoredModel } from "@/hooks/use-stored-model";
@@ -73,30 +81,35 @@ import {
 } from "@/lib/stt";
 import { CODEX_CONSENT_ID, CODEX_CONSENT_KEYS, CODEX_TRANSCRIBE_URL } from "@/lib/stt-consent";
 import { downloadModel, removeModel, SttModelError, type StoredModel } from "@/lib/stt-model";
-import {
-  isReadOnly,
-  type SttCapability,
-  type SttHostChoice,
-  type SttHostStatus,
-  type SttHostSwitchReason,
-  type WhistleStatus,
-} from "@/lib/types";
+import { leadHost } from "@/lib/hosts";
+import { isReadOnly, type ServerSummary, type SttCapability, type SttHostChoice, type SttHostStatus, type WhistleStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import {
   askFor,
   browserBlock,
   choiceOf,
+  codexStateOf,
   currentHostProvider,
   HOST_OPTIONS,
+  hostNotReady,
   hostOptionOf,
   modelChip,
   optionOfChoice,
   phoneChoiceInForce,
   reachOf,
+  setupSteps,
+  statusFacts,
   tierOf,
   voiceStatus,
+  type EngineFact,
+  type HostLock,
   type HostOption,
   type ModelChip,
+  type Readiness,
+  type RunsOnFact,
+  type SetUpFact,
+  type SetupStep,
+  type StatusFacts,
   type VoiceStatus,
 } from "@/lib/voice";
 import { WHISTLE_MODEL_BYTES } from "@/stt/pins";
@@ -116,9 +129,14 @@ import { WHISTLE_MODEL_BYTES } from "@/stt/pins";
 //
 // THE HOST'S OPTION CHANGES ONLY AMONG THREE (ADR 0097). Whistle, ChatGPT (Codex) and Off carry no
 // key and run no command the operator chose. Your own command and a speech service are set up in a
-// terminal on the host: the page prints the fixed command and a "Check again", never a field. A
+// terminal on the host: the page prints the fixed commands and a "Check again", never a field. A
 // change that sends audio further than before asks first, in a sheet; ChatGPT always opens its
 // consent, the same words `collie stt setup` prints, and nothing is sent before "I accept".
+//
+// EVERY OPTION SAYS HOW TO SET IT UP, even when the app cannot switch to it: "How to set up" on each
+// card, numbered steps, the app's own buttons where it may act and fixed commands where it may not.
+// Under a terminal lock the steps of Whistle and ChatGPT begin with `collie stt off` on the host; the
+// app itself still never changes a provider set up with a key or a command.
 //
 // NO SILENT SWITCH (ADR 0096 Decision 12). A phone that chose On this phone and lost its copy is
 // paused, and says so with one action (Restore). It does not send audio to the host by itself.
@@ -129,7 +147,10 @@ import { WHISTLE_MODEL_BYTES } from "@/stt/pins";
 // both halves share are in components/voice-parts.tsx; the rules behind the words in lib/voice.ts.
 //
 // THE BOX DOES NOT MOVE ON A STATE (DESIGN.md §2). A download's bar takes the place of the button
-// that started it, and a terminal step opens through `Collapse`.
+// that started it, and "How to set up" opens through `Collapse`. A tap between this phone's two
+// choices repaints and never re-lays-out: both cards render the same rows either way, the selected
+// look is paint (`OptionCard`), and the status card holds the words of both choices in `OneOf`
+// slots. web/e2e/stt-phone.spec.ts measures it.
 
 /** Cactus Compute made Whistle. The credit names them and links to them. */
 export const CACTUS_URL = "https://cactuscompute.com";
@@ -201,8 +222,10 @@ export interface SpeechCardsProps {
   handsFree: boolean;
   /** The info sheet open at first paint. The playground opens one; the page starts with none. */
   initialAbout?: AboutId | null;
-  /** The terminal step open at first paint, on Host speech. */
-  initialTerminal?: HostOption | null;
+  /** The option whose "How to set up" is open at first paint, on Host speech. */
+  initialSetup?: HostOption | null;
+  /** The host's name, where the API gives one (a crew's lead). Absent: the page says "Your host". */
+  hostName?: string | null;
   /** The model's details open at first paint, on Whistle model. */
   initialDetails?: boolean;
   onEngine: (choice: SttEngineChoice) => void;
@@ -380,91 +403,188 @@ export function voiceHubShown(props: Pick<SpeechCardsProps, "whistle" | "local" 
 
 type WithAbout = SpeechCardsProps & { onAbout: (about: AboutId) => void };
 
-/** The status card's three lines. */
-interface StatusWords {
-  where: string;
-  word: string;
-  detail: string | null;
-}
+/** "Ready. …", "Not ready. …": a readiness code in words, with the fact it rests on. */
+const ready = (detail: string) => t("settings.voice.state.ready", { detail });
+const notReady = (detail: string) => t("settings.voice.state.notReady", { detail });
 
-function statusWords(status: VoiceStatus, props: SpeechCardsProps): StatusWords {
-  switch (status.kind) {
-    case "phone":
-      return { where: t("settings.voice.status.phone"), word: t("settings.voice.status.phone.word"), detail: t("settings.voice.status.phone.detail") };
-    case "paused":
-      return {
-        where: t("settings.voice.status.paused"),
-        word: t("settings.voice.status.paused.word"),
-        detail: t(status.action === "restore" ? "settings.voice.status.paused.detail" : "settings.voice.status.paused.noCopy"),
-      };
-    case "setup":
-      return { where: t("settings.voice.status.setup"), word: t("settings.voice.status.setup.word"), detail: t("settings.voice.status.setup.detail") };
+function readinessWords(readiness: Readiness, props: SpeechCardsProps): string {
+  switch (readiness) {
+    case "phone-ready":
+      return ready(t("settings.voice.ok.phone", { version: props.local ? shortVersion(props.local.revision, props.local.sha256) : "" }));
+    case "phone-gone":
+      return t("settings.voice.state.paused", { detail: t("settings.voice.why.phoneGone") });
     case "no-recording":
-      return {
-        where: t("settings.voice.status.noRecording"),
-        word: t("settings.voice.status.broken"),
-        detail: props.block === "insecure" ? t("settings.speech.engine.why.insecure") : null,
-      };
-    case "host": {
-      const where =
-        status.option === "whistle"
-          ? t("settings.voice.status.host.whistle")
-          : status.option === "chatgpt"
-            ? t("settings.voice.status.host.chatgpt")
-            : status.option === "service"
-              ? t("settings.voice.status.host.service")
-              : status.option === "command"
-                ? t("settings.voice.status.host.command")
-                : t("settings.voice.status.host.other", { provider: status.provider });
-      if (status.state === "broken") return { where, word: t("settings.voice.status.broken"), detail: hostReason(props) };
-      return { where, word: t("settings.voice.status.works"), detail: null };
+      return notReady(t("settings.voice.why.noRecording"));
+    case "nothing":
+      return t("settings.voice.state.notSetUp", { detail: t("settings.voice.why.nothing") });
+    case "whistle-ready": {
+      const whistle = props.whistle;
+      return ready(
+        whistle?.state === "ready" && (whistle.revision !== undefined || whistle.sha256 !== undefined)
+          ? t("settings.voice.ok.whistle", { version: shortVersion(whistle.revision, whistle.sha256) })
+          : t("settings.voice.ok.whistleModel"),
+      );
     }
+    case "command-found":
+      return ready(t("settings.voice.ok.command"));
+    case "service-set":
+      return t("settings.voice.state.setUp", { detail: t("settings.voice.ok.service") });
+    case "codex-ready":
+      return ready(t("settings.voice.ok.codex"));
+    case "other-ready":
+      return ready(t("settings.voice.ok.other"));
+    default:
+      return notReady(notReadyDetail(readiness, props));
   }
 }
 
+const WHY_KEYS = {
+  "whistle-no-model": "settings.voice.why.whistleNoModel",
+  "whistle-no-engine": "settings.voice.why.whistleNoEngine",
+  "command-missing": "settings.voice.why.commandMissing",
+  "codex-missing": "settings.voice.why.codexMissing",
+  "codex-signed-out": "settings.voice.why.codexSignedOut",
+  "codex-other-login": "settings.voice.why.codexOtherLogin",
+  "codex-unknown": "settings.voice.why.codexUnknown",
+} as const satisfies Partial<Record<Readiness, MessageKey>>;
+
+/** The page's own sentence for a readiness code, or `null` when only the host's words say it. */
+function whyKey(readiness: Readiness): MessageKey | null {
+  switch (readiness) {
+    case "whistle-no-model":
+    case "whistle-no-engine":
+    case "command-missing":
+    case "codex-missing":
+    case "codex-signed-out":
+    case "codex-other-login":
+    case "codex-unknown":
+      return WHY_KEYS[readiness];
+    default:
+      return null;
+  }
+}
+
+/** Why a host option does not answer, in one sentence: the page's own words, or the host's. */
+function notReadyDetail(readiness: Readiness, props: Pick<SpeechCardsProps, "host" | "hostStt">): string {
+  const key = whyKey(readiness);
+  return key === null ? t("settings.voice.why.hostSays", { reason: hostReason(props) }) : t(key);
+}
+
+function engineWords(engine: EngineFact, props: SpeechCardsProps): string {
+  if (engine === "phone") return t("settings.voice.option.phone");
+  if (engine === "off") return t("settings.voice.fact.nothing");
+  if (engine === "other") return currentHostProvider(props.host, props.hostStt);
+  return optionName(engine);
+}
+
+function runsOnWords(runsOn: RunsOnFact, hostName: string | null | undefined): string {
+  if (runsOn === "phone") return t("settings.voice.fact.runsOn.phone");
+  if (runsOn === "nothing") return t("settings.voice.fact.nothing");
+  return hostName ? t("settings.voice.fact.runsOn.hostNamed", { name: hostName }) : t("settings.voice.fact.runsOn.host");
+}
+
+function setUpWords(setUp: SetUpFact): string {
+  switch (setUp.kind) {
+    case "settings": {
+      const at = Date.parse(setUp.at);
+      return t("settings.voice.fact.setUp.settings", { device: setUp.by, time: Number.isNaN(at) ? setUp.at : dateTime(at) });
+    }
+    case "terminal":
+      return t("settings.voice.fact.setUp.terminal");
+    case "env":
+      return t("settings.voice.fact.setUp.env");
+    case "phone":
+      return t("settings.voice.fact.setUp.phone");
+    case "none":
+      return t("settings.voice.fact.setUp.none");
+  }
+}
+
+/** The one sentence under the facts that a state owes, or `null`. */
+function statusNote(status: VoiceStatus, props: SpeechCardsProps): string | null {
+  if (status.kind === "paused") return t(status.action === "restore" ? "settings.voice.status.paused.detail" : "settings.voice.status.paused.noCopy");
+  if (status.kind === "no-recording" && props.block === "insecure") return t("settings.speech.engine.why.insecure");
+  return null;
+}
+
+/** One way the card can read: for this phone's choice `key`, the status it leads to and its facts. */
+interface StatusView {
+  key: SttEngineChoice;
+  status: VoiceStatus;
+  facts: StatusFacts;
+}
+
+/** The one action that fixes a state (Restore, Fix), or nothing. Never a second way to change a setting. */
+function StatusAction({ status, props }: { status: VoiceStatus; props: SpeechCardsProps }) {
+  if (status.kind === "paused" && status.action === "restore") {
+    return (
+      <Button className="h-11" disabled={props.copy !== null || browserBlock(props.block) !== null} onClick={props.onPhoneDownload}>
+        {props.copy !== null ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
+        {t("settings.voice.restore", { size: modelSize(props.whistle, props.local) })}
+      </Button>
+    );
+  }
+  if (status.kind === "host" && status.action === "fix") {
+    return (
+      <Button variant="outline" className="h-11" onClick={() => props.onOpenPage("host")}>
+        <Wrench className="size-4" />
+        {t("settings.voice.fix")}
+      </Button>
+    );
+  }
+  return null;
+}
+
 /**
- * "When you press the mic": where speech becomes text, where audio goes, and whether it works. The
- * action under it fixes the state (Restore, Fix), never a second way to change a setting.
+ * "When you press the mic": five labelled facts (the engine, where it runs, how it was set up, where
+ * audio goes, and whether it is ready, with what that rests on), then the one action that fixes the
+ * state. The rows always render; only their values change.
+ *
+ * A TAP ON THIS PHONE'S CHOICE MOVES NOTHING BELOW (DESIGN.md §2). Every value sits in a `OneOf` that
+ * holds the words of BOTH choices, the one in force and the one a tap would make, so each row is
+ * already as tall as the taller of the two. `views` lists both while both can be chosen.
  */
-function StatusCard({ status, props }: { status: VoiceStatus; props: SpeechCardsProps }) {
-  const words = statusWords(status, props);
-  const size = modelSize(props.whistle, props.local);
+function StatusCard({ views, active, props }: { views: readonly StatusView[]; active: SttEngineChoice; props: SpeechCardsProps }) {
+  const slot = (key: string, render: (view: StatusView) => ReactNode) => (
+    <OneOf key={key} active={active} options={views.map((view) => ({ key: view.key, node: render(view) }))} />
+  );
+  const anyNote = views.some((view) => statusNote(view.status, props) !== null);
+  const anyAction = views.some((view) => view.status.kind === "paused" ? view.status.action === "restore" : view.status.kind === "host" && view.status.action === "fix");
+  const row = (label: string, render: (view: StatusView) => ReactNode) => (
+    <div key={label} className="contents">
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="min-w-0 break-words">{slot(label, render)}</dd>
+    </div>
+  );
   return (
     <Card className="gap-0 py-0">
-      <div className="space-y-2 p-4">
+      <section aria-label={t("settings.voice.status.label")} className="space-y-3 p-4">
         <SectionLabel>{t("settings.voice.status.label")}</SectionLabel>
-        <p className="font-medium leading-snug">{words.where}</p>
-        <AudioLine
-          reach={status.reach}
-          text={status.kind === "host" && status.option === null ? t("settings.voice.audio.unknown") : undefined}
-        />
-      </div>
-      <div className="space-y-2 border-t border-border px-4 py-3">
-        <div className="flex min-h-6 items-center">
-          <StateWord state={status.state} word={words.word} />
-        </div>
-        {words.detail !== null && <p className="text-xs text-muted-foreground">{words.detail}</p>}
-        {status.kind === "paused" && status.action === "restore" && (
-          <Button className="h-11" disabled={props.copy !== null || browserBlock(props.block) !== null} onClick={props.onPhoneDownload}>
-            {props.copy !== null ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
-            {t("settings.voice.restore", { size })}
-          </Button>
-        )}
-        {status.kind === "host" && status.action === "fix" && (
-          <Button variant="outline" className="h-11" onClick={() => props.onOpenPage("host")}>
-            <Wrench className="size-4" />
-            {t("settings.voice.fix")}
-          </Button>
-        )}
-      </div>
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-xs leading-relaxed">
+          {row(t("settings.voice.fact.engine"), (view) => <span className="font-medium">{engineWords(view.facts.engine, props)}</span>)}
+          {row(t("settings.voice.fact.runsOn"), (view) => runsOnWords(view.facts.runsOn, props.hostName))}
+          {row(t("settings.voice.fact.setUp"), (view) => setUpWords(view.facts.setUp))}
+          {row(t("settings.voice.audio.label"), (view) => (
+            <AudioValue
+              reach={view.status.reach}
+              text={view.status.kind === "host" && view.status.option === null ? t("settings.voice.audio.unknown") : undefined}
+            />
+          ))}
+          {row(t("settings.voice.fact.status"), (view) => (
+            <StateLine state={view.status.state}>{readinessWords(view.facts.readiness, props)}</StateLine>
+          ))}
+        </dl>
+        {anyNote && slot("note", (view) => <p className="text-xs text-muted-foreground">{statusNote(view.status, props)}</p>)}
+        {anyAction && slot("action", (view) => <StatusAction status={view.status} props={props} />)}
+      </section>
     </Card>
   );
 }
 
 /**
  * One of this phone's two choices, as a selectable card. The radio is the top of the card; the info
- * button sits beside it, outside the radio; the setup action, when there is one, sits under it,
- * indented to the text's left edge so it reads as part of the choice.
+ * button sits beside it, outside the radio; the setup line sits under it, indented to the text's left
+ * edge so it reads as part of the choice. Both cards render the same rows whichever is chosen.
  */
 function ChoiceCard({
   checked,
@@ -490,7 +610,7 @@ function ChoiceCard({
   children?: ReactNode;
 }) {
   return (
-    <Card className={cn("relative gap-0 py-0", checked && "border-primary")}>
+    <OptionCard selected={checked}>
       <button
         type="button"
         role="radio"
@@ -503,9 +623,10 @@ function ChoiceCard({
       >
         <Ring checked={checked} />
         <span className={cn("min-w-0 flex-1 space-y-1", disabled && !checked && "opacity-60")}>
-          <span className="flex items-center gap-2">
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className="text-sm font-medium">{title}</span>
             <Icon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+            <InUseBadge shown={checked} />
           </span>
           <span className="block text-xs text-muted-foreground">{what}</span>
           <span className="block pt-1">
@@ -515,7 +636,7 @@ function ChoiceCard({
       </button>
       <InfoButton name={title} onClick={onAbout} />
       {children !== undefined && <div className="space-y-2 pr-4 pb-4 pl-12">{children}</div>}
-    </Card>
+    </OptionCard>
   );
 }
 
@@ -526,16 +647,30 @@ const SHORT_KEYS = {
   chatgpt: "settings.voice.short.chatgpt",
 } as const satisfies Record<Exclude<HostOption, "off">, MessageKey>;
 
+/** Which of this phone's two choices can be tapped now. */
+/** Whether each of this phone's two choices can be tapped. */
+interface ChoicesOpen {
+  phone: boolean;
+  host: boolean;
+}
+
+function choicesOpen(props: SpeechCardsProps): ChoicesOpen {
+  const inForce = phoneChoiceInForce(props.engine, props.block);
+  return {
+    // "On this phone" needs a copy and a browser that can run it. A copy that is gone while it is
+    // chosen keeps it chosen (paused), so the radio stays where the person put it.
+    phone: browserBlock(props.block) === null && (props.local !== null || inForce === "phone"),
+    host: hostOptionNow(props) !== "off",
+  };
+}
+
 /** This phone's two choices, with the setup each needs written inside it. */
 function PhoneChoices(props: WithAbout) {
-  const { engine, block, local, onEngine, onAbout } = props;
+  const { engine, block, onEngine, onAbout } = props;
   const inForce = phoneChoiceInForce(engine, block);
-  const why = browserBlock(block);
+  const open = choicesOpen(props);
   const option = hostOptionNow(props);
   const hostOff = option === "off";
-  // "On this phone" needs a copy and a browser that can run it. A copy that is gone while it is
-  // chosen keeps it chosen (paused), so the radio stays where the person put it.
-  const phoneDisabled = why !== null || (local === null && inForce !== "phone");
   const hostWhat = hostOff
     ? t("settings.voice.choice.host.off")
     : t("settings.voice.choice.host.what", { option: option === null ? currentHostProvider(props.host, props.hostStt) : t(SHORT_KEYS[option]) });
@@ -543,7 +678,7 @@ function PhoneChoices(props: WithAbout) {
     <div role="radiogroup" aria-label={t("settings.voice.phone.hint")} className="space-y-2">
       <ChoiceCard
         checked={inForce === "phone"}
-        disabled={phoneDisabled}
+        disabled={!open.phone}
         icon={Smartphone}
         title={t("settings.speech.phone.heading")}
         what={t("settings.voice.choice.phone.what")}
@@ -555,7 +690,7 @@ function PhoneChoices(props: WithAbout) {
       </ChoiceCard>
       <ChoiceCard
         checked={inForce === "host"}
-        disabled={hostOff}
+        disabled={!open.host}
         icon={Server}
         title={t("settings.speech.host.heading")}
         what={hostWhat}
@@ -568,9 +703,13 @@ function PhoneChoices(props: WithAbout) {
   );
 }
 
-/** The phone choice's own setup line: what its copy of the model needs, and the one button for it. */
+/**
+ * The phone choice's own setup line: what its copy of the model needs, and the one button for it.
+ * It reads the copy and the host's model, never which choice is in force, so a tap between the two
+ * choices leaves it as it is.
+ */
 function PhoneCopyLine(props: SpeechCardsProps) {
-  const { whistle, local, copy, block, engine, canWrite, hostBusy, phoneError, onPhoneDownload, onSetupBoth } = props;
+  const { whistle, local, copy, block, canWrite, hostBusy, phoneError, onPhoneDownload, onSetupBoth } = props;
   const why = browserBlock(block);
   const size = modelSize(whistle, local);
   const newer = Boolean(local) && whistle?.state === "ready" && whistle.sha256 !== undefined && whistle.sha256 !== local?.sha256;
@@ -588,8 +727,6 @@ function PhoneCopyLine(props: SpeechCardsProps) {
         {newer ? t("settings.voice.copy.older") : t("settings.voice.copy.ready", { version: shortVersion(local.revision, local.sha256) })}
       </p>
     );
-  } else if (local === null && phoneChoiceInForce(engine, block) === "phone") {
-    line = <p className="text-xs">{t("settings.voice.copy.gone")}</p>;
   } else if (why !== null) {
     line = <p className="text-xs">{t(BLOCK_KEYS[why])}</p>;
   } else if (whistle?.state === "ready") {
@@ -671,6 +808,23 @@ function HostSummaryRow(props: SpeechCardsProps) {
   );
 }
 
+/** The way to every option and its steps, under the host's row. */
+function AllOptionsRow({ onOpenPage }: Pick<SpeechCardsProps, "onOpenPage">) {
+  return (
+    <Card className="gap-0 py-0">
+      <button
+        type="button"
+        onClick={() => onOpenPage("host")}
+        className="flex min-h-11 w-full items-center gap-3 px-4 py-3 text-left transition-colors active:bg-muted/60"
+      >
+        <ListChecks aria-hidden className="size-5 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 text-sm font-medium">{t("settings.voice.host.allOptions")}</span>
+        <ChevronRight aria-hidden className="size-5 shrink-0 text-muted-foreground" />
+      </button>
+    </Card>
+  );
+}
+
 /**
  * Hands-free, with the one extra line it owes when the text it would send unread came back from a
  * service off the host. The warning names the provider, and arrives through `Collapse`.
@@ -741,29 +895,44 @@ function ModelHubRow(props: SpeechCardsProps) {
   );
 }
 
+
 function VoiceHub(props: WithAbout) {
-  const status = voiceStatus({
-    engine: props.engine,
+  const input = {
     local: props.local,
     block: props.block,
     provider: currentHostProvider(props.host, props.hostStt),
     available: hostAvailable(props),
     whistle: props.whistle,
     recording: props.recording,
-  });
+  };
+  const inForce = phoneChoiceInForce(props.engine, props.block);
+  const open = choicesOpen(props);
+  // The choices the card holds words for: the one in force, and the other while it can be tapped.
+  // Once held, a choice stays held for this visit, so a tap that closes the other choice (a paused
+  // phone moved to the host) does not shrink the card under the finger either.
+  const held = useRef(new Set<SttEngineChoice>());
+  held.current.add(inForce);
+  for (const choice of ["phone", "host"] as const) if (open[choice]) held.current.add(choice);
+  const views: StatusView[] = (["phone", "host"] as const)
+    .filter((choice) => held.current.has(choice))
+    .map((choice) => {
+      const status = voiceStatus({ ...input, engine: choice });
+      return { key: choice, status, facts: statusFacts(status, { host: props.host, whistle: props.whistle }) };
+    });
   // Hands-free decides what happens to text a microphone made, so it is shown wherever there is one:
-  // a host provider, or this phone's own copy, in a browser that records.
-  const handsFreeShown = props.recording && (props.hostStt !== null || (phoneChoiceInForce(props.engine, props.block) === "phone" && Boolean(props.local)));
+  // a host provider, or this phone's own copy, in a browser that records. It does not follow which
+  // choice is in force, so a tap between the two does not bring it or take it away.
+  const handsFreeShown = props.recording && (props.hostStt !== null || Boolean(props.local));
   return (
     <>
       {!props.canWrite && <ReadOnlyHostBanner />}
-      <StatusCard status={status} props={props} />
+      <StatusCard views={views} active={inForce} props={props} />
       <Zone label={t("settings.voice.phone.label")} hint={t("settings.voice.phone.hint")}>
         <PhoneChoices {...props} />
       </Zone>
       <Zone label={t("settings.voice.host.label")} hint={t("settings.voice.host.hint")}>
         <HostSummaryRow {...props} />
-        <p className="text-xs text-muted-foreground">{t("settings.voice.host.options")}</p>
+        <AllOptionsRow onOpenPage={props.onOpenPage} />
       </Zone>
       {handsFreeShown && (
         <Zone label={t("settings.voice.after.label")}>
@@ -777,36 +946,13 @@ function VoiceHub(props: WithAbout) {
 
 // ── HOST SPEECH ─────────────────────────────────────────────────────────────────────────────────
 
-/** Why a choice is off, and the command that would change that, run on the host. */
-function switchWhy(reason: SttHostSwitchReason): { key: MessageKey; command: string | null } | null {
-  switch (reason) {
-    case "not-ready":
-      return { key: "settings.speech.provider.why.notReady", command: null };
-    case "codex-missing":
-      return { key: "settings.speech.provider.why.codexMissing", command: "codex login" };
-    case "codex-signed-out":
-      return { key: "settings.speech.provider.why.codexSignedOut", command: "codex login" };
-    case "codex-other-login":
-      return { key: "settings.speech.provider.why.codexOtherLogin", command: "codex login" };
-    case "codex-unknown":
-      return { key: "settings.speech.provider.why.codexUnknown", command: "codex login status" };
-    case "env":
-    case "terminal":
-    case "unreadable":
-      return null;
-  }
-}
-
-/** Why nothing at all may be chosen here: the option belongs to a terminal, the environment, or an unreadable file. */
-type LockReason = Extract<SttHostSwitchReason, "env" | "terminal" | "unreadable">;
-
-function lockOf(host: SttHostStatus): LockReason | null {
+function lockOf(host: SttHostStatus): HostLock | null {
   const reason = host.switchable.off.reason;
   return reason === "env" || reason === "terminal" || reason === "unreadable" ? reason : null;
 }
 
 /** An option set up in a terminal, by the environment, or a file that cannot be read: what to run instead of a choice. */
-function LockedNote({ lock }: { lock: LockReason }) {
+function LockedNote({ lock }: { lock: HostLock }) {
   return (
     // shrink-0: a direct child of the settings scroller, which is a flex column. The box's own
     // min-h-[42px] replaces min-height:auto, so without it the column squeezed this note to one
@@ -818,12 +964,12 @@ function LockedNote({ lock }: { lock: LockReason }) {
             <p>{t("settings.speech.provider.locked.terminal")}</p>
             <HostCommand command="collie stt setup" />
             <p>{t("settings.speech.provider.locked.off")}</p>
-            <HostCommand command="collie stt off" />
+            <HostCommand command={SETUP_COMMANDS.off} />
           </>
         ) : (
           <>
             <p>{t(lock === "env" ? "settings.speech.provider.locked.env" : "settings.speech.provider.locked.unreadable")}</p>
-            <HostCommand command="collie stt status" />
+            <HostCommand command={SETUP_COMMANDS.status} />
           </>
         )}
       </div>
@@ -850,25 +996,20 @@ interface RowProps extends WithAbout {
   inUse: boolean;
   /** This device may choose here: it may write, the host answered, and nothing locks the choice. */
   interactive: boolean;
-  /** Drawn with no ring and no action: a device that may not write, or a host that said nothing. */
+  /** Drawn with no ring: a device that may not write, or a host that said nothing. */
   readOnlyRow: boolean;
-  terminalOpen: boolean;
-  onToggleTerminal: () => void;
+  /** What locks every choice, or `null`. */
+  lock: HostLock | null;
 }
 
-/** One host option's facts: name, what it is, the audio line, and the one thing it cannot promise. */
-function OptionFacts({ option, inUse, readOnlyRow }: { option: HostOption; inUse: boolean; readOnlyRow: boolean }) {
+/** One host option's facts: name and the "In use" badge, what it is, the audio line, and the one thing it cannot promise. */
+function OptionFacts({ option, inUse }: { option: HostOption; inUse: boolean }) {
   const caveat = option === "command" || option === "chatgpt" ? CAVEAT_KEYS[option] : null;
   return (
     <span className="min-w-0 flex-1 space-y-1">
-      <span className="flex items-center gap-2">
+      <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <span className="text-sm font-medium">{optionName(option)}</span>
-        {readOnlyRow && inUse && (
-          <span className="inline-flex items-center gap-1 text-xs font-medium">
-            <Check aria-hidden className="size-3.5" />
-            {t("settings.voice.inUse")}
-          </span>
-        )}
+        <InUseBadge shown={inUse} />
       </span>
       <span className="block text-xs text-muted-foreground">{t(WHAT_KEYS[option])}</span>
       <span className="block pt-1">
@@ -885,103 +1026,57 @@ function OptionFacts({ option, inUse, readOnlyRow }: { option: HostOption; inUse
 }
 
 /**
- * One host option. A write device sees a radio for the three the app can switch (Whistle, ChatGPT,
- * Off); the two set up in a terminal open their terminal step instead, and are a radio only while in
- * use. A read-only device sees the same facts with no ring and no action: the one in use carries a
- * check and the words.
+ * One host option, as a card with the selected look when the host uses it. A write device sees a
+ * radio; it can be tapped for the three the app switches (Whistle, ChatGPT, Off) when the host says
+ * they may be chosen, and never for the two set up in a terminal. A read-only device sees the same
+ * card with no ring. Every option carries "How to set up", whatever the device may do.
  */
 function HostOptionRow(props: RowProps) {
-  const { option, inUse, interactive, readOnlyRow, host, switching, onChooseProvider, onAbout, terminalOpen, onToggleTerminal } = props;
-  const facts = <OptionFacts option={option} inUse={inUse} readOnlyRow={readOnlyRow} />;
-  const info = <InfoButton name={optionName(option)} onClick={() => onAbout(option)} />;
-
-  if (readOnlyRow) {
-    return (
-      <div className="relative">
+  const { option, inUse, interactive, readOnlyRow, host, switching, onChooseProvider, onAbout } = props;
+  const facts = <OptionFacts option={option} inUse={inUse} />;
+  const choice = choiceOf(option);
+  const sw = choice === null || host === null ? null : host.switchable[choice];
+  const disabled = !interactive || choice === null || sw?.ok !== true || switching !== null;
+  return (
+    <OptionCard selected={inUse}>
+      {readOnlyRow ? (
         <div className="flex items-start gap-3 p-4 pr-14">
           <span className="size-5 shrink-0" aria-hidden />
           {facts}
         </div>
-        {info}
-        <OptionState {...props} />
-      </div>
-    );
-  }
-
-  const choice = choiceOf(option);
-  if (choice === null && !inUse) {
-    // Set up in a terminal: the row opens its terminal step. A screen reader hears a disclosure.
-    return (
-      <div className="relative">
+      ) : (
         <button
           type="button"
-          aria-expanded={terminalOpen}
-          onClick={onToggleTerminal}
-          className="flex min-h-11 w-full items-start gap-3 p-4 pr-14 text-left transition-colors active:bg-muted/60"
+          role="radio"
+          aria-checked={inUse}
+          disabled={disabled && !inUse}
+          aria-disabled={inUse && disabled ? true : undefined}
+          onClick={() => {
+            if (!inUse && choice !== null && !disabled) onChooseProvider(choice);
+          }}
+          className="flex min-h-11 w-full items-start gap-3 p-4 pr-14 text-left transition-colors active:bg-muted/60 disabled:active:bg-transparent"
         >
-          <Ring checked={false} />
-          <span className="min-w-0 flex-1 space-y-1">
-            {facts}
-            <span className="flex items-center gap-1 pt-1 text-xs text-muted-foreground">
-              {t("settings.voice.terminal.setup")}
-              <ChevronDown aria-hidden className={cn("size-4 transition-transform", terminalOpen && "rotate-180")} />
-            </span>
-          </span>
+          <Ring checked={inUse} busy={choice !== null && switching === choice} />
+          {/* A terminal option is not dimmed: it is not closed, it is set up elsewhere, and says how below. */}
+          <span className={cn("min-w-0 flex-1", disabled && !inUse && choice !== null && "opacity-60")}>{facts}</span>
         </button>
-        {info}
-        <TerminalStep {...props} />
+      )}
+      <InfoButton name={optionName(option)} onClick={() => onAbout(option)} />
+      <div className="space-y-2 pr-4 pb-2 pl-12">
+        <OptionState {...props} />
+        <SetupDisclosure {...props} />
       </div>
-    );
-  }
-
-  const sw = choice === null || host === null ? null : host.switchable[choice];
-  const disabled = !interactive || choice === null || sw?.ok !== true || switching !== null;
-  return (
-    <div className="relative">
-      <button
-        type="button"
-        role="radio"
-        aria-checked={inUse}
-        disabled={disabled && !inUse}
-        aria-disabled={inUse && disabled ? true : undefined}
-        onClick={() => {
-          if (!inUse && choice !== null && !disabled) onChooseProvider(choice);
-        }}
-        className="flex min-h-11 w-full items-start gap-3 p-4 pr-14 text-left transition-colors active:bg-muted/60 disabled:active:bg-transparent"
-      >
-        <Ring checked={inUse} busy={choice !== null && switching === choice} />
-        <span className={cn("min-w-0 flex-1", disabled && !inUse && "opacity-60")}>{facts}</span>
-      </button>
-      {info}
-      <OptionState {...props} />
-    </div>
-  );
-}
-
-/** What a terminal-only option needs before it can be used: the fixed command, folded. */
-function TerminalStep({ option, terminalOpen, checking, onCheckAgain }: RowProps) {
-  if (!terminalOnly(option)) return null;
-  return (
-    <Collapse open={terminalOpen}>
-      <div className="pr-4 pb-4 pl-12">
-        <TerminalSetup
-          command={TERMINAL_COMMANDS[option]}
-          note={option === "service" ? t("settings.voice.terminal.keyNote") : undefined}
-          checking={checking}
-          onCheckAgain={onCheckAgain}
-        />
-      </div>
-    </Collapse>
+    </OptionCard>
   );
 }
 
 /**
- * What an option needs, or what is wrong with it, under its facts on the text's left edge: the host's
- * own words when the option in use does not work, the reason a choice is closed with the command that
- * opens it, the model's download for Whistle, and the consent note for ChatGPT.
+ * What is true of an option now, under its facts on the text's left edge: why the option in use
+ * does not work, the recorded ChatGPT identity, that a terminal option is changed in the terminal,
+ * and why a closed choice is closed, in one sentence. What to do about it is in "How to set up".
  */
 function OptionState(props: RowProps) {
-  const { option, inUse, interactive, readOnlyRow, host, whistle, canWrite, hostBusy, onSetup } = props;
+  const { option, inUse, interactive, readOnlyRow, host, whistle } = props;
   const parts: ReactNode[] = [];
   const choice = choiceOf(option);
   const sw = choice === null || host === null ? null : host.switchable[choice];
@@ -990,7 +1085,7 @@ function OptionState(props: RowProps) {
     parts.push(
       <div key="broken" className="space-y-1">
         <StateWord state="broken" word={t("settings.voice.status.broken")} />
-        <p className="text-xs">{hostReason(props)}</p>
+        <p className="text-xs">{notReadyDetail(hostNotReady(option, { host, whistle }), props)}</p>
       </div>,
     );
   }
@@ -1009,53 +1104,37 @@ function OptionState(props: RowProps) {
       </p>,
     );
   }
-  // A closed choice, with its reason and the command that opens it. Not for a device that may not
-  // write (it cannot act on it) and not under a lock (the note above the list says it once).
-  const why = sw !== null && sw.ok === false && sw.reason !== undefined ? switchWhy(sw.reason) : null;
-  if (interactive && why !== null) {
-    if (option === "whistle" && whistle !== null) {
-      parts.push(<WhistleDownload key="whistle" whistle={whistle} canWrite={canWrite} hostBusy={hostBusy} onSetup={onSetup} />);
-    } else {
+  // A closed choice, with its reason in one sentence. Not under a lock: the note above the list says
+  // it once.
+  if (interactive && !inUse && sw !== null && sw.ok === false) {
+    const closed: Readiness | null =
+      sw.reason === "not-ready" ? "whistle-no-model" : option === "chatgpt" ? hostNotReady("chatgpt", { host, whistle }) : null;
+    if (closed !== null && closed !== "host-says") {
       parts.push(
-        <div key="why" className="space-y-2">
-          <p className="text-xs text-muted-foreground">{t(why.key)}</p>
-          {why.command !== null && <HostCommand command={why.command} />}
-        </div>,
+        <p key="closed" className="text-xs text-muted-foreground">
+          {notReadyDetail(closed, props)}
+        </p>,
       );
     }
   }
-  if (interactive && option === "chatgpt" && !inUse && sw?.ok === true) {
-    parts.push(
-      <p key="consent" className="text-xs text-muted-foreground">
-        {t("settings.voice.chatgpt.consentFirst")}
-      </p>,
-    );
-  }
   if (parts.length === 0) return null;
-  return <div className="space-y-2 pr-4 pb-4 pl-12">{parts}</div>;
+  return <div className="space-y-2">{parts}</div>;
 }
 
-/** Whistle's one closed reason, the model not on the host: the download, its bar, or its failure. */
+/** The model's download, as a step's body: its bar while it runs, its failure, or the button. */
 function WhistleDownload({
   whistle,
-  canWrite,
   hostBusy,
   onSetup,
 }: {
   whistle: WhistleStatus;
-  canWrite: boolean;
   hostBusy: boolean;
   onSetup: () => void;
 }) {
+  if (whistle.state === "ready") return null;
   if (whistle.state === "downloading") {
-    return (
-      <div className="space-y-2">
-        <p className="text-xs">{t("settings.speech.host.downloading")}</p>
-        <Progress received={whistle.received ?? 0} total={whistle.bytes} label={t("settings.speech.progressAria")} />
-      </div>
-    );
+    return <Progress received={whistle.received ?? 0} total={whistle.bytes} label={t("settings.speech.progressAria")} />;
   }
-  if (!canWrite) return <p className="text-xs text-muted-foreground">{t("settings.speech.provider.why.notReady")}</p>;
   return (
     <div className="space-y-1">
       {whistle.state === "failed" && <p className="text-xs font-medium">{t("settings.speech.host.failed")}</p>}
@@ -1067,13 +1146,147 @@ function WhistleDownload({
   );
 }
 
+/** One step's sentence and what it needs under it: a command to copy, or the app's own button. */
+function stepView(step: SetupStep, props: RowProps): StepView {
+  const { inUse, host, whistle, switching, canWrite, hostBusy, onSetup, onChooseProvider } = props;
+  const base = { key: step.id, mark: step.mark };
+  const command = (text: string, line: string): StepView => ({ ...base, text, body: <HostCommand command={line} /> });
+  switch (step.id) {
+    case "lock-off":
+      return command(t("settings.voice.setup.lockOff"), SETUP_COMMANDS.off);
+    case "lock-env":
+      return command(t("settings.voice.setup.lockEnv"), SETUP_COMMANDS.status);
+    case "lock-unreadable":
+      return command(t("settings.voice.setup.lockUnreadable"), SETUP_COMMANDS.status);
+    case "whistle-download":
+      return {
+        ...base,
+        text: t("settings.voice.setup.whistle.download"),
+        body: whistle === null ? undefined : <WhistleDownload whistle={whistle} hostBusy={hostBusy} onSetup={onSetup} />,
+      };
+    case "whistle-use": {
+      const open = host?.switchable.whistle.ok === true && switching === null;
+      return {
+        ...base,
+        text: t("settings.voice.setup.whistle.use"),
+        body: inUse ? undefined : (
+          <Button variant="outline" className="h-11" disabled={!open} onClick={() => onChooseProvider("whistle")}>
+            {switching === "whistle" ? <Loader2 className="size-4 animate-spin" /> : <Server className="size-4" />}
+            {t("settings.voice.setup.whistle.useAction")}
+          </Button>
+        ),
+      };
+    }
+    case "whistle-command":
+      return command(t("settings.voice.setup.whistle.command"), SETUP_COMMANDS.whistleHost);
+    case "command-run":
+      return {
+        ...base,
+        text: t("settings.voice.setup.command.run"),
+        body: (
+          <>
+            <HostCommand command={SETUP_COMMANDS.command} />
+            <p className="text-xs text-muted-foreground">{t("settings.voice.setup.command.example")}</p>
+            <HostCommand command={SETUP_COMMANDS.commandExample} />
+          </>
+        ),
+      };
+    case "service-run":
+      return command(t("settings.voice.setup.service.run"), SETUP_COMMANDS.service);
+    case "codex-install":
+      return { ...base, text: t("settings.voice.setup.codex.install") };
+    case "codex-login":
+      return {
+        ...base,
+        text: t("settings.voice.setup.codex.login"),
+        body: (
+          <>
+            <HostCommand command={SETUP_COMMANDS.codexLogin} />
+            {codexStateOf(host) === "unknown" && (
+              <>
+                <p className="text-xs text-muted-foreground">{t("settings.voice.setup.codex.status")}</p>
+                <HostCommand command={SETUP_COMMANDS.codexLoginStatus} />
+              </>
+            )}
+          </>
+        ),
+      };
+    case "codex-use": {
+      if (!canWrite) return command(t("settings.voice.setup.codex.useTerminal"), SETUP_COMMANDS.codexSetup);
+      const open = props.interactive && host?.switchable.codex.ok === true && switching === null;
+      return {
+        ...base,
+        text: t("settings.voice.setup.codex.use"),
+        body: inUse ? undefined : (
+          <Button variant="outline" className="h-11" disabled={!open} onClick={() => onChooseProvider("codex")}>
+            {t("settings.voice.setup.codex.useAction")}
+          </Button>
+        ),
+      };
+    }
+    case "off-choose":
+      return command(t("settings.voice.setup.off.choose"), SETUP_COMMANDS.off);
+    case "off-command":
+      return command(t("settings.voice.setup.off.command"), SETUP_COMMANDS.off);
+  }
+}
+
 /**
- * The five host options in the order audio travels: two tiers, then Off on its own. One bordered card
- * per tier, rows divided by hairlines, so the tier label is the only thing between the two groups.
+ * "How to set up", folded: numbered steps, one sentence each, commands as fixed lines to copy, and
+ * the app's own buttons where the app may act. Open at first paint only for the option in use when
+ * it does not work, so the way to fix it is already on screen. It opens through `Collapse`: a tap the
+ * person made, and the cards below glide rather than jump.
+ */
+function SetupDisclosure(props: RowProps) {
+  const { option, inUse, interactive, lock, host, whistle, checking, onCheckAgain, initialSetup } = props;
+  const broken = inUse && option !== "off" && !hostAvailable(props);
+  const [open, setOpen] = useState(initialSetup === option || broken);
+  const steps = setupSteps(option, {
+    lock,
+    // Whistle's own buttons need the host's model status; a host that offers none gets the command.
+    interactive: interactive && (option !== "whistle" || whistle !== null),
+    inUse,
+    working: hostAvailable(props),
+    whistleReady: whistle?.state === "ready",
+    codex: codexStateOf(host),
+  });
+  return (
+    <div>
+      <Button type="button" variant="ghost" className="-ml-2 h-11 px-2 text-xs" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+        {t("settings.voice.setup.how")}
+        <ChevronDown aria-hidden className={cn("size-4 transition-transform", open && "rotate-180")} />
+      </Button>
+      <Collapse open={open}>
+        <div className="space-y-3 pt-1 pb-3">
+          {option === "command" && <p className="text-xs">{t("settings.voice.setup.command.what")}</p>}
+          <StepList steps={steps.map((step) => stepView(step, props))} />
+          {option === "service" && <p className="text-xs text-muted-foreground">{t("settings.voice.setup.service.key")}</p>}
+          {option === "command" && (
+            <p className="text-xs">
+              <ExternalLink href={COMMAND_DOCS_URL}>{t("settings.voice.setup.command.docs")}</ExternalLink>
+            </p>
+          )}
+          {option !== "off" && (
+            <div className="space-y-1">
+              <Button type="button" variant="outline" className="h-11" disabled={checking} onClick={onCheckAgain}>
+                {checking ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+                {t("settings.voice.checkAgain")}
+              </Button>
+              <p className="text-xs text-muted-foreground">{t("settings.voice.terminal.check")}</p>
+            </div>
+          )}
+        </div>
+      </Collapse>
+    </div>
+  );
+}
+
+/**
+ * The five host options in the order audio travels: two tiers, then Off on its own. One card per
+ * option, so the one in use can wear the selected look on all four sides.
  */
 function HostSpeechPage(props: WithAbout) {
   const { host, hostRead, canWrite, providerError, consentOpen } = props;
-  const [terminal, setTerminal] = useState<HostOption | null>(props.initialTerminal ?? null);
   const current = hostOptionNow(props);
   const lock = host === null ? null : lockOf(host);
   // A host that has not said what may be chosen (an older bridge) is drawn like a read-only device,
@@ -1088,8 +1301,7 @@ function HostSpeechPage(props: WithAbout) {
       inUse={current === option}
       interactive={interactive}
       readOnlyRow={readOnlyRow}
-      terminalOpen={terminal === option}
-      onToggleTerminal={() => setTerminal((open) => (open === option ? null : option))}
+      lock={lock}
     />
   );
   const tier = (which: "stays" | "leaves") => HOST_OPTIONS.filter((o) => tierOf(o) === which).map(row);
@@ -1113,12 +1325,10 @@ function HostSpeechPage(props: WithAbout) {
           className="space-y-2"
         >
           <TierLabel>{t("settings.voice.tier.stays")}</TierLabel>
-          <Card className="gap-0 divide-y divide-border py-0">{tier("stays")}</Card>
+          {tier("stays")}
           <TierLabel>{t("settings.voice.tier.leaves")}</TierLabel>
-          <Card className="gap-0 divide-y divide-border py-0">{tier("leaves")}</Card>
-          <div className="pt-2">
-            <Card className="gap-0 py-0">{row("off")}</Card>
-          </div>
+          {tier("leaves")}
+          <div className="pt-2">{row("off")}</div>
         </div>
       )}
       {providerError !== null && !consentOpen && (
@@ -1510,6 +1720,12 @@ function WhistleModelPage(props: SpeechCardsProps) {
 
 // ── THE CONTROLLER ──────────────────────────────────────────────────────────────────────────────
 
+/** The lead's name on a crew's roster, the machine speech runs on. A solo host is named nowhere, so `null`. */
+function leadName(servers: readonly ServerSummary[] | undefined): string | null {
+  const id = leadHost(servers);
+  return servers?.find((s) => s.id === id)?.name ?? null;
+}
+
 /** How often the host is asked while its download runs. Only while the page is on screen. */
 export const WHISTLE_POLL_MS = 1000;
 /** Failed polls in a row after which the polling stops, so a host that went away is not asked forever. */
@@ -1763,6 +1979,7 @@ export function SpeechControl({ page = "hub" }: { page?: VoiceView }) {
     },
     onCheckAgain: () => void checkAgain(),
     onOpenPage: (to) => nav.down(voicePagePath(to, scope)),
+    hostName: leadName(root?.servers),
   };
 
   if (page === "hub") {

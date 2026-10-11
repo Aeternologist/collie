@@ -38,7 +38,7 @@ a device with write access may switch the host between Whistle, the ChatGPT subs
 `codex` provider) and Off. ChatGPT comes only after the same consent the terminal prints and a tap
 on **I accept** ([below](#the-codex-provider--what-you-are-accepting)). A provider you set up in the
 terminal with a key or a command, or one your environment names, is shown there and never changed
-from the app. For those two, the page shows the one command to run on the host, with **Copy** and
+from the app. For those two, the page shows the commands to run on the host, with **Copy** and
 **Check again**, and no form.
 
 ```console
@@ -133,15 +133,23 @@ write access can set this up." and cannot start the download.
 
 **Settings → Voice** is one page with two pages below it:
 
-- **Voice** shows what happens when you press the mic, and whether it works. Then this phone's own
-  choice, **On this phone** or **On your host**, which is kept per device. Then one row for what the
-  host uses, the hands-free switch, and one row for the model. Each choice has an info button that
+- **Voice** shows what happens when you press the mic, as five facts: the **Engine**, where it
+  **Runs on**, how it was **Set up** (from Settings by which device and when, or in a terminal on
+  the host), where the **Audio** goes, and the **Status**. The status says what it rests on, for
+  example "Ready. Whistle ca52876 is on this phone." or "Not ready. Codex is signed out on your
+  host.". Then this phone's own choice, **On this phone** or **On your host**, which is kept per
+  device. The choice in use has a bold edge, a tint and an **In use** badge, and switching between
+  the two moves nothing on the page. Then one row for what the host uses, a row that opens all five
+  options, the hands-free switch, and one row for the model. Each choice has an info button that
   lists five facts about it: where the audio goes, whether it works offline, what it costs, what
   setup it needs, and how fast it is. A tap on the info button chooses nothing.
 - **Host speech** lists the host's five options. Whistle and your own command keep the audio on
   your machines. A speech service and the ChatGPT subscription send it off your host. Off stands on
   its own below them. A change here is for every device paired to the host. A choice that sends
-  audio further than the one it replaces asks first; a step back is sent on the tap.
+  audio further than the one it replaces asks first; a step back is sent on the tap. Every option
+  has **How to set up**: numbered steps, the commands to copy, and the app's own buttons where the
+  app may act. The step to take next is marked **Next**. It is open by itself only for the option in
+  use when it does not work.
 - **Whistle model** names the maker, Cactus Compute, the licence, and links to the model page on
   Hugging Face. It shows the copy on the host and the copy on this phone, each with its own state.
 
@@ -155,9 +163,10 @@ To set Whistle up:
    (the first seven characters of the Hugging Face revision, a link to that revision) and its size.
    **Details** shows a short checksum and when the host downloaded it.
 3. For dictation through the host, open **Host speech** and choose **Whistle on your host**, then
-   **Change for every device**. If you set up another provider in the terminal, with a key or a
-   command, the page shows it and the commands that change it, and offers no choice. Change that in
-   the terminal, below.
+   **Change for every device**. Or open **How to set up** under it and tap **Use on host**. If you
+   set up another provider in the terminal, with a key or a command, the page shows it and offers no
+   choice. Whistle's steps then start with `collie stt off` on the host, then
+   `collie stt whistle --host`.
 4. On this phone's copy, **Whistle model** names the version, and offers **Remove from this phone**.
    It also says whether the browser agreed to keep the copy ("Kept") or may clear it when space runs
    low. If the host later gets a newer model, the copy says so and offers **Update**.
@@ -304,8 +313,9 @@ you already trust stays the only thing that touches it.
 write access. The page shows what the host uses now. For the ChatGPT subscription it also shows the
 recorded identity: `honest`, or `codex-cli` when the fallback was needed. The **ChatGPT
 subscription** row is open only when `codex` is installed on the host and signed in with ChatGPT.
-Collie asks `codex login status` to find out. Otherwise the row says what to run on the host, usually
-`codex login`. Tap the row, and a sheet shows the same consent, word for word, under a line that says
+Collie asks `codex login status` to find out. Otherwise the row says why in one sentence, and its
+**How to set up** marks the next step: install Codex on the host, sign in with `codex login`, then
+tap **Use ChatGPT subscription**. Tap the row, and a sheet shows the same consent, word for word, under a line that says
 the change is for every device paired to the host. Nothing is sent to the host until you tap
 **I accept**. Then the host runs the same probe as `collie stt setup`, honest identity first, and
 writes the same config. If the probe fails, nothing is written and the sheet says why. **Off** on the

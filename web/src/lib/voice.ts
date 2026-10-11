@@ -189,3 +189,229 @@ export function modelChip(input: {
   if (held) return "phone";
   return "absent";
 }
+
+// ── THE STATUS CARD'S FACTS ─────────────────────────────────────────────────────────────────────
+//
+// "When you press the mic" is five labelled facts: the engine, where it runs, how it was set up,
+// where audio goes, and whether it is ready. Each is a code here; the card turns it into words. The
+// card never says a bare "Works": the Status row says what the answer rests on, which is a different
+// check for each engine (the bridge's `status()` per provider, bridge/stt/*.ts):
+//
+//   · this phone      a copy of the model in this browser, and a browser that runs the engine
+//   · Whistle (host)  the model held under a hash this release accepts, and the engine files in place
+//   · your command    the command is a regular, executable file the host can find
+//   · speech service  configured is all the host knows: it has no cheap way to ask the service
+//   · ChatGPT         Codex on the host answered that it is signed in with ChatGPT
+
+/** What the Engine row names. `other`: a provider id this build does not know, shown as the host sent it. */
+export type EngineFact = HostOption | "phone" | "other";
+
+/** What the Runs on row says. `nothing`: no engine runs at all. */
+export type RunsOnFact = "phone" | "host" | "nothing";
+
+/** What the Set up row says. */
+export type SetUpFact =
+  | { kind: "settings"; by: string; at: string }
+  | { kind: "terminal" }
+  | { kind: "env" }
+  | { kind: "phone" }
+  | { kind: "none" };
+
+/** What the Status row rests on, as a code. Each one is one sentence in the catalogue. */
+export type Readiness =
+  | "phone-ready"
+  | "phone-gone"
+  | "no-recording"
+  | "nothing"
+  | "whistle-ready"
+  | "whistle-no-model"
+  | "whistle-no-engine"
+  | "command-found"
+  | "command-missing"
+  | "service-set"
+  | "codex-ready"
+  | "codex-missing"
+  | "codex-signed-out"
+  | "codex-other-login"
+  | "codex-unknown"
+  | "other-ready"
+  | "host-says";
+
+/** The Codex sign-in on the host, as the host's switch check found it. `null`: not checked (a lock, or an older bridge). */
+export type CodexState = "ready" | "missing" | "signed-out" | "other-login" | "unknown";
+
+/** The host's Codex sign-in, from `switchable.codex`. A lock skips the check, so a lock is `null`. */
+export function codexStateOf(host: SttHostStatus | null): CodexState | null {
+  const sw = host?.switchable.codex;
+  if (sw === undefined) return null;
+  if (sw.ok) return "ready";
+  switch (sw.reason) {
+    case "codex-missing":
+      return "missing";
+    case "codex-signed-out":
+      return "signed-out";
+    case "codex-other-login":
+      return "other-login";
+    case "codex-unknown":
+      return "unknown";
+    default:
+      return null;
+  }
+}
+
+export interface StatusFactsInput {
+  /** The host's status read, or `null` on an older bridge. */
+  host: SttHostStatus | null;
+  /** The host's model, for the Whistle row's reason. */
+  whistle: WhistleStatus | null;
+}
+
+/** The five facts' codes for one status. The Audio row is the status's own `reach`. */
+export interface StatusFacts {
+  engine: EngineFact;
+  runsOn: RunsOnFact;
+  setUp: SetUpFact;
+  readiness: Readiness;
+}
+
+/** How the host's option was set up: from Settings by a named device, in a terminal, by the environment, or not at all. */
+function hostSetUp(provider: string, host: SttHostStatus | null): SetUpFact {
+  if (provider === "none") return { kind: "none" };
+  if (host?.changedBy !== undefined && host.changedAt !== undefined) return { kind: "settings", by: host.changedBy, at: host.changedAt };
+  if (host?.configuredBy === "env") return { kind: "env" };
+  return { kind: "terminal" };
+}
+
+/** Why a host option in use does not answer, from the facts the page has; `host-says` when only the host's own words do. */
+export function hostNotReady(option: HostOption | null, input: StatusFactsInput): Readiness {
+  if (option === "whistle" && input.whistle !== null) return input.whistle.state === "ready" ? "whistle-no-engine" : "whistle-no-model";
+  if (option === "command") return "command-missing";
+  if (option === "chatgpt") {
+    const codex = codexStateOf(input.host);
+    if (codex !== null && codex !== "ready") return `codex-${codex}`;
+  }
+  return "host-says";
+}
+
+const READY_OF = {
+  whistle: "whistle-ready",
+  command: "command-found",
+  service: "service-set",
+  chatgpt: "codex-ready",
+} as const satisfies Record<Exclude<HostOption, "off">, Readiness>;
+
+/** The status card's facts for one status. */
+export function statusFacts(status: VoiceStatus, input: StatusFactsInput): StatusFacts {
+  switch (status.kind) {
+    case "phone":
+      return { engine: "phone", runsOn: "phone", setUp: { kind: "phone" }, readiness: "phone-ready" };
+    case "paused":
+      return { engine: "phone", runsOn: "phone", setUp: { kind: "none" }, readiness: "phone-gone" };
+    case "setup":
+      return { engine: "off", runsOn: "nothing", setUp: { kind: "none" }, readiness: "nothing" };
+    case "no-recording":
+      return { engine: "off", runsOn: "nothing", setUp: { kind: "none" }, readiness: "no-recording" };
+    case "host": {
+      const engine: EngineFact = status.option ?? "other";
+      const setUp = hostSetUp(status.provider, input.host);
+      const readiness: Readiness =
+        status.state === "broken"
+          ? hostNotReady(status.option, input)
+          : status.option === null || status.option === "off"
+            ? "other-ready"
+            : READY_OF[status.option];
+      return { engine, runsOn: "host", setUp, readiness };
+    }
+  }
+}
+
+// ── HOW TO SET UP EACH HOST OPTION ──────────────────────────────────────────────────────────────
+//
+// Every option on Host speech carries its steps, whether or not it can be switched from the app
+// now. The app still never changes a provider set up with a key or a command (ADR 0097): under that
+// lock, the steps of the two it could otherwise switch begin with `collie stt off`, run on the host.
+
+/** One step. The page owns the words, the command and the button for each id. */
+export type SetupStepId =
+  | "lock-off"
+  | "lock-env"
+  | "lock-unreadable"
+  | "whistle-download"
+  | "whistle-use"
+  | "whistle-command"
+  | "command-run"
+  | "service-run"
+  | "codex-install"
+  | "codex-login"
+  | "codex-use"
+  | "off-choose"
+  | "off-command";
+
+/** A step's mark: done, the one to take next, or neither (nothing the page can tell). */
+export type StepMark = "done" | "next" | null;
+
+export interface SetupStep {
+  id: SetupStepId;
+  mark: StepMark;
+}
+
+/** Why nothing on Host speech can be chosen from the app. */
+export type HostLock = "terminal" | "env" | "unreadable";
+
+export interface SetupInput {
+  /** What locks every choice, or `null`. */
+  lock: HostLock | null;
+  /** This device may write, the host answered, and nothing locks the choice. */
+  interactive: boolean;
+  /** The option is the host's option now. */
+  inUse: boolean;
+  /** The host's option answers (`available`). Read only together with `inUse`. */
+  working: boolean;
+  /** The model is ready on the host. */
+  whistleReady: boolean;
+  /** The host's Codex sign-in, or `null` when it was not checked. */
+  codex: CodexState | null;
+}
+
+const LOCK_STEP = { terminal: "lock-off", env: "lock-env", unreadable: "lock-unreadable" } as const satisfies Record<HostLock, SetupStepId>;
+
+/**
+ * Marks for steps taken in order: every step before the first one not yet done is done, that one is
+ * next, the rest are neither. `doneUntil` is how many steps are done; `null` marks nothing.
+ */
+function inOrder(ids: readonly SetupStepId[], doneUntil: number | null): SetupStep[] {
+  return ids.map((id, i) => ({
+    id,
+    mark: doneUntil === null ? null : i < doneUntil ? "done" : i === doneUntil ? "next" : null,
+  }));
+}
+
+/** The steps that set up one host option, with the one to take next marked where the page can tell. */
+export function setupSteps(option: HostOption, input: SetupInput): SetupStep[] {
+  const { lock, interactive, inUse, working, whistleReady, codex } = input;
+  // In use and answering: every step is behind it. In use and not answering: the step that fixes it
+  // is next, where the page can tell which one that is.
+  const done = inUse && working;
+  switch (option) {
+    case "whistle": {
+      if (lock !== null) return inOrder([LOCK_STEP[lock], "whistle-command"], done ? 2 : 0);
+      if (!interactive) return inOrder(["whistle-command"], done ? 1 : inUse ? 0 : null);
+      return inOrder(["whistle-download", "whistle-use"], done ? 2 : !whistleReady ? 0 : inUse ? null : 1);
+    }
+    case "command":
+      return inOrder(["command-run"], done ? 1 : inUse ? 0 : null);
+    case "service":
+      return inOrder(["service-run"], done ? 1 : inUse ? 0 : null);
+    case "chatgpt": {
+      const ids: SetupStepId[] = ["codex-install", "codex-login", "codex-use"];
+      if (lock !== null) return inOrder([LOCK_STEP[lock], ...ids], done ? 4 : 0);
+      if (done) return inOrder(ids, 3);
+      if (codex === null) return inOrder(ids, null);
+      if (codex === "missing") return inOrder(ids, 0);
+      if (codex !== "ready") return inOrder(ids, 1);
+      return inOrder(ids, inUse ? null : 2);
+    }
+    case "off":
+      return inOrder([interactive ? "off-choose" : "off-command"], inUse ? 1 : null);
+  }
+}

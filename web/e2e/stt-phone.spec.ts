@@ -405,6 +405,16 @@ const setUpOnPhoneButton = (page: Page) => page.getByRole("button", { name: /^Co
 /** The hub's line under On this phone, once the copy is kept. */
 const phoneIsSetUp = (page: Page) => page.getByText(en["settings.voice.copy.ready"].replace("{version}", "ca52876"), { exact: true });
 
+/**
+ * The status card's words as they read now. The card holds the words of both choices in `OneOf`
+ * slots and fades the other one to opacity 0, which Playwright still counts as visible, so a check
+ * of what the card SAYS reads the front layers only.
+ */
+const statusShown = (page: Page) => page.getByRole("region", { name: en["settings.voice.status.label"] }).locator("[data-active]");
+
+/** The Status row while this phone runs Whistle from the copy the host named. */
+const phoneReady = en["settings.voice.state.ready"].replace("{detail}", en["settings.voice.ok.phone"].replace("{version}", "ca52876"));
+
 /** Tap Copy to this phone on the hub and wait for the copy to be kept. */
 async function setUpOnPhone(page: Page, timeout = 30_000): Promise<void> {
   await setUpOnPhoneButton(page).click();
@@ -446,7 +456,7 @@ test("Download to host walks absent, downloading, ready; Whistle on Host speech 
   const whistle = options.getByRole("radio", { name: new RegExp(`^${en["settings.voice.option.whistle"]}`) });
   await expect(off).toHaveAttribute("aria-checked", "true");
   await expect(options.getByRole("radio", { name: new RegExp(`^${en["settings.voice.option.chatgpt"]}`) })).toBeDisabled();
-  await expect(page.getByText(en["settings.speech.provider.why.codexMissing"])).toBeVisible();
+  await expect(page.getByText(en["settings.voice.why.codexMissing"])).toBeVisible();
 
   // Whistle sends audio further than Off: the tap asks first, for every device, and sends nothing.
   await expect(whistle).toBeEnabled();
@@ -484,7 +494,7 @@ test("the phone engine: copy to this phone, then choose On this phone, and the c
   await expect(phone).toBeEnabled();
   await phone.click();
   await expect(phone).toHaveAttribute("aria-checked", "true");
-  await expect(page.getByText(en["settings.voice.status.phone"])).toBeVisible();
+  await expect(statusShown(page).getByText(phoneReady)).toBeVisible();
 
   // The copy is under the pinned hash in the speech cache, with the engine files beside it.
   const keys = await page.evaluate(async () => (await (await caches.open("collie-stt")).keys()).map((r) => new URL(r.url).pathname));
@@ -496,6 +506,58 @@ test("the phone engine: copy to this phone, then choose On this phone, and the c
   await goInApp(page, "/settings/voice/model");
   const phoneStep = page.getByRole("region", { name: en["settings.speech.phone.heading"] });
   await expect(phoneStep.getByRole("link", { name: "Version ca52876 on Hugging Face" })).toBeVisible();
+});
+
+test("a tap between On this phone and On your host moves nothing on the hub", async ({ page }) => {
+  // Both choices open: the host runs Whistle, and this phone holds its own copy.
+  const world = freshWorld({ whistle: ready({ hostEngine: true }), stt: WHISTLE_HOST_STT });
+  await installSpeechBridge(page, world);
+  await installDigestShim(page);
+  await installFakeMicrophone(page);
+  await serveUnderBridgePolicies(page);
+  await openSpeechSettings(page);
+  await setUpOnPhone(page);
+  const phone = phoneChoice(page);
+  const host = hostChoice(page);
+  await expect(phone).toBeEnabled();
+  await expect(host).toHaveAttribute("aria-checked", "true");
+
+  // The top and the height of what sits below the status card: the host's zone heading, and each of
+  // this phone's two option cards. Read after two frames, so a late layout would be caught too.
+  const marks = {
+    heading: page.getByRole("heading", { name: en["settings.voice.host.label"] }),
+    phoneCard: page.locator('[data-slot="card"]', { has: phone }),
+    hostCard: page.locator('[data-slot="card"]', { has: host }),
+  };
+  const measure = async () => {
+    await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+    const out: Record<string, { top: number; height: number }> = {};
+    for (const [name, locator] of Object.entries(marks)) {
+      const box = await locator.boundingBox();
+      if (box === null) throw new Error(`${name} has no box`);
+      out[name] = { top: box.y, height: box.height };
+    }
+    return out;
+  };
+  const expectStill = (before: Record<string, { top: number; height: number }>, after: Record<string, { top: number; height: number }>) => {
+    for (const name of Object.keys(marks)) {
+      expect(Math.abs(after[name]!.top - before[name]!.top), `${name} top`).toBeLessThanOrEqual(1);
+      expect(Math.abs(after[name]!.height - before[name]!.height), `${name} height`).toBeLessThanOrEqual(1);
+    }
+  };
+
+  const onHost = await measure();
+  await phone.click();
+  await expect(phone).toHaveAttribute("aria-checked", "true");
+  await expect(statusShown(page).getByText(phoneReady)).toBeVisible();
+  const onPhone = await measure();
+  expectStill(onHost, onPhone);
+
+  await host.click();
+  await expect(host).toHaveAttribute("aria-checked", "true");
+  const back = await measure();
+  expectStill(onHost, back);
+  console.log(`shift: ${JSON.stringify({ onHost, onPhone, back })}`);
 });
 
 test("the phone's copy survives a reload, and the engine runs from it", async ({ page, browserName }) => {
@@ -533,7 +595,9 @@ test("a phone that chose itself and lost its copy is paused, says so, and does n
   await page.addInitScript(() => localStorage.setItem("collie:stt-engine:v1", "phone"));
   await openSpeechSettings(page);
 
-  await expect(page.getByText(en["settings.voice.status.paused"])).toBeVisible();
+  await expect(
+    statusShown(page).getByText(en["settings.voice.state.paused"].replace("{detail}", en["settings.voice.why.phoneGone"])),
+  ).toBeVisible();
   await expect(phoneChoice(page)).toHaveAttribute("aria-checked", "true");
   await expect(page.getByRole("button", { name: /^Restore/ })).toBeVisible();
 
