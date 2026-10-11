@@ -461,11 +461,3 @@ export function composerPrompt(lines: StyledLine[]): string | null {
   const rows = lines.slice(tail.modelRow, tail.rule + 1).map((l) => rstrip(lineText(l)));
   return rows[0]!.length === 0 ? null : rows.join("\n");
 }
-
-/** Whether the draft text carried by the interior rows is opencode's own opaque token rather than
- *  the user's text. opencode shows no paste chip in any captured state — the draft is always the
- *  user's words — so nothing is opaque. If a large paste ever collapses to a token, capture it and
- *  teach this predicate rather than guessing. */
-export function draftIsOpaque(_draft: string): boolean {
-  return false;
-}

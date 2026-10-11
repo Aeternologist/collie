@@ -21,7 +21,6 @@ import { isBlank, lineText, type Block, type StyledLine } from "../../blocks";
 import type { HarnessAdapter } from "../types";
 import {
   composerPrompt,
-  draftIsOpaque,
   extractInputDraft,
   extractStatusLines,
   hasComposer,
@@ -33,6 +32,7 @@ import { detectPermissionDialog } from "./dialog";
 import { isBareBar } from "./markers";
 import { detectQuestionDialog } from "./question";
 import { detectQuestionTabs } from "./question-tabs";
+import { collapsesAsPaste, isPasteTokenOnly, pasteCarriesSend } from "./paste";
 import { opencodeReplyChunks } from "./reply-chunks";
 
 /** The mirror rows above a dialog that starts at `startLine`. The block carries the question itself,
@@ -97,5 +97,7 @@ export const opencodeAdapter: HarnessAdapter = {
   overlayHoldsKeyboard,
   composerPrompt,
   replyChunks: opencodeReplyChunks,
-  draftIsOpaque,
+  bracketedPaste: collapsesAsPaste,
+  draftCarriesSend: pasteCarriesSend,
+  draftIsOpaque: isPasteTokenOnly,
 };

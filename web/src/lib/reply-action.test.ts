@@ -1531,3 +1531,87 @@ describe("the submit settle", () => {
     expect(events).toEqual(["post:type", "post:type", settled(250), "post:submit"]);
   });
 });
+
+describe("an opencode reply that collapses into a paste token", () => {
+  // Typed in parts, a long unbroken reply stalled: opencode 1.19.0 echoes each part slower as the
+  // draft grows (8s for the part that took a long URL to 4.1KB) and the guard gave up waiting.
+  // The adapter now sends such a reply as ONE bracketed paste, which opencode summarises as
+  // `[Pasted ~N lines]`; the token with this send's line count is what authorises Enter.
+  const longUrl = `https://example.org/download?id=0123456789abcdef${"&mirror=https://mirror.example.org:8443/files".repeat(100)}`;
+
+  /** Idle composer until the message is typed, the captured paste-token screen after. */
+  function pasteHarness() {
+    const calls: Array<{ text: string; submit: boolean }> = [];
+    const idle = fixtureText("oc--fresh-idle.txt");
+    const token = fixtureText("oc--draft-paste-token.txt");
+    server.use(
+      http.get(/\/api\/pane\/[^/]+$/, () =>
+        HttpResponse.json({
+          paneId: "w1:p1",
+          text: calls.some((call) => call.text.includes(longUrl)) ? token : idle,
+          truncated: false,
+          revision: 1,
+        }),
+      ),
+      http.post<never, { text: string; submit: boolean }>(
+        /\/api\/pane\/[^/]+\/reply$/,
+        async ({ request }) => {
+          calls.push(await request.json());
+          return HttpResponse.json({ ok: true });
+        },
+      ),
+    );
+    return calls;
+  }
+
+  it("goes out as one bracketed paste and submits on the token", async () => {
+    const calls = pasteHarness();
+
+    const out = await sendGuardedReply({ paneId: "w1:p1", text: longUrl, agent: "opencode", ...instant });
+
+    expect(out).toEqual({ status: "sent" });
+    const typed = calls.filter((call) => !call.submit && call.text.includes(longUrl));
+    expect(typed.map((call) => call.text)).toEqual([bracketPaste(longUrl)]);
+    expect(calls.at(-1)).toMatchObject({ text: "", submit: true });
+  });
+
+  it("does not submit on a token that was in the box before the paste", async () => {
+    // The mirror showed no draft, so the composer skipped its sweep; a token from an earlier paste
+    // with the same line count is on screen before and after, and this paste has not echoed.
+    const calls: Array<{ text: string; submit: boolean }> = [];
+    const token = fixtureText("oc--draft-paste-token.txt");
+    server.use(
+      http.get(/\/api\/pane\/[^/]+$/, () =>
+        HttpResponse.json({ paneId: "w1:p1", text: token, truncated: false, revision: 1 }),
+      ),
+      http.post<never, { text: string; submit: boolean }>(
+        /\/api\/pane\/[^/]+\/reply$/,
+        async ({ request }) => {
+          calls.push(await request.json());
+          return HttpResponse.json({ ok: true });
+        },
+      ),
+    );
+
+    const out = await sendGuardedReply({
+      paneId: "w1:p1",
+      text: longUrl,
+      agent: "opencode",
+      onComposerSeen: async () => ({ ok: true as const, keysSent: false }),
+      ...instant,
+    });
+
+    expect(out.status).toBe("stalled");
+    expect(calls.some((call) => call.submit)).toBe(false);
+  });
+
+  it("does not submit on a token whose line count is not this send's", async () => {
+    const calls = pasteHarness();
+    const text = `${longUrl}\nsecond line\nthird line`; // would read "~3 lines"; the screen says ~1
+
+    const out = await sendGuardedReply({ paneId: "w1:p1", text, agent: "opencode", ...instant });
+
+    expect(out.status).toBe("stalled");
+    expect(calls.some((call) => call.submit)).toBe(false);
+  });
+});

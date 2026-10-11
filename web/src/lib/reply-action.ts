@@ -303,7 +303,7 @@ export async function sendGuardedReply(args: GuardedReplyArgs): Promise<ReplyOut
   // owns the keyboard (Claude's `/model` picker — no input box at the tail at all) receives the
   // user's text before anything notices. One read up front is the difference between "nothing
   // happened" and "your reply is now sitting in a picker".
-  const { refuse, runPreType } = await preflight(adapter, args);
+  const { refuse, runPreType, box } = await preflight(adapter, args);
   if (refuse !== null) return refuse;
 
   // The ONE call site of the caller's destructive pre-type work — and it is not guarded by a
@@ -333,6 +333,7 @@ export async function sendGuardedReply(args: GuardedReplyArgs): Promise<ReplyOut
       const split = newlineRefusal(adapter, args.text, lines);
       if (split !== null) return split;
       previousDraft = adapter.extractInputDraft(lines);
+      box.draft = previousDraft;
     } catch (e) {
       return { status: "error", error: message(e) };
     }
@@ -361,6 +362,7 @@ export async function sendGuardedReply(args: GuardedReplyArgs): Promise<ReplyOut
         if (draft !== previousDraft && adapter.composerReady?.(lines) && draftCarriesSend(delivered, draft) && carriesReplyTail(delivered, draft)) {
           verified = true;
           previousDraft = draft;
+          box.draft = draft;
           break;
         }
       } catch {
@@ -435,8 +437,10 @@ export async function sendGuardedReply(args: GuardedReplyArgs): Promise<ReplyOut
     // cannot succeed — the send stalls forever while every retry re-collapses. The adapter is the only
     // thing that knows its harness's token and whether this one is consistent with THIS send
     // (.adr/0010). It can only widen the evidence, never narrow it, so a harness without the
-    // capability is untouched.
-    if (draft !== null && adapter.draftCarriesSend?.(args.text, draft)) {
+    // capability is untouched. `box.draft` is what the last read BEFORE the final part saw, so an
+    // adapter whose token says nothing about its content can tell a token that was already there
+    // from the one this send made.
+    if (draft !== null && adapter.draftCarriesSend?.(args.text, draft, box.draft)) {
       return submitOnly(args, verifiedPrompt, typedAt, settleMs);
     }
   }
@@ -545,10 +549,12 @@ function newlineRefusal(adapter: HarnessAdapter, text: string, lines: StyledLine
 interface Preflight {
   refuse: ReplyOutcome | null;
   runPreType: (() => Promise<ReplyOutcome | null>) | null;
+  /** The input box as the latest read before typing saw it; `draft` stays unset when nothing read it. */
+  box: { draft?: string | null };
 }
 
 /** A preflight that read nothing: no pre-type sweep may run, and `refuse` says whether to send. */
-const blind = (refuse: ReplyOutcome | null): Preflight => ({ refuse, runPreType: null });
+const blind = (refuse: ReplyOutcome | null): Preflight => ({ refuse, runPreType: null, box: {} });
 
 /**
  * One live read, and everything the rest of the send is allowed to do with it.
@@ -599,9 +605,11 @@ async function preflight(adapter: HarnessAdapter, args: GuardedReplyArgs): Promi
   // answered about, so the caller cannot bind its keys to anything but the screen that authorised
   // them — and cannot forget to, since it arrives as the argument.
   const promptRegion = adapter.composerPrompt?.(seen) ?? null;
+  const box: Preflight["box"] = { draft: adapter.extractInputDraft(seen) };
 
   return {
     refuse: null,
+    box,
     runPreType: async () => {
       if (!args.onComposerSeen) return null;
       let prep;
@@ -623,9 +631,13 @@ async function preflight(adapter: HarnessAdapter, args: GuardedReplyArgs): Promi
         // The sweep's keys are on the wire: an overlay box that opened since the probe would eat
         // the message next, so the re-confirm consults the box predicate too — same screen, no
         // new read, and a miss still only ever refuses.
-        if (composerReady(lines) && adapter.overlayHoldsKeyboard?.(lines) !== true)
+        if (composerReady(lines) && adapter.overlayHoldsKeyboard?.(lines) !== true) {
+          box.draft = adapter.extractInputDraft(lines);
           return newlineRefusal(adapter, args.text, lines);
+        }
       } catch {
+        // Keys went out and the box was not read again, so what it holds now is unknown.
+        delete box.draft;
         return null;
       }
       return {

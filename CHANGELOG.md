@@ -37,6 +37,7 @@ Running a crew? Update the lead first; members follow on their own. Details:
 
 ### Fixed
 
+- **Long replies to opencode now send.** A reply over 150 characters or of three or more lines goes in as one paste, which opencode shows as `[Pasted ~N lines]`, so a long draft no longer stalls in the input box while opencode lays it out. Thanks @Manho (#408).
 - **Chat and History follow a Grok session reopened with `/resume`.** Herdr keeps the first session id a Grok pane reports, so while Grok runs, Collie checks Grok's own list of live sessions and reads the one live session in the pane's folder instead. Thanks @GGGODLIN (#405).
 - **Chat and History follow a Grok `/resume` made after a prompt.** Grok keeps a session that already had a prompt in its live list beside the resumed one, so Collie now reads the latest session that process opened. Thanks @GGGODLIN (#407).
 - **A new Grok pane does not borrow a neighbour's Chat.** The `/resume` correction stands down while another Grok pane runs in the same folder, and ignores a live-session list over 1 MiB.

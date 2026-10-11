@@ -146,8 +146,13 @@ export interface HarnessAdapter {
    * it can widen what counts as evidence, never narrow it. The contract is strict-or-false: return
    * true only when the token on screen is CONSISTENT with this exact send, because a `true` here fires
    * the submit key. An adapter that can't tell omits it and keeps today's stall.
+   *
+   * `before` is the draft the guard's last read saw before it typed the final part (`null` for an
+   * empty box), and is left out when no read happened: a forced send, a read that threw, or a caller
+   * other than the guard. It is for a token that does not identify its content, where a stale one
+   * and a fresh one look the same.
    */
-  draftCarriesSend?(sent: string, draft: string): boolean;
+  draftCarriesSend?(sent: string, draft: string, before?: string | null): boolean;
   /**
    * Whether the draft on the input line is the harness's OWN opaque token rather than the user's text
    * — the same placeholder as above, sitting stranded. The stranded-draft preview keeps showing it
