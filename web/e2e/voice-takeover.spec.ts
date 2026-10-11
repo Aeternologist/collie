@@ -27,9 +27,18 @@ interface FakeVoice {
   /** Bytes the page's MediaRecorder has handed out so far: the encoder is armed once this is above 0. */
   recorded: number;
 }
+/** One animation frame of the scrollbar sampler. */
+interface FrameSample {
+  takeover: boolean;
+  transcribing: boolean;
+  docOverflow: number;
+  takeoverOverflow: number;
+  scrollers: string;
+}
 declare global {
   interface Window {
     __voice?: FakeVoice;
+    __samples?: FrameSample[];
   }
 }
 
@@ -231,6 +240,82 @@ test("two seconds of quiet after speech finishes the clip by itself; quiet alone
   await expect(status(page)).toHaveText(en["composer.voice.transcribing"], { timeout: 5000 });
   await expect(page.getByRole("textbox", { name: en["composer.placeholder.reply"] })).toHaveValue(TRANSCRIPT, { timeout: 8000 });
 });
+
+// THE FLASH ON THE RIGHT EDGE (Pixel, 2026-10-11). While "Transcribing" showed, the pane's scrollbar
+// blinked in and out about four times a second. The cause, measured frame by frame: the turning arc
+// was a 48px square rotated as a CSS box, and its corners swept 1 to 3px past the takeover's bottom
+// edge, which grew the takeover's scrollable height from 104 to 107 and the chat column's from 783
+// to 786. The arc now turns inside its own <svg>, which clips, and the takeover clips too. This case
+// samples every animation frame from listening through transcribing to done and asserts that no
+// scroller anywhere gained or lost overflow, and that neither the document nor the takeover scrolls.
+for (const size of [
+  { width: 390, height: 844 },
+  { width: 412, height: 915 },
+]) {
+  test(`no scrollbar appears while transcribing, ${size.width}x${size.height}`, async ({ page }) => {
+    await page.setViewportSize(size);
+    const gate = { open: false };
+    // Registered after the beforeEach route, so it wins: the response is held until the sampler has
+    // watched the arc turn for a while.
+    await page.route("**/api/stt", async (route) => {
+      while (!gate.open) await new Promise((resolve) => setTimeout(resolve, 20));
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, text: TRANSCRIPT }) });
+    });
+    await page.goto("/pane/w1:p1");
+    const mic = page.getByRole("button", { name: en["composer.mic.recordAria"] });
+    await expect(mic).toBeVisible();
+
+    await page.evaluate(() => {
+      const samples: FrameSample[] = [];
+      window.__samples = samples;
+      const tick = () => {
+        const doc = document.scrollingElement!;
+        const takeover = document.querySelector('[data-slot="voice-takeover"]');
+        // Every element that is a vertical scroller right now AND has more content than box.
+        const scrollers: string[] = [];
+        for (const el of document.querySelectorAll("*")) {
+          const { overflowY } = getComputedStyle(el);
+          if ((overflowY === "auto" || overflowY === "scroll") && el.scrollHeight > el.clientHeight) {
+            scrollers.push(`${el.tagName}:${el.getAttribute("data-slot") ?? el.className.toString().slice(0, 30)}`);
+          }
+        }
+        samples.push({
+          takeover: takeover !== null,
+          transcribing: takeover?.querySelector(".animate-spin") != null,
+          docOverflow: doc.scrollHeight - doc.clientHeight,
+          takeoverOverflow: takeover ? takeover.scrollHeight - takeover.clientHeight : 0,
+          scrollers: scrollers.join("|"),
+        });
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+
+    await mic.click();
+    await expect(page.getByRole("group", { name: en["composer.voice.regionAria"] })).toBeVisible();
+    await setLoudness(page, 0.3);
+    await expect.poll(() => page.evaluate(() => window.__voice?.recorded ?? 0)).toBeGreaterThan(0);
+    await page.getByRole("button", { name: en["composer.voice.okAria"] }).click();
+    await expect(status(page)).toHaveText(en["composer.voice.transcribing"]);
+    // More than one full turn of the arc (1 s), so every corner angle has been through a frame.
+    await page.waitForTimeout(1500);
+    gate.open = true;
+    await expect(page.getByRole("textbox", { name: en["composer.placeholder.reply"] })).toHaveValue(TRANSCRIPT);
+    await page.waitForTimeout(200);
+
+    const samples = await page.evaluate(() => window.__samples ?? []);
+    const transcribing = samples.filter((sample) => sample.transcribing);
+    // The sampler saw the state under test, for long enough to cover the turn.
+    expect(transcribing.length).toBeGreaterThan(40);
+    // The document and the takeover never scroll, in any frame.
+    expect(samples.filter((sample) => sample.docOverflow > 0)).toEqual([]);
+    expect(samples.filter((sample) => sample.takeoverOverflow > 0)).toEqual([]);
+    // And the set of scrolling elements is the same one it was before the takeover opened, in
+    // every frame: nothing gained a scrollbar and nothing lost one.
+    const baseline = samples[0]!.scrollers;
+    expect(new Set(samples.map((sample) => sample.scrollers))).toEqual(new Set([baseline]));
+  });
+}
 
 test("the bin throws the clip away and gives the mic back, the microphone released", async ({ page }) => {
   await page.goto("/pane/w1:p1");

@@ -178,9 +178,12 @@ describe("VoiceTakeover — transcribing", () => {
     expect(container.querySelector(".lucide-loader-circle, .lucide-loader-2, [class*='lucide-loader']")).toBeNull();
     const spinner = container.querySelector(".animate-spin");
     expect(spinner).not.toBeNull();
-    expect(spinner?.className).toContain("motion-reduce:animate-none");
+    // The arc turns INSIDE the svg, never as a rotated box: a rotated box sweeps its corners past the
+    // takeover and makes every scroller above it scrollable (the flash on the right edge).
+    expect(spinner?.tagName.toLowerCase()).toBe("circle");
+    expect(spinner?.getAttribute("class")).toContain("motion-reduce:animate-none");
     // The arc hides and a full ring at 40% shows when reduced motion asks.
-    const circles = spinner?.querySelectorAll("circle") ?? [];
+    const circles = spinner?.closest("svg")?.querySelectorAll("circle") ?? [];
     expect(circles).toHaveLength(3);
     expect(circles[1]?.getAttribute("class")).toContain("motion-reduce:hidden");
     expect(circles[2]?.getAttribute("class")).toContain("motion-reduce:block");

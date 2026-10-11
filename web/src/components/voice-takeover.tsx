@@ -151,7 +151,7 @@ export function VoiceTakeover({
       aria-label={t("composer.voice.regionAria")}
       data-slot="voice-takeover"
       className={cn(
-        "absolute inset-0 z-20 flex flex-col justify-end bg-chrome px-3 outline-none",
+        "absolute inset-0 z-20 flex flex-col justify-end overflow-hidden bg-chrome px-3 outline-none",
         !keyboard && "[&_button:focus-visible]:[outline-color:transparent]",
         padClassName,
       )}
@@ -256,22 +256,24 @@ export function VoiceTakeover({
             </svg>
           )}
           {transcribing && (
-            // The single indeterminate arc, turning on the ring's own track. Reduced motion stops
-            // the turn, hides the arc and shows the whole ring at 40%.
-            <div aria-hidden className="pointer-events-none absolute -inset-1.5 animate-spin motion-reduce:animate-none">
-              <svg viewBox="-24 -24 48 48" className="size-12 -rotate-90">
-                <circle r="20" fill="none" strokeWidth="2.5" className="stroke-muted" />
-                <circle
-                  r="20"
-                  fill="none"
-                  strokeWidth="2.5"
-                  pathLength={100}
-                  strokeDasharray="28 72"
-                  className="stroke-primary motion-reduce:hidden"
-                />
-                <circle r="20" fill="none" strokeWidth="2.5" className="hidden stroke-primary opacity-40 motion-reduce:block" />
-              </svg>
-            </div>
+            // The single indeterminate arc, turning on the ring's own track. THE ARC TURNS INSIDE THE
+            // SVG, NOT THE BOX: a rotated 48px square sweeps its corners 1 to 3px past the takeover's
+            // bottom edge, and that grew the scrollable height of every scroller above it four times a
+            // second, so the pane's scrollbar flashed at the right edge (Pixel, 2026-10-11). An <svg>
+            // clips its own content, so a turn inside it adds nothing to anyone's overflow. Reduced
+            // motion stops the turn, hides the arc and shows the whole ring at 40%.
+            <svg aria-hidden viewBox="-24 -24 48 48" className="pointer-events-none absolute -inset-1.5 size-12 -rotate-90">
+              <circle r="20" fill="none" strokeWidth="2.5" className="stroke-muted" />
+              <circle
+                r="20"
+                fill="none"
+                strokeWidth="2.5"
+                pathLength={100}
+                strokeDasharray="28 72"
+                className="animate-spin stroke-primary motion-reduce:animate-none motion-reduce:hidden"
+              />
+              <circle r="20" fill="none" strokeWidth="2.5" className="hidden stroke-primary opacity-40 motion-reduce:block" />
+            </svg>
           )}
         </div>
       </div>
