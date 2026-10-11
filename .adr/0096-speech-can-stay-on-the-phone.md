@@ -89,7 +89,7 @@ short-lived child of Collie's own binary. The model reaches the host by one deli
 Settings or `collie stt whistle`, and a phone by its own tap, always from the host, never from a third
 party and never by itself. The transcript lands where every transcript lands.**
 
-1. **Two engines, one device preference.** Settings → Speech gets *Speech engine: Host / This
+1. **Two engines, one device preference.** Settings → Device gets a *Speech engine* card: *Host* or *This
    phone*. *Host* is whatever provider the host runs, `whistle` included, and is the default. *This
    phone* runs Whistle in the browser. The value lives in `localStorage` per device, like the
    typeface (ADR 0033), because whether a phone is strong enough is a fact about that phone. A wipe
@@ -98,7 +98,7 @@ party and never by itself. The transcript lands where every transcript lands.**
 2. **One model on the host, fetched once, by a deliberate act.** Both engines read the same
    `whistle.cact`, kept at `<stateDir>/whistle/whistle.cact` with a manifest beside it. Two acts
    fetch it, and nothing else does:
-   - **A tap:** *Set up Whistle (16.9 MB)* in Settings → Speech, on a device with the write grant.
+   - **A tap:** *Set up Whistle (16.9 MB)* in Settings → Device → Whistle, on a device with the write grant.
      `POST /api/stt/whistle` starts the download on the bridge and answers `202`. It is idempotent: a
      model whose hash already matches answers "ready", and a download in flight is joined, not
      doubled. `GET /api/stt/whistle` reports `absent`, `downloading` (bytes received of bytes),
@@ -109,7 +109,7 @@ party and never by itself. The transcript lands where every transcript lands.**
      host engine (Decision 4). `--from <path>` takes a file the operator already has, an air-gapped
      copy or the old quick start's, through the same check. `--remove` undoes it.
    - **The download** goes to a pinned Hugging Face commit URL (`resolve/<commit>/whistle.cact`) with
-     an honest `User-Agent: Collie/<version>`, redirects followed, a 32 MiB cap, streamed to a `.part`
+     an honest `User-Agent: Collie/<version>`, redirects followed, a 32 MiB cap, a 10-minute deadline, streamed to a `.part`
      file (0600) with a running sha256, renamed only when the hash equals a pin compiled into this
      release. A mismatch deletes the part file and reports both hashes.
    - **No phone ever fetches the model unasked**, not on install, not on an update, not when the
@@ -136,7 +136,7 @@ party and never by itself. The transcript lands where every transcript lands.**
    compiles anything, transcribes, and prints the text. The provider reuses the `local-cli`
    machinery unchanged: argv only, a private 0700 temp dir, the 60 s deadline enforced with SIGKILL
    on the process group (the tree on Windows), the 256 KiB stdout cap, the in-flight cap of
-   `MAX_CONCURRENT_STT`, no `COLLIE_*` variable passed down, stderr never forwarded. A child, not a
+   `MAX_CONCURRENT_STT`, no `COLLIE_*` variable of the bridge's passed down (the bridge sets two itself, `COLLIE_STATE_DIR` and `COLLIE_PLUGIN_ROOT`, to paths it resolved), stderr never forwarded. A child, not a
    worker, because a running wasm call stops for certain only when its process dies, because a
    malformed file or a heap grown to 2 GiB dies with the child and not with the bridge, and because
    the compiled binary has one entrypoint.
@@ -220,7 +220,8 @@ party and never by itself. The transcript lands where every transcript lands.**
 9. **The model is a content-addressed read.** `GET /api/stt/model/<sha256>` on the lead. A plain read:
    it needs the pairing token (ADR 0086) and nothing more, because the bytes are public and asking
    for them changes nothing. It answers the file only when the hash in the path equals the hash of
-   the file the bridge holds. The hash is compared, never joined into a path, so this is not a new
+   the file the bridge holds, and `404 stt.model_unknown` otherwise. At most two copies leave at once; a third gets
+   `503 stt.model_busy` with `retry-after: 5`. The hash is compared, never joined into a path, so this is not a new
    place where a client value becomes a path. `content-type: application/octet-stream`,
    `content-length`, `etag` set to the hash, `cache-control: no-store` (the phone keeps its own
    copy, and the HTTP cache should not keep a second one), `content-security-policy: default-src
@@ -248,14 +249,17 @@ party and never by itself. The transcript lands where every transcript lands.**
 12. **No silent switch between engines.** When *This phone* cannot transcribe a clip (no model, a
     hash mismatch, a crash, out of memory, a timeout), the takeover says why and offers *Send to
     host* as one tap, only while the host has an available provider. It never sends the audio to
-    the host by itself, because the person chose an engine whose point is that audio stays put.
+    the host by itself, because the person chose an engine whose point is that audio stays put. A clip that failed on the phone stays
+    in memory, in a `failed` phase, until the person taps *Send to host* or discards it. That relaxes
+    ADR 0029's "a failure keeps nothing" for the phone engine only: the host engine still keeps nothing
+    after a failure.
 
 ## Consequences
 
 - **Third-party code runs in Collie's origin and as the bridge user.** Its reach is bounded, not
   removed. On the phone the worker has no network, no DOM, no token and no way to load code from
   elsewhere; it can still read and write this origin's IndexedDB (`collie-store` holds recent session
-  text, ADR 0087) and Cache Storage. On the host the wasm runs in a child with no `COLLIE_*`
+  text, ADR 0087) and Cache Storage. On the host the wasm runs in a child with none of the bridge's `COLLIE_*`
   variables and a deadline, and the wasm itself reaches the process only through its sixteen pinned
   imports. On both, it can hand back any text it likes; with hands-free on, that text is sent into a
   terminal through the guarded reply path, the same trust a provider's answer already gets. What

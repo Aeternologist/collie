@@ -18,17 +18,22 @@ end throws it away, and still cancels while the clip is being transcribed. Once 
 seconds of quiet finish the clip for you; a ring closes round OK to show it, and speaking again
 starts the count over. Before the first word nothing finishes it on its own.
 
-**It does not exist until you run `collie stt setup`.** No button is drawn, no audio leaves the
-phone, no credential is held, no child process runs. Absent, not disabled. Three providers:
+**It does not exist until you set up a provider.** Run `collie stt setup`, or set up Whistle (below).
+No button is drawn, no audio leaves the phone, no credential is held, no child process runs. Absent,
+not disabled. Four providers:
 
 | provider | what it is |
 | --- | --- |
 | **`openai-compatible`** | Any endpoint that speaks `POST /audio/transcriptions` — the public OpenAI API, a cloud Whisper clone, or **a local engine on the same machine, which is the zero-egress choice** ([below](#zero-egress--point-it-at-your-own-engine)). |
 | **`codex`** | Borrows the `codex` binary you already trust for a short-lived token. No new account, no new key — and a **private, unsupported** endpoint that carries a consent step you have to type `yes` to ([below](#the-codex-provider--what-you-are-accepting)). |
-| **`local-cli`** | Runs a transcription command already on the host, such as `whisper-cli`, `muesli-cli` or [Cactus Whistle](#quick-start-cactus-whistle-on-this-machine), once per recording, and reads the transcript from its stdout. No HTTP server needed ([below](#run-your-own-command-the-local-cli-provider)). |
+| **`local-cli`** | Runs a transcription command already on the host, such as `whisper-cli` or `muesli-cli`, once per recording, and reads the transcript from its stdout. No HTTP server needed ([below](#run-your-own-command-the-local-cli-provider)). |
+| **`whistle`** | Collie's own engine, [Whistle](#whistle-speech-to-text-on-your-phone-or-your-host). No key and no command to configure. A recording of up to 4 minutes goes to it as a WAV file, and the audio stays on the host. A phone can also run Whistle on itself, with no upload. |
 
 Setup is a CLI act for the reason [pairing](security.md#pair-a-device--the-write-credential) is one: this
-surface accepts a credential, so it belongs on the host's keyboard. There is no web setup form.
+surface accepts a credential, so it belongs on the host's keyboard. There is no web setup form for
+the first three providers. **Whistle is the one exception.** It holds no credential, runs no command
+you chose and sends no audio off the host, so a device with write access may set it up from Settings
+([why](security.md#the-speech-engine-whistle)).
 
 ```console
 $ bin/collie stt setup
@@ -76,6 +81,10 @@ was willing to record is a clip it is willing to wait for. While the upload is i
 polling and stops escalating the connection banner: your own audio saturating a phone's uplink is not
 an outage, and it must not be reported as one.
 
+A recording stops at five minutes. A host that runs Whistle takes four, because the phone sends it a
+WAV file, which is about four times the size of the compressed clip. The recorder shows the cap that
+applies.
+
 **Did it work?** `stt test` sends a fifth of a second of generated silence through the real
 provider, once per container a phone can record:
 
@@ -94,69 +103,94 @@ Collie on the phone: a microphone sits beside the message box. `collie stt statu
 configured and *where each setting came from* (the file, or an environment variable that outranks
 it); `collie stt off` removes `stt.json` and the button is gone again, no restart either way.
 
-### Quick start: Cactus Whistle on this machine
+<a id="quick-start-cactus-whistle-on-this-machine"></a>
+### Whistle: speech to text on your phone or your host
 
-Four steps give you speech input that never leaves the host, with no account and no key. Run
-them in one shell, because steps 3 and 4 reuse the `$dir` that step 2 sets.
+[Whistle](https://huggingface.co/Cactus-Compute/whistle) is a small speech model by Cactus Compute.
+The file is 16.9 MB and the licence is Apache-2.0. It knows English, German, French, Spanish,
+Italian, Dutch and Polish, and finds the language itself. It needs no account, no key and no extra
+program. Collie carries the engine that runs it, so it works on Linux, macOS, Windows and NixOS.
 
-1. Install `ffmpeg` and `jq`.
+Whistle can run in two places. You choose per phone.
 
-   ```bash
-   sudo apt install ffmpeg jq      # Debian, Ubuntu
-   brew install ffmpeg jq          # macOS
-   ```
+| Engine | Where the words are made | Pick it when |
+| --- | --- | --- |
+| **Host** | On the computer that runs Collie, in a short-lived child process of Collie's own binary. | The phone is weak or old. A recording goes up as a WAV file, and a clip takes a second or two. |
+| **This phone** | In the phone's browser, in a worker. | The phone is recent. There is no upload, so the audio never leaves the phone, and it works offline once the model is on the phone. |
 
-2. Download the Whistle model and its runner.
+Both engines read the same model. The host keeps one copy. A phone that wants to run Whistle itself
+copies it from the host, never from the internet. A clip takes about a second on a recent phone.
 
-   ```bash
-   # linux-x86_64, linux-arm64 or macos-arm64
-   platform=linux-x86_64
-   dir=~/.local/share/collie-whistle
-   hf=https://huggingface.co/Cactus-Compute
-   mkdir -p "$dir"
-   curl -fL -o "$dir/needle" "$hf/needle3/resolve/main/$platform/needle"
-   curl -fL -o "$dir/whistle.cact" "$hf/whistle/resolve/main/whistle.cact"
-   chmod +x "$dir/needle"
-   ```
+**Set it up from Settings.** You need a device with write access (a device that has
+[paired](security.md#pair-a-device--the-write-credential)). A read-only device sees "A device with
+write access can set this up." and cannot start the download.
 
-3. Write the wrapper that Collie runs.
+1. Open **Settings → Device**. Find the **Whistle** card.
+2. Tap **Set up Whistle (16.9 MB)**. The host downloads the model once. A bar shows the progress. If
+   it fails, the card says why. Tap **Try again**.
+3. For the host engine, switch on **Use on host**. This works when the host has no speech provider
+   yet. If another provider is set up, the switch is off and the card says "Another speech provider
+   is set up on the host." Change that in the terminal, below.
+4. For the phone engine, tap **Download to this phone**. The phone copies the model from the host and
+   checks it. Then, in the **Speech engine** card, choose **This phone**. The card shows "On this
+   phone" and offers **Remove from this phone**. The card also says whether the browser agreed to keep
+   the copy ("Kept") or may clear it when space runs low.
+5. To remove the model from the host, tap **Remove from host** and confirm. If Whistle was the host
+   engine, speech on the host stops until you set it up again.
 
-   ```bash
-   cat > "$dir/whistle-stt" <<'EOF'
-   #!/bin/sh
-   # Collie passes the recording as the last argument and reads the text from stdout.
-   set -eu
-   PATH="$PATH:/usr/bin:/usr/local/bin:/opt/homebrew/bin"
-   here=$(dirname "$0")
-   work=$(mktemp -d)
-   trap 'rm -rf "$work"' EXIT
-   ffmpeg -loglevel error -nostdin -i "$1" -ac 1 -ar 16000 "$work/a.wav"
-   "$here/needle" --model "$here/whistle.cact" --audio "$work/a.wav" | jq -r .text
-   EOF
-   chmod +x "$dir/whistle-stt"
-   ```
+**Or set it up in the terminal.**
 
-4. Point Collie at it and test it.
+```console
+$ bin/collie stt whistle                 # fetch the model once
+$ bin/collie stt whistle --host          # also make Whistle this host's engine
+$ bin/collie stt whistle --from <path>   # use a copy you already have, same hash check
+$ bin/collie stt whistle --remove        # remove the model, and the host engine if it is Whistle
+$ bin/collie stt status                  # shows the model line
+```
 
-   ```bash
-   bin/collie stt setup --provider local-cli --command "$dir/whistle-stt"
-   bin/collie stt test
-   ```
+`--host` asks before it replaces a provider you set up on purpose. `--yes` answers that question for
+a run with no terminal. The question comes before the download, so a refused run fetches nothing.
+`--remove` leaves a provider of another kind alone. `collie stt off` removes the provider and says the
+model stays. `collie doctor` warns when the model on the host is not the one this release accepts.
+The engine is live at once, with no restart. Check it with `collie stt test`.
 
-The microphone appears on the phone at once, with no restart. `collie stt test` sends three
-silent clips, WAV, webm and mp4, and a pass prints an empty transcript for each.
+**What is downloaded, and from where.** The host fetches `whistle.cact` from one pinned Hugging Face
+address, follows the redirect to its CDN, and keeps the file only when its sha256 equals a hash that
+this release carries. A mismatch deletes the file and reports both hashes. The download is capped at
+32 MiB and has a 10-minute deadline. The file sits in the `whistle` folder of the state folder. The
+engine code (about 1 MB) is part of every Collie release and comes from Collie's own files.
 
-[Whistle](https://huggingface.co/Cactus-Compute/whistle) by Cactus Compute is a 16.9 MB model
-that runs on the CPU, with no GPU and no Python. Its model card states the Apache-2.0 licence. It
-knows English, German, French, Spanish, Italian, Dutch and Polish, and finds the language itself.
-A 10-second clip takes under a second on a desktop CPU.
+**Nothing downloads on its own.** Not on install, not on an update, not when you pick an engine. The
+model arrives when a person taps **Set up Whistle** or runs `collie stt whistle`. A phone copies it
+from the host when its owner taps **Download to this phone**, and from no other place. The host sends
+the model to at most two phones at once. A third gets "try again in a moment".
 
-The wrapper exists because the runner reads WAV only and the phone records webm or mp4. It also
-adds the usual tool folders to `PATH`, since the service runs with a short one. To fix the
-language, add `--audio-language de` to the `needle` line. To favour project words and names, list
-them one per line in a file and add `--audio-keywords <file>`.
+**Limits.** The host engine takes a recording of up to 4 minutes, because a WAV is about four times
+the size of the compressed clip and the upload cap stays 8 MiB. The recorder shows that cap. The
+phone engine takes up to 5 minutes. The host child has a 60-second deadline, and at most two clips
+run on the host at the same time. A phone needs free space for the model (it asks for twice the file
+size) and a secure connection (HTTPS, as `tailscale serve` gives).
 
-Linux and macOS only. Cactus also ships a Windows runner, but this wrapper is a shell script.
+**When the phone cannot do it.** If *This phone* fails on a clip, the voice screen says why and offers
+**Send to host**, only while the host has a working speech provider. The clip stays in memory, in the
+failed state, until you tap Send to host or discard it. Collie never sends it by itself, because you
+chose an engine whose point is that the audio stays put. Two engine crashes in one session turn
+*This phone* off until you reload the app.
+
+**Browsers.** *This phone* needs a browser that gives the speech worker its own security policy.
+Chrome on Android is tested. WebKit is tested in a WebKit build. Safari on an iPhone is not verified
+on a device yet. A browser that cannot run it shows *This phone* as off with the reason, and the Host
+engine stays available.
+
+**If you used the old wrapper.** Earlier versions of this page showed a `local-cli` wrapper around a
+native runner, `ffmpeg` and `jq`. That setup is retired, but nothing touches one you already have, and
+it keeps working. To move to the built-in engine, run `bin/collie stt whistle --host --yes`, or run
+`collie stt off` first and then `bin/collie stt whistle --host`. You can also keep the wrapper. Its
+model file is not reused on its own. Pass it with `--from <path>` to skip the download.
+
+The security side of this engine, and why setup from Settings is allowed, is in
+[Security](security.md#the-speech-engine-whistle) and
+[ADR 0096](../.adr/0096-speech-can-stay-on-the-phone.md).
 
 ### Container support is provider-specific
 
