@@ -47,6 +47,7 @@ import {
   systemdUnit,
   taskFilePath,
   type TaskOptions,
+  TASK_PRIORITY,
   taskPercentPath,
   taskXml,
   unitFilePath,
@@ -599,6 +600,23 @@ function registerTask(deps: LifecycleDeps): boolean {
   return false;
 }
 
+/**
+ * Register the task again when the one on file is not at {@link TASK_PRIORITY} (#386): tasks written
+ * before 1.20.0 carry no priority, so Task Scheduler runs them at 7, below normal apps, and Windows
+ * pages the bridge out first under memory pressure. `restart` is where `collie update` ends, through
+ * the new binary, so every update repairs the task. A task already at 4 costs one query and nothing
+ * else; a PowerShell that cannot answer changes nothing. Registering replaces the definition and
+ * leaves the running launcher alone, but a process keeps the priority it started with and the bridge
+ * inherits it from the launcher, so the running one carries the old priority until `stop` and `start`
+ * (or the next logon) starts a new launcher: the one line printed here says so.
+ */
+function renewTaskPriority(deps: LifecycleDeps): void {
+  const query = queryTask(deps.exec, taskName(deps), deps.host);
+  if (query === undefined || (query !== null && query.priority === TASK_PRIORITY)) return;
+  if (!registerTask(deps)) return;
+  deps.io.out("the task now runs Collie at normal priority; the running launcher keeps its old one until you run `collie stop` and `collie start`");
+}
+
 /** What Windows says when an account may not log on as a batch job: 0x80070569, in any language's text. */
 const BATCH_LOGON_REFUSED = /0x80070569|not been granted the requested logon type/i;
 
@@ -814,6 +832,8 @@ async function restartTaskScheduler(deps: LifecycleDeps): Promise<number | null>
   if (launcher.kind === "gone" || !isTaskLauncher(launcher.command, record.format, root, instance, deps.host)) return null;
   if (record.format === 1 && registerTask(deps)) {
     deps.io.out("the task now runs Collie's own launcher from the next logon; until then the old one keeps the bridge up");
+  } else if (record.format !== 1) {
+    renewTaskPriority(deps);
   }
 
   // Said to the launcher before the kill: a killed bridge reads as a crash on Windows, and a crash
