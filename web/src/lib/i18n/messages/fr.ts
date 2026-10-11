@@ -1126,6 +1126,7 @@ export const fr: Dictionary = {
   "apiError.stt.empty": "Cet enregistrement est vide.",
   "apiError.stt.provider_failed": "La transcription a échoué : {reason}",
   "apiError.stt.wav_required": "Le moteur vocal de l'hôte a besoin d'un enregistrement WAV.",
+  "apiError.stt.model_busy": "Votre hôte envoie déjà le modèle vocal à deux appareils. Réessayez dans un instant.",
   "apiError.stt.model_unknown": "Votre hôte n'a plus ce modèle vocal.",
   "apiError.stt.whistle_provider_taken": "Un autre service vocal est déjà configuré sur l'hôte.",
   "apiError.stt.whistle_not_ready": "Configurez d'abord Whistle sur l'hôte.",

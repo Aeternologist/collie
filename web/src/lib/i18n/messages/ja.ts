@@ -1285,6 +1285,7 @@ export const ja: Dictionary = {
   "apiError.stt.empty": "録音データが空です。",
   "apiError.stt.provider_failed": "文字起こしに失敗しました: {reason}",
   "apiError.stt.wav_required": "ホストの音声エンジンには WAV 形式の録音が必要です。",
+  "apiError.stt.model_busy": "ホストはすでに2台の端末に音声モデルを送信中です。少し待ってからもう一度お試しください。",
   "apiError.stt.model_unknown": "ホストにその音声モデルはもうありません。",
   "apiError.stt.whistle_provider_taken": "ホストには別の音声サービスが設定されています。",
   "apiError.stt.whistle_not_ready": "先にホストで Whistle を設定してください。",

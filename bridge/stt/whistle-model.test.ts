@@ -222,20 +222,23 @@ describe("the Whistle model store", () => {
   test("a symlinked folder is refused before anything is fetched", async () => {
     if (process.platform === "win32") return;
     const away = mkdtempSync(join(tmpdir(), "collie-whistle-away-"));
-    symlinkSync(away, join(stateDir, "stt"));
+    symlinkSync(away, join(stateDir, "whistle"));
     const f = fakeFetch();
     const s = store(f.fn);
     const start = await s.start();
     expect(start).toMatchObject({ outcome: "refused" });
     expect(f.calls).toHaveLength(0);
-    expect(readdirSync(away)).toEqual(["whistle"]);
+    expect(readdirSync(away)).toEqual([]);
     rmSync(away, { recursive: true, force: true });
   });
 
-  test("a part file left by a crash is replaced, and a symlink there is refused", async () => {
+  test("a stale part file left by a crash is replaced, and a symlink there is refused", async () => {
     const paths = whistlePaths(stateDir);
     mkdirSync(paths.dir, { recursive: true });
     writeFileSync(paths.part, "half a model");
+    // A crash's: older than the deadline.
+    const old = new Date(Date.now() - 11 * 60 * 1000);
+    utimesSync(paths.part, old, old);
     const s = store(fakeFetch().fn);
     await s.start();
     await s.settled();
@@ -243,10 +246,145 @@ describe("the Whistle model store", () => {
 
     if (process.platform === "win32") return;
     await s.remove();
+    mkdirSync(paths.dir, { recursive: true });
     symlinkSync(join(stateDir, "victim"), paths.part);
     const again = await s.start();
     expect(again.outcome).toBe("refused");
     expect(existsSync(join(stateDir, "victim"))).toBe(false);
+  });
+
+  test("the model lives in <stateDir>/whistle/, one level down, and nothing is made under stt/", async () => {
+    const s = store(fakeFetch().fn);
+    await s.start();
+    await s.settled();
+    expect(whistlePaths(stateDir).dir).toBe(join(stateDir, "whistle"));
+    expect(readdirSync(stateDir)).toEqual(["whistle"]);
+    expect(readdirSync(join(stateDir, "whistle")).toSorted()).toEqual(["whistle.cact", "whistle.json"]);
+  });
+
+  test("a part file younger than the deadline is another process's download: nothing is fetched or touched", async () => {
+    const paths = whistlePaths(stateDir);
+    mkdirSync(paths.dir, { recursive: true });
+    writeFileSync(paths.part, "half of it");
+    const f = fakeFetch();
+    const s = store(f.fn);
+    // Its size is what the other process has received so far.
+    expect(await s.status()).toEqual({ state: "downloading", bytes: MODEL.byteLength, received: 10 });
+    const start = await s.start();
+    expect(start).toEqual({ outcome: "downloading", elsewhere: true, status: { state: "downloading", bytes: MODEL.byteLength, received: 10 } });
+    expect(f.calls).toHaveLength(0);
+    expect(readFileSync(paths.part, "utf8")).toBe("half of it");
+    await s.settled();
+    // The other process finishing (the file renamed away) ends it.
+    rmSync(paths.part);
+    expect((await s.status()).state).toBe("absent");
+  });
+
+  test("a part file at the deadline's edge is stale, and the next start replaces it", async () => {
+    const paths = whistlePaths(stateDir);
+    mkdirSync(paths.dir, { recursive: true });
+    writeFileSync(paths.part, "ancient");
+    const f = fakeFetch();
+    const s = createWhistleModelStore({ stateDir, version: "1.20.0", fetch: f.fn, pin: PIN, accepted: [SHA], timeoutMs: 60_000 });
+    const old = new Date(Date.now() - 61_000);
+    utimesSync(paths.part, old, old);
+    expect((await s.status()).state).toBe("absent");
+    expect((await s.start()).outcome).toBe("downloading");
+    await s.settled();
+    expect((await s.status()).state).toBe("ready");
+    expect(f.calls).toHaveLength(1);
+  });
+
+  test("the part file is created before the request, so a second process sees the lock while the first connects", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const f = fakeFetch(MODEL, { gate });
+    const first = store(f.fn);
+    await first.start();
+    expect(existsSync(whistlePaths(stateDir).part)).toBe(true);
+    // The file is the lock a second process sees, and it is fresh.
+    expect(Date.now() - statSync(whistlePaths(stateDir).part).mtimeMs).toBeLessThan(10_000);
+    release();
+    await first.settled();
+    expect((await first.status()).state).toBe("ready");
+  });
+
+  test("importFile takes a local file through the same hash gate and records where it came from", async () => {
+    const src = join(stateDir, "..", `collie-whistle-src-${process.pid}.cact`);
+    writeFileSync(src, MODEL);
+    try {
+      const f = fakeFetch();
+      const s = store(f.fn);
+      const start = await s.importFile(src);
+      expect(start.outcome).toBe("downloading");
+      await s.settled();
+      expect(f.calls).toHaveLength(0);
+      expect(await s.status()).toEqual({ state: "ready", bytes: MODEL.byteLength, sha256: SHA });
+      expect(readFileSync(whistlePaths(stateDir).model)).toEqual(Buffer.from(MODEL));
+      expect(existsSync(whistlePaths(stateDir).part)).toBe(false);
+      expect((await s.manifest())?.model).toMatchObject({ sha256: SHA, source: "a file the operator supplied" });
+      // Idempotent: a second import of a held model is "ready", and copies nothing.
+      expect((await s.importFile(src)).outcome).toBe("ready");
+    } finally {
+      rmSync(src, { force: true });
+    }
+  });
+
+  test("importFile of the wrong bytes keeps nothing and names both hashes", async () => {
+    const src = join(stateDir, "..", `collie-whistle-wrong-${process.pid}.cact`);
+    const wrong = new TextEncoder().encode("some other file entirely, but of a plausible size");
+    writeFileSync(src, wrong);
+    try {
+      const s = store(fakeFetch().fn);
+      await s.importFile(src);
+      await s.settled();
+      const status = await s.status();
+      expect(status.state).toBe("failed");
+      const wrongSha = createHash("sha256").update(wrong).digest("hex");
+      expect(status.reason).toBe(`the file did not match the pinned model (got ${wrongSha}, expected ${SHA})`);
+      expect(existsSync(whistlePaths(stateDir).model)).toBe(false);
+      expect(existsSync(whistlePaths(stateDir).part)).toBe(false);
+    } finally {
+      rmSync(src, { force: true });
+    }
+  });
+
+  test("importFile refuses a symlink, a folder and a missing file before touching anything", async () => {
+    const s = store(fakeFetch().fn);
+    expect(await s.importFile(join(stateDir, "nope.cact"))).toMatchObject({ outcome: "refused" });
+    expect(await s.importFile(stateDir)).toMatchObject({ outcome: "refused", reason: "that is not a regular file" });
+    if (process.platform !== "win32") {
+      const target = join(stateDir, "real.cact");
+      writeFileSync(target, MODEL);
+      const link = join(stateDir, "link.cact");
+      symlinkSync(target, link);
+      const refused = await s.importFile(link);
+      expect(refused).toMatchObject({ outcome: "refused" });
+      expect(refused.outcome === "refused" ? refused.reason : "").toContain("symlink");
+    }
+    expect(existsSync(whistlePaths(stateDir).dir)).toBe(false);
+  });
+
+  test("describe: absent, downloading, ready with its revision, not this release's, and unreadable", async () => {
+    const s = store(fakeFetch().fn);
+    expect(await s.describe()).toEqual({ kind: "absent" });
+    await s.start();
+    await s.settled();
+    expect(await s.describe()).toEqual({ kind: "ready", sha256: SHA, bytes: MODEL.byteLength, revision: "rev1" });
+    const paths = whistlePaths(stateDir);
+    writeFileSync(paths.model, "another model, not one this release accepts");
+    const other = await s.describe();
+    expect(other).toMatchObject({ kind: "mismatch" });
+    if (process.platform !== "win32") {
+      rmSync(paths.model);
+      symlinkSync(join(stateDir, "x"), paths.model);
+      expect(await s.describe()).toMatchObject({ kind: "unreadable" });
+      rmSync(paths.model);
+    }
+    writeFileSync(paths.part, "half");
+    expect(await s.describe()).toEqual({ kind: "downloading", received: 4 });
   });
 
   test("remove deletes the model, the manifest and the part, and stops a download in flight", async () => {
@@ -257,6 +395,15 @@ describe("the Whistle model store", () => {
     const paths = whistlePaths(stateDir);
     expect(existsSync(paths.model)).toBe(false);
     expect(existsSync(paths.manifest)).toBe(false);
+    expect(existsSync(paths.dir)).toBe(false);
+
+    // A folder with something of the operator's in it stays.
+    await s.start();
+    await s.settled();
+    writeFileSync(join(paths.dir, "notes.txt"), "mine");
+    await s.remove();
+    expect(readdirSync(paths.dir)).toEqual(["notes.txt"]);
+    rmSync(paths.dir, { recursive: true });
 
     // A download stopped by a removal is not a failure.
     const stalled = new Promise<void>(() => undefined);

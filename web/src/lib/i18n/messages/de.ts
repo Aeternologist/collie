@@ -1298,6 +1298,7 @@ export const de: Dictionary = {
   "apiError.stt.empty": "Aufnahme enthält keine Audiodaten.",
   "apiError.stt.provider_failed": "Transkription fehlgeschlagen: {reason}",
   "apiError.stt.wav_required": "Die Spracherkennung auf dem Host braucht eine WAV-Aufnahme.",
+  "apiError.stt.model_busy": "Dein Host sendet das Sprachmodell gerade an zwei Geräte. Versuche es gleich noch einmal.",
   "apiError.stt.model_unknown": "Dein Host hat dieses Sprachmodell nicht mehr.",
   "apiError.stt.whistle_provider_taken": "Auf dem Host ist schon ein anderer Sprachdienst eingerichtet.",
   "apiError.stt.whistle_not_ready": "Richte Whistle zuerst auf dem Host ein.",

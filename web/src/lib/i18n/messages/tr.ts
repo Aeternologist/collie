@@ -1126,6 +1126,7 @@ export const tr: Dictionary = {
   "apiError.stt.empty": "Kayıt boş.",
   "apiError.stt.provider_failed": "Metne dönüştürme başarısız oldu: {reason}",
   "apiError.stt.wav_required": "Ana makinedeki konuşma motoru WAV kaydı istiyor.",
+  "apiError.stt.model_busy": "Ana makine konuşma modelini zaten iki cihaza gönderiyor. Biraz sonra yeniden deneyin.",
   "apiError.stt.model_unknown": "Ana makinede bu konuşma modeli artık yok.",
   "apiError.stt.whistle_provider_taken": "Ana makinede başka bir konuşma hizmeti zaten ayarlı.",
   "apiError.stt.whistle_not_ready": "Önce ana makinede Whistle'ı ayarlayın.",

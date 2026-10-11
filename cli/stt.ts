@@ -27,6 +27,7 @@ import { SttError, type SttAudio, type SttProvider, type SttResult } from "../br
 import type { CliContext } from "./context.ts";
 import { EXIT, type Io } from "./io.ts";
 import { parseCrewArgs } from "./crew.ts";
+import { cmdSttWhistle, modelStatus, type WhistleSeams } from "./stt-whistle.ts";
 import type { Exec, Files } from "./sys.ts";
 
 // `stt setup | test | status | off` — the operator's half of speech-to-text (ADR 0029).
@@ -51,7 +52,7 @@ import type { Exec, Files } from "./sys.ts";
 // does not pretend to have one: the prompt says out loud where the value is about to land.
 
 /** The `stt` sub-verbs, in the order the usage block prints them. */
-export const STT_SUBCOMMANDS = ["setup", "test", "status", "off"] as const;
+export const STT_SUBCOMMANDS = ["setup", "whistle", "test", "status", "off"] as const;
 
 /** Flags `setup` takes with no value. Everything else is `--name value` / `--name=value`. */
 const BARE_FLAGS = ["accept-risk"] as const;
@@ -94,6 +95,13 @@ export interface SttDeps {
    * the same check the bridge's own status runs.
    */
   commandProblem?(path: string): string | null;
+  /** `stt whistle`'s model store: a stand-in fetch and pin for the tests. Production leaves it. */
+  whistle?: WhistleSeams;
+  /**
+   * Draws a download's progress line, on a terminal only. Absent means "not a terminal", so a piped
+   * or logged run gets the start and the end and no carriage returns.
+   */
+  progress?(text: string): void;
 }
 
 const settingsPath = (deps: SttDeps): string => join(deps.ctx.stateDir, STT_FILENAME);
@@ -739,7 +747,7 @@ function describeProvider(settings: SttSettings): string {
  * environment variable silently outranks the file `stt setup` wrote, and an operator staring at a
  * correct `stt.json` needs to be told that in one line rather than deduce it.
  */
-export function cmdSttStatus(deps: SttDeps): number {
+export async function cmdSttStatus(deps: SttDeps): Promise<number> {
   const file = readFileSettings(deps);
   const env = sttEnvSettings(deps.ctx.env);
   const warnings: string[] = [];
@@ -760,6 +768,7 @@ export function cmdSttStatus(deps: SttDeps): number {
     if (warnings.length === 0) {
       deps.io.out("speech-to-text: off — nothing configured. Run `collie stt setup` to turn it on.");
       deps.io.out(`  config    ${path} (absent)`);
+      await heldModelRow(deps);
       return EXIT.OK;
     }
     // Present but unusable is a real problem, not an "off": something was configured and it is being
@@ -767,6 +776,7 @@ export function cmdSttStatus(deps: SttDeps): number {
     deps.io.out("speech-to-text: off — the configuration on this machine cannot be used.");
     for (const line of warnings) deps.io.err(`  ${line}`);
     deps.io.out(`  config    ${path}`);
+    await heldModelRow(deps);
     return EXIT.FAIL;
   }
 
@@ -804,6 +814,7 @@ export function cmdSttStatus(deps: SttDeps): number {
     }
   } else if (settings.provider === "whistle") {
     row("engine", "Collie's own, in a child of this binary", "fixed");
+    row("model", (await modelStatus(deps)).line, "state dir");
   } else {
     row("endpoint", settings.baseUrl, source("baseUrl"));
     row("model", settings.model, source("model", "default"));
@@ -815,7 +826,18 @@ export function cmdSttStatus(deps: SttDeps): number {
     );
   }
   deps.io.out(`  config    ${path}${deps.files.exists(path) ? "" : " (absent)"}`);
+  if (settings.provider !== "whistle") await heldModelRow(deps);
   return EXIT.OK;
+}
+
+/**
+ * The Whistle model's row when a model, or the start of one, is on this host while Whistle is not the
+ * host engine: phones can still use it, and `collie stt whistle --remove` is how it goes. Silent when
+ * there is none, so a host that never heard of Whistle reads exactly as before.
+ */
+async function heldModelRow(deps: SttDeps): Promise<void> {
+  const model = await modelStatus(deps);
+  if (model.present) deps.io.out(`  whistle   ${model.line} (the model only; not this host's engine)`);
 }
 
 /**
@@ -854,6 +876,7 @@ function keyLabel(apiKey: string | undefined): string {
 export function cmdSttOff(deps: SttDeps): number {
   const path = settingsPath(deps);
   const existed = deps.files.exists(path);
+  const wasWhistle = readFileSettings(deps).provider === "whistle";
   try {
     deps.files.remove(path);
   } catch (err) {
@@ -865,6 +888,10 @@ export function cmdSttOff(deps: SttDeps): number {
       ? `✓ removed ${path} — speech-to-text is off from the next request (no restart needed).`
       : `speech-to-text was already off — no ${path} to remove.`,
   );
+  if (wasWhistle) {
+    deps.io.out(`  The Whistle model stays in ${join(deps.ctx.stateDir, "whistle")}, so phones can still use it.`);
+    deps.io.out("  To delete it, run `collie stt whistle --remove`.");
+  }
   reportEnvOverrides(deps, "off");
   return EXIT.OK;
 }
@@ -902,10 +929,12 @@ export async function cmdStt(deps: SttDeps, args: readonly string[]): Promise<nu
   switch (sub) {
     case "setup":
       return await cmdSttSetup(deps, rest);
+    case "whistle":
+      return await cmdSttWhistle(deps, rest);
     case "test":
       return await cmdSttTest(deps);
     case "status":
-      return cmdSttStatus(deps);
+      return await cmdSttStatus(deps);
     case "off":
       return cmdSttOff(deps);
     default:
@@ -914,6 +943,7 @@ export async function cmdStt(deps: SttDeps, args: readonly string[]): Promise<nu
       }
       deps.io.err(sttUsage());
       deps.io.err("  setup    pick a provider and write it into the state dir (interactive or by flag)");
+      deps.io.err("  whistle  fetch Whistle's model, so phones can use it; --host makes it this host's engine");
       deps.io.err("  test     one real round trip through what is configured");
       deps.io.err("  status   the provider, where each setting came from, and whether it is on");
       deps.io.err("  off      remove stt.json — speech-to-text is absent again");

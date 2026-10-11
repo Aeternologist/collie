@@ -26,6 +26,8 @@ Running a crew? Update the lead first; members follow on their own. Details:
 ### Added
 
 - **Whistle speech to text on the host, set up from Settings.** One tap downloads the Whistle model (16.9 MB) once, from a pinned Hugging Face address, and checks it against a hash this release carries. A second tap turns on the host engine: Collie's own copy of the engine runs in a short-lived child of Collie, with no key, no command to configure, and no audio leaving the host. A recording for it is 16 kHz WAV, up to four minutes. Every other provider is still set up with `collie stt setup`.
+- **`collie stt whistle` sets Whistle up from a terminal.** It fetches the model once; `--host` also turns the host engine on (and asks before it replaces a provider you set up, or needs `--yes`), `--from <path>` takes a copy you already have through the same hash check, and `--remove` undoes it. `collie stt status` shows the model, `collie stt off` says the model stays, and `collie doctor` warns when the model is not the one this release accepts.
+- **The Whistle model download is safe to start twice.** The model sits in the `whistle` folder of the state folder, and a download that the bridge or a terminal already has running is reported, not started a second time. The bridge sends the model to at most two phones at once.
 
 ### Changed
 

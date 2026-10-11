@@ -1265,6 +1265,7 @@ export const zh: Dictionary = {
   "apiError.stt.empty": "录音数据为空。",
   "apiError.stt.provider_failed": "语音转写失败：{reason}",
   "apiError.stt.wav_required": "主机上的语音引擎需要 WAV 录音。",
+  "apiError.stt.model_busy": "主机正在向两台设备发送语音模型。请稍后再试。",
   "apiError.stt.model_unknown": "主机上已没有该语音模型。",
   "apiError.stt.whistle_provider_taken": "主机上已配置了其他语音服务。",
   "apiError.stt.whistle_not_ready": "请先在主机上设置 Whistle。",

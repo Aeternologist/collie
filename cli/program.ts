@@ -91,6 +91,7 @@ import {
   STT_SUBCOMMANDS,
   type SttDeps,
 } from "./stt.ts";
+import { cmdSttWhistle } from "./stt-whistle.ts";
 import { realExec, realFiles } from "./sys.ts";
 import { cmdSupervise, realSuperviseDeps } from "./task-scheduler.ts";
 import { cmdApplyUpdate, cmdUpdate } from "./update.ts";
@@ -245,7 +246,7 @@ function hooksDeps(io: Io): HooksDeps {
  */
 function sttDeps(io: Io): SttDeps {
   const ctx = loadContext(io.err);
-  return {
+  const deps: SttDeps = {
     ctx,
     io,
     files: realFiles,
@@ -253,6 +254,9 @@ function sttDeps(io: Io): SttDeps {
     interactive: process.stdin.isTTY === true,
     prompt: (question) => (process.stdin.isTTY === true ? prompt(question) : null),
   };
+  // A progress line only on a terminal: a log would get a carriage return per tick.
+  if (process.stdout.isTTY === true) deps.progress = (text) => void process.stdout.write(text);
+  return deps;
 }
 
 /**
@@ -664,6 +668,11 @@ export const COMMANDS: readonly Command[] = [
         name: "setup",
         summary: "pick a provider and write it into the state dir (interactive, or all by flag)",
         run: (args, s) => cmdSttSetup(sttDeps(s.io), args),
+      },
+      {
+        name: "whistle",
+        summary: "fetch the Whistle speech model (--host: use it on this host, --from, --remove)",
+        run: (args, s) => cmdSttWhistle(sttDeps(s.io), args),
       },
       {
         name: "test",

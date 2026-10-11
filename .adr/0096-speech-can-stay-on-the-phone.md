@@ -96,7 +96,7 @@ party and never by itself. The transcript lands where every transcript lands.**
    (lib/wipe.ts) keeps it: it is a preference, not session content.
 
 2. **One model on the host, fetched once, by a deliberate act.** Both engines read the same
-   `whistle.cact`, kept at `<stateDir>/stt/whistle/whistle.cact` with a manifest beside it. Two acts
+   `whistle.cact`, kept at `<stateDir>/whistle/whistle.cact` with a manifest beside it. Two acts
    fetch it, and nothing else does:
    - **A tap:** *Set up Whistle (16.9 MB)* in Settings → Speech, on a device with the write grant.
      `POST /api/stt/whistle` starts the download on the bridge and answers `202`. It is idempotent: a

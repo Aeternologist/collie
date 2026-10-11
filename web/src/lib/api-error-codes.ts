@@ -116,6 +116,7 @@ export const API_ERROR_CODES = [
   "stt.wav_required",
 
   // The Whistle model and the host engine — /api/stt/whistle, /api/stt/model/:sha256 (ADR 0096)
+  "stt.model_busy",
   "stt.model_unknown",
   "stt.whistle_provider_taken",
   "stt.whistle_not_ready",

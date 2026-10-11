@@ -223,6 +223,8 @@ export const ERROR_CODES = {
   // ── The Whistle model and the host engine: /api/stt/whistle, /api/stt/model/:sha256 (ADR 0096) ──
   /** The hash in the path is not the hash of the model this collie holds, or it holds none (404). */
   "stt.model_unknown": "this collie holds no speech model with that hash",
+  /** Two copies of the model are already leaving this collie (503, `retry-after`). Try again in a moment. */
+  "stt.model_busy": "two copies of the speech model are already being sent — try again in a moment",
   /** Settings may not replace a provider the operator set up in the terminal (409). Nothing changed. */
   "stt.whistle_provider_taken": "another speech-to-text provider is set up on this collie; change it with `collie stt`",
   /** The host engine needs the model first (409). Nothing changed. */

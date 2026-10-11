@@ -1293,6 +1293,7 @@ export const es: Dictionary = {
   "apiError.stt.empty": "La grabación no contiene datos.",
   "apiError.stt.provider_failed": "Fallo en el servicio de transcripción: {reason}",
   "apiError.stt.wav_required": "El motor de voz del host necesita una grabación WAV.",
+  "apiError.stt.model_busy": "Tu host ya está enviando el modelo de voz a dos dispositivos. Inténtalo de nuevo en un momento.",
   "apiError.stt.model_unknown": "Tu host ya no tiene ese modelo de voz.",
   "apiError.stt.whistle_provider_taken": "El host ya tiene otro servicio de voz configurado.",
   "apiError.stt.whistle_not_ready": "Configura Whistle en el host primero.",
