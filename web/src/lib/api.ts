@@ -212,16 +212,31 @@ const STT_PROVIDER_BUDGET_MS = 60_000;
 // Request set-up, the bridge's own parse, and the response coming back down. Small and flat: none
 // of it scales with the audio.
 const STT_OVERHEAD_MS = 20_000;
+// A WAV goes to the host's `whistle` provider, whose deadline scales with the clip
+// (bridge/stt/whistle.ts `whistleTimeoutFor`): half the clip's length, at least the 60 s above and
+// at most three minutes. The clip's length is read off its size: 16 kHz, 2 bytes a sample, after the
+// 44-byte header the phone writes (lib/stt-pcm.ts).
+const STT_WAV_BYTES_PER_SECOND = 16_000 * 2;
+const STT_WAV_HEADER_BYTES = 44;
+const STT_WHISTLE_BUDGET_CAP_MS = 180_000;
+
+/** The bridge's provider deadline for a clip: the flat 60 s, or the `whistle` one for a WAV. */
+function sttProviderBudgetFor(bytes: number, type: string): number {
+  if (type.split(";", 1)[0]!.trim().toLowerCase() !== "audio/wav") return STT_PROVIDER_BUDGET_MS;
+  const clipMs = (Math.max(0, bytes - STT_WAV_HEADER_BYTES) / STT_WAV_BYTES_PER_SECOND) * 1000;
+  return Math.min(STT_WHISTLE_BUDGET_CAP_MS, Math.max(STT_PROVIDER_BUDGET_MS, Math.ceil(clipMs / 2)));
+}
 
 /**
- * The whole-request deadline for one clip of `bytes`, in milliseconds.
+ * The whole-request deadline for one clip of `bytes`, in milliseconds. `type` is the clip's content
+ * type: a WAV waits for the host engine's longer deadline, every other type for the flat one.
  *
  * Exported for the unit test, and for anyone who wants to know what the ceiling actually is: at the
- * 8 MiB maximum (MAX_STT_AUDIO_BYTES) it is a little under six minutes.
+ * 8 MiB maximum (MAX_STT_AUDIO_BYTES) it is a little under six minutes, or about seven for a WAV.
  */
-export function sttTimeoutFor(bytes: number): number {
+export function sttTimeoutFor(bytes: number, type: string = ""): number {
   const upload = Math.ceil((Math.max(0, bytes) * 8 * 1000) / STT_UPLINK_BITS_PER_SECOND);
-  return upload + STT_PROVIDER_BUDGET_MS + STT_OVERHEAD_MS;
+  return upload + sttProviderBudgetFor(bytes, type) + STT_OVERHEAD_MS;
 }
 
 /**
@@ -1904,7 +1919,7 @@ export function transcribeAudio(audio: Blob, signal?: AbortSignal): Promise<SttR
           [XHR_HEADER]: XHR_HEADER_VALUE,
           ...authHeader(),
         },
-        signal: withTimeout(signal, sttTimeoutFor(audio.size)),
+        signal: withTimeout(signal, sttTimeoutFor(audio.size, audio.type)),
       });
       const detail = await errorDetail(res);
       notePairing("POST", res.status, res.ok ? undefined : detail);

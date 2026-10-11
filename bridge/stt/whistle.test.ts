@@ -5,10 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { collieSelfCommand } from "../root.ts";
-import { LocalCliEmptyTranscriptError } from "./local-cli.ts";
+import { childRunner, LocalCliEmptyTranscriptError } from "./local-cli.ts";
 import { SttError, type SttAudio } from "./provider.ts";
 import { encodeWav16 } from "./wav.ts";
-import { createWhistleSttProvider, WHISTLE_VERB, whistleChildEnv } from "./whistle.ts";
+import { createWhistleSttProvider, WHISTLE_VERB, whistleChildEnv, whistleTimeoutFor } from "./whistle.ts";
 import { resetWhistleModelState, whistlePaths } from "./whistle-model.ts";
 import { WHISTLE_MODEL } from "./whistle-pins.ts";
 
@@ -101,6 +101,25 @@ describe("the whistle provider", () => {
     writeFileSync(join(root, "hang.ts"), "await Bun.sleep(30_000);");
     const hung = createWhistleSttProvider({ stateDir, root: checkout, self: [process.execPath, join(root, "hang.ts")], tmpRoot, timeoutMs: 300 });
     await expect(hung.transcribe(wav())).rejects.toMatchObject({ kind: "timeout" });
+  });
+
+  test("the deadline scales with the clip: half its length, at least 60 s, at most 3 minutes", () => {
+    const clip = (seconds: number) => encodeWav16(new Float32Array(seconds * 16_000));
+    expect(whistleTimeoutFor(clip(1))).toBe(60_000);
+    expect(whistleTimeoutFor(clip(120))).toBe(60_000);
+    // The four-minute clip this provider accepts gets two minutes, not the flat one.
+    expect(whistleTimeoutFor(clip(240))).toBe(120_000);
+    expect(whistleTimeoutFor(clip(500))).toBe(180_000);
+    // Bytes that are not the WAV shape get the floor; the child refuses them anyway.
+    expect(whistleTimeoutFor(new TextEncoder().encode("not a wav at all"))).toBe(60_000);
+  });
+
+  test("a call's own deadline replaces the runner's", async () => {
+    writeFileSync(join(root, "hang.ts"), "await Bun.sleep(30_000);");
+    const run = childRunner({ env: { PATH: process.env.PATH ?? "" }, noun: "the Whistle engine", tmpRoot, timeoutMs: 30_000 });
+    const started = performance.now();
+    await expect(run(() => [process.execPath, join(root, "hang.ts")], "recording.wav", wav(), undefined, 300)).rejects.toMatchObject({ kind: "timeout" });
+    expect(performance.now() - started).toBeLessThan(10_000);
   });
 
   test("available only with an accepted model and the engine files in place", async () => {

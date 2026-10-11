@@ -167,8 +167,8 @@ the model to at most two phones at once. A third gets "try again in a moment".
 
 **Limits.** The host engine takes a recording of up to 4 minutes, because a WAV is about four times
 the size of the compressed clip and the upload cap stays 8 MiB. The recorder shows that cap. The
-phone engine takes up to 5 minutes. The host child has a 60-second deadline, and at most two clips
-run on the host at the same time. A phone needs free space for the model (it asks for twice the file
+phone engine takes up to 5 minutes. The host child has a deadline of half the clip's length, at
+least 60 seconds and at most 3 minutes, and at most two clips run on the host at the same time. A phone needs free space for the model (it asks for twice the file
 size) and a secure connection (HTTPS, as `tailscale serve` gives).
 
 **When the phone cannot do it.** If *This phone* fails on a clip, the voice screen says why and offers

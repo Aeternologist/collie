@@ -134,8 +134,9 @@ party and never by itself. The transcript lands where every transcript lands.**
    <recording>`. The child reads the glue and the wasm from the served `web/dist/stt/needle-<v>/`
    and the model from the state dir, checks all three against the pins in its own source before it
    compiles anything, transcribes, and prints the text. The provider reuses the `local-cli`
-   machinery unchanged: argv only, a private 0700 temp dir, the 60 s deadline enforced with SIGKILL
-   on the process group (the tree on Windows), the 256 KiB stdout cap, the in-flight cap of
+   machinery unchanged: argv only, a private 0700 temp dir, a deadline enforced with SIGKILL (60 s,
+   or half the clip's length when that is longer, at most 3 minutes, so a four-minute clip is not
+   cut half way; the 2026-10-11 security review) on the process group (the tree on Windows), the 256 KiB stdout cap, the in-flight cap of
    `MAX_CONCURRENT_STT`, no `COLLIE_*` variable of the bridge's passed down (the bridge sets two itself, `COLLIE_STATE_DIR` and `COLLIE_PLUGIN_ROOT`, to paths it resolved), stderr never forwarded. A child, not a
    worker, because a running wasm call stops for certain only when its process dies, because a
    malformed file or a heap grown to 2 GiB dies with the child and not with the bridge, and because

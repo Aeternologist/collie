@@ -499,6 +499,21 @@ describe("api client — the transcription deadline scales with the clip", () =>
 
   it("a nonsense size cannot produce a deadline shorter than the fixed allowance", () => {
     expect(sttTimeoutFor(-1)).toBe(80_000);
+    expect(sttTimeoutFor(-1, "audio/wav")).toBe(80_000);
+  });
+
+  it("a WAV waits for the host engine's deadline, half the clip and at most three minutes", () => {
+    const wav = (seconds: number) => 44 + seconds * 32_000;
+    const upload = (bytes: number) => Math.ceil((bytes * 8 * 1000) / 256_000);
+    // A short WAV keeps the flat 60 s, like any other clip of its size.
+    expect(sttTimeoutFor(wav(10), "audio/wav")).toBe(sttTimeoutFor(wav(10), "audio/webm"));
+    // Four minutes, the longest the host engine takes: 120 s for the engine on top of the upload.
+    expect(sttTimeoutFor(wav(240), "audio/wav")).toBe(upload(wav(240)) + 120_000 + 20_000);
+    expect(sttTimeoutFor(wav(240), "audio/wav; codecs=1")).toBe(upload(wav(240)) + 120_000 + 20_000);
+    // Never more than three minutes for the engine, whatever the size.
+    expect(sttTimeoutFor(wav(600), "audio/wav")).toBe(upload(wav(600)) + 180_000 + 20_000);
+    // Other providers' clips keep the flat budget.
+    expect(sttTimeoutFor(wav(240), "audio/webm")).toBe(upload(wav(240)) + 60_000 + 20_000);
   });
 });
 

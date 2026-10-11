@@ -85,7 +85,8 @@ export const LOCAL_CLI_TEMP_PREFIX = "collie-stt-";
 
 /**
  * A temp dir older than this was left by a bridge that died mid-call (SIGKILL, power loss), because
- * no live call lasts more than {@link LOCAL_CLI_TIMEOUT_MS}. Swept once per process at provider load.
+ * no live call lasts more than {@link LOCAL_CLI_TIMEOUT_MS}, or the `whistle` provider's longest
+ * deadline (3 minutes, bridge/stt/whistle.ts). Swept once per process at provider load.
  */
 export const STALE_TEMP_DIR_MS = 60 * 60 * 1000;
 
@@ -197,13 +198,15 @@ export interface ChildRunnerOptions {
  * through it, so the two can never be bounded differently.
  *
  * `argv` is given the recording's path and returns the full argv; `recording` is the file's name
- * inside the temp dir, which the caller has already narrowed. The returned function is one call.
- * Construction starts the stale temp dir sweep, once per process and temp root, in the background.
+ * inside the temp dir, which the caller has already narrowed. The returned function is one call;
+ * its `timeoutMs`, when given, replaces the runner's deadline for that call (the `whistle` provider
+ * scales it to the clip). Construction starts the stale temp dir sweep, once per process and temp
+ * root, in the background.
  */
 export function childRunner(
   opts: ChildRunnerOptions,
-): (argv: (path: string) => string[], recording: string, input: SttAudio, signal?: AbortSignal) => Promise<SttResult> {
-  const timeoutMs = opts.timeoutMs ?? LOCAL_CLI_TIMEOUT_MS;
+): (argv: (path: string) => string[], recording: string, input: SttAudio, signal?: AbortSignal, timeoutMs?: number) => Promise<SttResult> {
+  const defaultTimeoutMs = opts.timeoutMs ?? LOCAL_CLI_TIMEOUT_MS;
   const tmpRoot = opts.tmpRoot ?? tmpdir();
   const host = opts.host ?? HOST;
   const { env, noun } = opts;
@@ -214,7 +217,7 @@ export function childRunner(
     });
   }
 
-  return async (argv, recording, input, signal) => {
+  return async (argv, recording, input, signal, timeoutMs = defaultTimeoutMs) => {
     // Refused before anything touches the disk or the process table.
     if (inFlight >= LOCAL_CLI_MAX_IN_FLIGHT) throw new SttBusyError();
     inFlight += 1;
