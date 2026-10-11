@@ -351,7 +351,6 @@ function PhoneRows({ whistle, block, local, persisted, copy, phoneError, onPhone
             <Download className="size-4" />
             {t("settings.speech.whistle.phone.download")}
           </Button>
-          {reason !== null && <p className="text-xs text-muted-foreground">{reason}</p>}
         </>
       )}
       {phoneError !== null && (

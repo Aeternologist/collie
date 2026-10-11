@@ -195,10 +195,10 @@ describe("SpeechCards, this phone's copy", () => {
     expect(screen.queryByRole("button", { name: "Download to this phone" })).toBeNull();
   });
 
-  it("disables the download with the reason where this browser cannot run the engine", () => {
+  it("disables the download, and says why once, where this browser cannot run the engine", () => {
     render(<SpeechCards {...props({ whistle: READY, block: "insecure" })} />);
     expect(screen.getByRole("button", { name: "Download to this phone" })).toBeDisabled();
-    expect(screen.getAllByText("This phone needs a secure connection (HTTPS) to run speech.").length).toBe(2);
+    expect(screen.getAllByText("This phone needs a secure connection (HTTPS) to run speech.").length).toBe(1);
   });
 
   it("copying: a bar in place of the button", () => {
