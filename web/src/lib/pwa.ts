@@ -2,6 +2,7 @@ import { basePath, mounted } from "./base-path";
 import { BUILD, isStaleBuild } from "./build";
 import { UPDATE_MODE_HOLD, isReloadHeld, isReloadHeldBy, subscribeReloadHeld } from "./reload-guard";
 import { getServerBuild, subscribeServerBuild } from "./server-build";
+import { isSttCacheName } from "./stt-cache";
 
 // Service-worker registration + update wiring, in one place. The worker is registered by hand
 // rather than through `virtual:pwa-register`: that module registers `${import.meta.env.BASE_URL}sw.js`,
@@ -232,11 +233,16 @@ async function forceReload(lane: ReloadLane): Promise<void> {
   // Deleting the caches needs no job and cannot be queued behind one. With its precache gone,
   // workbox's precache handler falls through to the network (`fallbackToNetwork`), so the navigation
   // below reaches the bridge whether the unregister ever lands or not. Every cache, not the precache
-  // by name: the name is workbox's to change, and the only other one is the font cache
-  // (`src/sw.ts` FONT_CACHE), which re-fills on first use.
+  // by name: the name is workbox's to change, and the others are the font cache
+  // (`src/sw.ts` FONT_CACHE), which re-fills on first use, and the speech cache.
+  //
+  // THE SPEECH CACHE IS SPARED (ADR 0096 Decision 10). It holds a 17 MB model the person chose to copy
+  // to the phone, and a stale model cannot cause a stale app: it is not part of the shell, and the
+  // service worker's own sweep drops it when a build stops accepting its hash. Deleting it here would
+  // make a stuck update cost a second 17 MB download. (A pairing wipe still takes it: lib/wipe.ts.)
   try {
     const keys = await caches.keys();
-    await Promise.all(keys.map((key) => caches.delete(key)));
+    await Promise.all(keys.filter((key) => !isSttCacheName(key)).map((key) => caches.delete(key)));
   } catch {
     /* no CacheStorage, or it refused — the unregister below and the reload still stand */
   }

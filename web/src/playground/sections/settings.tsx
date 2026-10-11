@@ -8,6 +8,8 @@ import { CommandPicker } from "@/components/new-command-picker";
 import { NoPromptsSheet } from "@/components/no-prompts-sheet";
 import { NotifyPrefsCard } from "@/components/notify-prefs-control";
 import { SpaceOverview } from "@/components/space-overview";
+import { SpeechCards, type SpeechCardsProps } from "@/components/speech-control";
+import type { WhistleStatus } from "@/lib/types";
 import { commandChoice, commandKey, commandOptions, offerFor, pickOfKey } from "@/lib/new-page";
 import type { LauncherItem, RecentRun } from "@/lib/types";
 import {
@@ -83,6 +85,43 @@ function CommandPickerDemo({ run, pick, line = "" }: { run: boolean; pick: strin
   );
 }
 
+// ── Settings → Speech (ADR 0096) ────────────────────────────────────────────────────────────────────
+
+const WHISTLE_BYTES = 16_919_407;
+const WHISTLE_SHA = "b6e02f048568ac5d01a2042556c658061e699acbc0aa2a1439f52f3d461dffeb";
+const WHISTLE_ABSENT: WhistleStatus = { state: "absent", bytes: WHISTLE_BYTES, hostEngine: false, hostTaken: false };
+const WHISTLE_READY: WhistleStatus = { ...WHISTLE_ABSENT, state: "ready", sha256: WHISTLE_SHA };
+
+/** The two Speech cards with every fact handed in, as the real control hands them. Taps do nothing. */
+function SpeechDemo(over: Partial<SpeechCardsProps>) {
+  return (
+    <div className="space-y-4 p-4">
+      <SpeechCards
+        whistle={WHISTLE_ABSENT}
+        canWrite
+        engine="host"
+        block={null}
+        local={null}
+        persisted={false}
+        copy={null}
+        hostError={null}
+        phoneError={null}
+        hostBusy={false}
+        confirmingRemove={false}
+        onEngine={() => {}}
+        onSetup={() => {}}
+        onAskRemove={() => {}}
+        onCancelRemove={() => {}}
+        onRemove={() => {}}
+        onHostEngine={() => {}}
+        onPhoneDownload={() => {}}
+        onPhoneRemove={() => {}}
+        {...over}
+      />
+    </div>
+  );
+}
+
 export function SettingsSection() {
   return (
     <Section def={DEF}>
@@ -109,6 +148,70 @@ export function SettingsSection() {
           <PhoneFrameCard height={760}>
             <SettingsRouter home={homeCrew} devices={devicesPaired} />
           </PhoneFrameCard>
+        </Card>
+      </Group>
+
+      <Group title="Speech">
+        <Card
+          state="speech-whistle-absent"
+          label="1: Whistle not set up"
+          reach="open Settings, Device, on a lead whose host has no Whistle model yet. The setup button is for a device with write access; a read-only device reads one sentence instead."
+          note="This phone is off with its reason, because there is neither a host model nor a copy on the phone."
+        >
+          <Stage height={560}>
+            <SpeechDemo block="host-not-ready" />
+          </Stage>
+        </Card>
+
+        <Card
+          state="speech-whistle-downloading"
+          label="2: the host is downloading"
+          reach="tap Set up Whistle. The bar follows the host's own count, asked once a second while this page is open, and ends when the host says ready or failed."
+          note="There is no cancel in 1.20.0: the host finishes or fails on its own."
+        >
+          <Stage height={560}>
+            <SpeechDemo whistle={{ ...WHISTLE_ABSENT, state: "downloading", received: 7_400_000 }} block="host-not-ready" />
+          </Stage>
+        </Card>
+
+        <Card
+          state="speech-whistle-failed"
+          label="3: the download failed"
+          reach="tap Set up Whistle with the host offline, or on a link that blocks Hugging Face. The host's reason is shown as it sent it."
+        >
+          <Stage height={560}>
+            <SpeechDemo
+              whistle={{ ...WHISTLE_ABSENT, state: "failed", reason: "Hugging Face did not answer. Check the host's connection." }}
+              block="host-not-ready"
+            />
+          </Stage>
+        </Card>
+
+        <Card
+          state="speech-whistle-ready"
+          label="4: ready on the host"
+          reach="after the download finishes. Remove from host takes two taps. Use on host is a switch; it is disabled with its reason when another speech provider is already set up on the host."
+          note="The phone has no copy yet, so Download to this phone is offered."
+        >
+          <Stage height={640}>
+            <SpeechDemo whistle={WHISTLE_READY} />
+          </Stage>
+        </Card>
+
+        <Card
+          state="speech-whistle-on-phone"
+          label="5: on this phone"
+          reach="tap Download to this phone, then choose This phone. The copy is checked against the host's hash before it is kept."
+          note="Shown with the browser's promise to keep the copy. When the host's model changes, this row says so and offers a new download."
+        >
+          <Stage height={640}>
+            <SpeechDemo
+              whistle={WHISTLE_READY}
+              engine="phone"
+              local={{ sha256: WHISTLE_SHA, bytes: WHISTLE_BYTES }}
+              persisted
+            />
+          </Stage>
         </Card>
       </Group>
 

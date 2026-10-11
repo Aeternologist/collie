@@ -7,6 +7,7 @@ import { decidePush, notificationPath, type NotifData, type PushPayload } from "
 import { askInApp, openNotificationTarget, type OpenOutcome, type OpenTargetClient } from "./lib/notification-open";
 import { readPushTitles } from "./lib/push-title-store";
 import { FONT_URLS, navigationNetworkOnlyUnder } from "./lib/sw-routes";
+import { stripMount, sttCacheName, sttStorable, sttSweepKeeps } from "./lib/stt-cache";
 
 // Where this worker is mounted (ADR 0052): the directory it was fetched from, which is the mount
 // the app registered it under (lib/pwa.ts) — `/` at the origin root, `/collie/` behind a proxy that
@@ -126,6 +127,49 @@ self.addEventListener("activate", (event: ExtendableEvent) => {
       const live = new Set<string>(FONT_URLS.map(under));
       for (const req of await cache.keys()) {
         if (!live.has(new URL(req.url).pathname)) await cache.delete(req);
+      }
+    })(),
+  );
+});
+
+// ── The phone's speech engine (ADR 0096 Decision 10) ────────────────────────────────────────────
+//
+// `stt/` holds the speech worker and the vendored engine. It is out of the precache (vite.config.ts,
+// `stt/**` in globIgnores): 1 MB is not something to charge every install for. It is cached here
+// instead, cache-first under its own name, and ONLY on a device whose person already copied the model
+// to the phone: the cache exists only then (lib/stt-model.ts creates it), and a device with no such
+// cache gets a plain network fetch and has nothing stored. So the engine also starts offline, and an
+// install that never turns the phone engine on never keeps a byte of it.
+//
+// The model itself is not served by this route. The page reads it from the same cache directly.
+// What may be stored is `sttStorable` (an unredirected 200 of the right type, the font cache's rule),
+// and the worker's response is stored whole, headers included: its own `Content-Security-Policy` is
+// what lets it compile wasm, and the copy must carry it.
+const STT_CACHE = sttCacheName(MOUNT);
+
+registerRoute(
+  ({ url, sameOrigin }) => sameOrigin && url.pathname.startsWith(under("/stt/")),
+  async ({ request, url }) => {
+    if (!(await caches.has(STT_CACHE))) return fetch(request);
+    const cache = await caches.open(STT_CACHE);
+    const hit = await cache.match(request);
+    if (hit) return hit;
+    const response = await fetch(request);
+    if (sttStorable(response, stripMount(url.pathname, MOUNT))) void cache.put(request, response.clone()).catch(() => null);
+    return response;
+  },
+);
+
+// An update must not strand the speech cache. The model stays while this build still accepts its
+// hash, and so do this build's engine files; an older engine, another model and the old worker
+// script (its name carries the build hash) go. The next load of the new worker stores the new one.
+self.addEventListener("activate", (event: ExtendableEvent) => {
+  event.waitUntil(
+    (async () => {
+      if (!(await caches.has(STT_CACHE))) return;
+      const cache = await caches.open(STT_CACHE);
+      for (const req of await cache.keys()) {
+        if (!sttSweepKeeps(stripMount(new URL(req.url).pathname, MOUNT))) await cache.delete(req);
       }
     })(),
   );

@@ -13,6 +13,7 @@ import { KeepChatControl } from "@/components/keep-chat-control";
 import { FontSettingsControl } from "@/components/font-settings";
 import { HandControl } from "@/components/hand-control";
 import { HandsFreeControl } from "@/components/hands-free-control";
+import { SpeechControl } from "@/components/speech-control";
 import { HapticsControl } from "@/components/haptics-control";
 import { HarnessBarControl } from "@/components/harness-bar-control";
 import { LanguageControl } from "@/components/language-control";
@@ -102,6 +103,9 @@ export function SettingsDeviceRoute() {
     <SettingsPage title="settings.section.device.title">
       {/* Renders nothing where vibrate is unsupported. */}
       <HapticsControl />
+      {/* Where voice becomes text, and the Whistle model that lets a phone do it itself (ADR 0096).
+          Renders nothing on a host that offers no Whistle unless this phone already holds a copy. */}
+      <SpeechControl />
       {/* Renders nothing where no provider is configured or the browser cannot record. */}
       <HandsFreeControl />
       {/* AVAILABILITY ONLY. This row does not turn zen on — it decides whether the pane's actions
