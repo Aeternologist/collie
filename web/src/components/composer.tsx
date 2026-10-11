@@ -279,6 +279,8 @@ function ComposerDock({
 /** How long the attach button holds its pressed tone, in ms. Just under the sheet's own 240ms
  *  entrance, so the flash hands over to the sheet rather than lingering behind it. */
 const ATTACH_PRESS_MS = 220;
+/** Frames the composer keeps asking for focus back after the voice takeover goes (about 250 ms at 60 Hz). */
+const TAKEOVER_FOCUS_FRAMES = 15;
 
 
 /**
@@ -694,11 +696,25 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     if (!returning) return;
     const active = document.activeElement;
     if (active !== null && active !== document.body && !blockRef.current?.contains(active)) return;
-    // One frame later: the controls were `inert` and `invisible` a moment ago, and WebKit does not
-    // count them focusable until it has painted them back.
-    const frame = requestAnimationFrame(() => {
-      blockRef.current?.querySelector<HTMLElement>('[data-slot="composer-primary"]')?.focus({ preventScroll: true });
-    });
+    // The controls were `inert` and `invisible` a moment ago, and WebKit does not count them
+    // focusable until it has painted them back: the buttons carry `transition-all`, which includes
+    // `visibility`, so for the first frame or few after the takeover goes the round button still
+    // computes `hidden` there and `focus()` is a silent no-op (measured: about 1 run in 20 in
+    // `voice-takeover.spec.ts`, a keyboard user left with focus on the body). So ask each frame
+    // until the focus took, for at most a quarter of a second, and stop the moment it took or the
+    // operator put focus somewhere of their own.
+    let frame = 0;
+    let frames = 0;
+    const settle = () => {
+      const target = blockRef.current?.querySelector<HTMLElement>('[data-slot="composer-primary"]');
+      if (!target) return;
+      const now = document.activeElement;
+      if (now !== null && now !== document.body && !blockRef.current?.contains(now)) return;
+      target.focus({ preventScroll: true });
+      if (document.activeElement === target || (frames += 1) >= TAKEOVER_FOCUS_FRAMES) return;
+      frame = requestAnimationFrame(settle);
+    };
+    frame = requestAnimationFrame(settle);
     return () => cancelAnimationFrame(frame);
   }, [takeoverOpen]);
 
