@@ -91,7 +91,7 @@ export const en = {
   // --- settings.handsFree ---
   "settings.handsFree.title": "Hands-free voice",
   "settings.handsFree.description":
-    "Send the transcript immediately instead of putting it in the message box. Off by default — you normally read what was heard before it reaches the terminal.",
+    "Send the transcript immediately instead of putting it in the message box. Off by default: you normally read what was heard before it reaches the terminal.",
   "settings.handsFree.ariaLabel": "Hands-free voice: send transcript immediately",
 
   // --- settings.push ---
@@ -1289,15 +1289,15 @@ export const en = {
   "promptAction.feedback.notArrived": "The feedback didn't arrive — nothing was submitted",
 
   // --- stt (speech-to-text errors, lib/stt.ts + hooks/use-stt-recorder.ts) ---
-  "stt.error.busy": "Busy — another recording is still transcribing. Try again in a moment.",
-  "stt.error.tooLong": "That recording is too long — record a shorter one.",
+  "stt.error.busy": "Busy: another recording is still transcribing. Try again in a moment.",
+  "stt.error.tooLong": "That recording is too long. Record a shorter one.",
   "stt.error.badFormat": "This browser recorded a format Collie can't send on.",
   "stt.error.unconfigured": "Speech-to-text isn't configured on this collie.",
-  "stt.error.timeout": "The transcriber didn't answer in time — try again.",
-  "stt.error.unreachable": "The transcriber couldn't be reached — try again.",
-  "stt.error.generic": "Transcription failed — record again to retry.",
-  "stt.error.networkFailure": "Couldn't reach Collie to transcribe that — try again.",
-  "stt.error.recordingFailed": "Recording failed — nothing was captured.",
+  "stt.error.timeout": "The transcriber didn't answer in time. Try again.",
+  "stt.error.unreachable": "The transcriber couldn't be reached. Try again.",
+  "stt.error.generic": "Transcription failed. Record again to retry.",
+  "stt.error.networkFailure": "Couldn't reach Collie to transcribe that. Try again.",
+  "stt.error.recordingFailed": "Recording failed. Nothing was captured.",
   "stt.error.noSpeechHeard": "Nothing was heard in that recording.",
   "stt.error.nothingRecorded": "Nothing was recorded.",
   "stt.error.unsupportedBrowser": "This browser can't record audio.",
@@ -1376,7 +1376,7 @@ export const en = {
   "apiError.upload.bad_type": "Collie can't send that kind of file: {type}",
   "apiError.upload.write_failed": "The file couldn't be saved on the host: {reason}",
   "apiError.stt.unconfigured": "Speech-to-text isn't set up on this collie.",
-  "apiError.stt.too_large": "That recording is too long — record a shorter one.",
+  "apiError.stt.too_large": "That recording is too long. Record a shorter one.",
   "apiError.stt.bad_format": "This browser recorded a format Collie can't send on.",
   "apiError.stt.busy": "Two recordings are already being transcribed — try again in a moment.",
   "apiError.stt.unreadable": "That recording couldn't be read.",
