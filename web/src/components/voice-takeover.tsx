@@ -32,7 +32,7 @@ import { cn } from "@/lib/utils";
 // `hand="left"` the row runs mirrored exactly as the composer's does, OK on the left.
 //
 // ONE MOVING THING AT A TIME at the OK button. While the clip records, the ring around OK is the
-// silence countdown, closing over 3 s once speech has been heard. While it transcribes, the ring is
+// silence countdown, closing over SILENCE_FINISH_MS (2 s) once speech has been heard. While it transcribes, the ring is
 // ONE rotating arc on its own track, OK keeps its static check, dimmed and disabled, and there is no
 // separate spinner. Reduced motion draws that arc as a static full ring at reduced opacity. Running
 // on the phone changes only the word ("Transcribing on this phone"); it adds no second moving thing.
@@ -235,7 +235,7 @@ export function VoiceTakeover({
             </Button>
           )}
           {phase === "recording" && (
-            // The countdown: empty and invisible until speech was heard and then 3 s of quiet begin;
+            // The countdown: empty and invisible until speech was heard and then the quiet countdown begins;
             // the hook writes its offset and opacity per frame. `pathLength` makes 100 the whole circle.
             <svg
               ref={ringRef}

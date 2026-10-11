@@ -162,7 +162,7 @@ export function VoiceTakeoverGroup() {
       </Card>
       <Card
         state="voice-takeover-countdown"
-        label="3: the 3 s countdown after speech"
+        label={`3: the ${SILENCE_FINISH_MS / 1000} s countdown after speech`}
         reach={`stop talking after a sentence. ${SILENCE_FINISH_MS / 1000} s of quiet closes the ring round OK and transcribes; speaking again empties it.`}
         note={`${NOTE} This card speaks for ${SPEECH_MS / 1000} s, then goes quiet and replays every 6 s.`}
       >

@@ -80,7 +80,7 @@ describe("the speech endpoint — speech, then silence", () => {
     expect(r.finishes).toBe(1);
   });
 
-  it("closes the ring in step with the quiet: 0 at the start, half at 1.5 s, full at the end", () => {
+  it("closes the ring in step with the quiet: 0 at the start, half way at half the wait, full at the end", () => {
     const r = rig();
     r.feed(1000, SPEECH);
     const first = r.feed(FRAME_MS, QUIET);
@@ -92,7 +92,7 @@ describe("the speech endpoint — speech, then silence", () => {
     expect(end.progress).toBe(1);
   });
 
-  it("starts the clock only after speech: a clip that opens with 10 s of quiet then speaks still gets its full 3 s", () => {
+  it("starts the clock only after speech: a clip that opens with 10 s of quiet then speaks still gets its full countdown", () => {
     const r = rig();
     r.feed(10_000, QUIET);
     expect(r.finishes).toBe(0);
@@ -113,28 +113,28 @@ describe("the speech endpoint — speech, then silence", () => {
 });
 
 describe("the speech endpoint — speech, a pause, speech", () => {
-  it("resets the countdown when speech resumes inside the 3 s", () => {
+  it("resets the countdown when speech resumes inside the countdown", () => {
     const r = rig();
     r.feed(500, QUIET);
     r.feed(1000, SPEECH);
-    r.feed(2500, QUIET);
+    r.feed(SILENCE_FINISH_MS * 0.9, QUIET);
     expect(r.frames.at(-1)?.progress).toBeGreaterThan(0.8);
     const resumed = r.feed(300, SPEECH);
     expect(resumed.progress).toBe(0);
     expect(resumed.silentMs).toBe(0);
-    // A pause that would have ended the first countdown no longer does: the 3 s start over.
-    r.feed(2500, QUIET);
+    // A pause that would have ended the first countdown no longer does: the countdown starts over.
+    r.feed(SILENCE_FINISH_MS * 0.9, QUIET);
     expect(r.finishes).toBe(0);
-    r.feed(700, QUIET);
+    r.feed(SILENCE_FINISH_MS * 0.2, QUIET);
     expect(r.finishes).toBe(1);
   });
 
   it("a single loud frame inside the quiet resets it (continuously below, or no finish)", () => {
     const r = rig();
     r.feed(1000, SPEECH);
-    r.feed(2900, QUIET);
+    r.feed(SILENCE_FINISH_MS - 100, QUIET);
     r.feed(FRAME_MS, SPEECH);
-    r.feed(2900, QUIET);
+    r.feed(SILENCE_FINISH_MS - 100, QUIET);
     expect(r.finishes).toBe(0);
     r.feed(300, QUIET);
     expect(r.finishes).toBe(1);

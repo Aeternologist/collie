@@ -14,7 +14,7 @@ primary action rather than two competing for the width of the field.
 
 While you speak, a recorder covers the whole composer, belt and box, and adds no height, so the
 screen above never moves. **OK** stands where the mic was and finishes the clip. The **bin** at the far
-end throws it away, and still cancels while the clip is being transcribed. Once you have spoken, three
+end throws it away, and still cancels while the clip is being transcribed. Once you have spoken, two
 seconds of quiet finish the clip for you; a ring closes round OK to show it, and speaking again
 starts the count over. Before the first word nothing finishes it on its own.
 

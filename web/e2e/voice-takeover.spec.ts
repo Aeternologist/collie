@@ -210,13 +210,13 @@ test("the takeover opens, records, transcribes and closes without moving anythin
   expect(await rects(page)).toEqual(before);
 });
 
-test("three seconds of quiet after speech finishes the clip by itself; quiet alone never does", async ({ page }) => {
+test("two seconds of quiet after speech finishes the clip by itself; quiet alone never does", async ({ page }) => {
   await page.goto("/pane/w1:p1");
   await page.getByRole("button", { name: en["composer.mic.recordAria"] }).click();
   await expect(page.getByRole("group", { name: en["composer.voice.regionAria"] })).toBeVisible();
 
-  // A quiet room: nothing for 4 s, longer than the countdown, and the clip is still recording.
-  await page.waitForTimeout(4000);
+  // A quiet room: nothing for 3 s, longer than the countdown, and the clip is still recording.
+  await page.waitForTimeout(3000);
   await expect(page.getByRole("button", { name: en["composer.voice.okAria"] })).toBeEnabled();
 
   await setLoudness(page, 0.3);
@@ -228,7 +228,7 @@ test("three seconds of quiet after speech finishes the clip by itself; quiet alo
   await expect(page.locator('[data-slot="voice-takeover"] svg[viewBox="-24 -24 48 48"]')).toHaveCSS("opacity", "1");
   await expect(status(page)).toHaveText(en["composer.voice.listening"]);
   // Then transcription starts with no tap.
-  await expect(status(page)).toHaveText(en["composer.voice.transcribing"], { timeout: 6000 });
+  await expect(status(page)).toHaveText(en["composer.voice.transcribing"], { timeout: 5000 });
   await expect(page.getByRole("textbox", { name: en["composer.placeholder.reply"] })).toHaveValue(TRANSCRIPT, { timeout: 8000 });
 });
 

@@ -203,7 +203,7 @@ describe("VoiceTakeover — auto-finish on silence", () => {
     expect(onStop).not.toHaveBeenCalled();
   });
 
-  it("stops once, 3 s after speech goes quiet, and closes the ring on the way", () => {
+  it("stops once, SILENCE_FINISH_MS after speech goes quiet, and closes the ring on the way", () => {
     const { state, source } = scripted(QUIET);
     const { onStop, container } = renderTakeover({ source });
     act(() => vi.advanceTimersByTime(500));
@@ -232,16 +232,16 @@ describe("VoiceTakeover — auto-finish on silence", () => {
     state.rms = SPEECH;
     act(() => vi.advanceTimersByTime(800));
     state.rms = QUIET;
-    act(() => vi.advanceTimersByTime(2500));
+    act(() => vi.advanceTimersByTime(SILENCE_FINISH_MS * 0.8));
     expect(ring(container).style.opacity).toBe("1");
     state.rms = SPEECH;
     act(() => vi.advanceTimersByTime(100));
     expect(ring(container).style.opacity).toBe("0");
     expect(arcOf(container).style.strokeDashoffset).toBe("100");
     state.rms = QUIET;
-    act(() => vi.advanceTimersByTime(2500));
+    act(() => vi.advanceTimersByTime(SILENCE_FINISH_MS * 0.8));
     expect(onStop).not.toHaveBeenCalled();
-    act(() => vi.advanceTimersByTime(700));
+    act(() => vi.advanceTimersByTime(SILENCE_FINISH_MS * 0.3));
     expect(onStop).toHaveBeenCalledTimes(1);
   });
 

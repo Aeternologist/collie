@@ -105,7 +105,7 @@ export function useVoiceLevels({ source, mode, count, reduced, onFinish }: Voice
         for (let i = 0; i < count; i += 1) paintBar(i, Math.max(BAR_REST, heights[i] ?? 0));
       }
 
-      // The ring: empty and invisible until the countdown starts, closing over 3 s, whole thirds when reduced.
+      // The ring: empty and invisible until the countdown starts, closing over the endpoint's SILENCE_FINISH_MS, whole thirds when reduced.
       const progress = reduced ? Math.floor(result.progress * 3) / 3 : result.progress;
       if (progress !== lastRing) {
         lastRing = progress;

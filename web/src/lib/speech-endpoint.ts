@@ -21,8 +21,8 @@
 // The numbers are a first pass that nobody has tuned against a real microphone yet; each one is a
 // named export so the tuning is one line and the tests can read the same values.
 
-/** Quiet this long, continuously, after speech ends the clip. The operator's own number (design 3.3). */
-export const SILENCE_FINISH_MS = 3000;
+/** Quiet this long, continuously, after speech ends the clip. The operator's own number (design 3.3, cut from 3 s on 2026-10-11 after a Pixel test). The ring, the takeover's comments and the tests all derive from this one. */
+export const SILENCE_FINISH_MS = 2000;
 
 /** Speech is a reading above this many times the noise floor: 3x is clear of room hiss and under a normal voice. */
 export const SPEECH_FLOOR_MULTIPLIER = 3;
