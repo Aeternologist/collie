@@ -169,7 +169,10 @@ party and never by itself. The transcript lands where every transcript lands.**
    read covers what can be: the glue's diff, the header's diff, and **the import list, which is
    everything the wasm can ask its host to do.** A new import is a reason to stop. The files sit in
    `public/` so Vite copies them untouched and the served bytes are the hashed bytes. The pins live
-   in one source module that the bridge, the CLI child and the web build all import.
+   in `bridge/stt/whistle-pins.ts`; the web build, which never imports bridge code, keeps a literal
+   mirror in `web/src/stt/pins.ts`, and a test fails when the two differ. The wasm's import names are
+   minified (`a`.`a` to `a`.`p`); the pin is that list, and the glue's map back to the sixteen
+   readable names is recorded beside it.
 
 7. **The phone gets everything from the host, nothing from a third party.** No CDN, no Hugging Face,
    no fallback URL. The engine comes from Collie's own static files, the model from the bridge. The
