@@ -360,6 +360,68 @@ export function statusFacts(status: VoiceStatus, input: StatusFactsInput): Statu
   }
 }
 
+// ── WHAT IS CONFIGURED, BY NAME ─────────────────────────────────────────────────────────────────
+//
+// The card's title names the setup itself, not only its kind: the command the host runs, a speech
+// service's model, Whistle's version. The host sends these names in `setup` (`GET /api/stt/host`), by
+// name only; an older host sends none, and the card falls back to the kind.
+
+/** The command earlier docs told people to write round Whistle. Collie runs Whistle itself now. */
+export const OLD_WHISTLE_WRAPPER = "whistle-stt";
+
+/** The first seven characters of a revision, or of the hash when the copy names no revision. */
+export function shortVersion(revision: string | undefined, sha256: string | undefined): string {
+  if (revision !== undefined) return revision.slice(0, 7);
+  return sha256 === undefined ? "" : sha256.slice(0, 7);
+}
+
+/** What the in-use card names beyond the engine's kind. Each is `null` when there is nothing to name. */
+export interface NamedSetup {
+  /** The title's own name, shown in mono: a command, or a speech service's model. `null`: the engine's name. */
+  name: string | null;
+  /** The model, for the line under the title: a model file, Whistle's version, or Codex's model. */
+  model: string | null;
+  /** A speech service's host, for the line under the title. */
+  endpoint: string | null;
+}
+
+const NOTHING_NAMED: NamedSetup = { name: null, model: null, endpoint: null };
+
+export interface NamedSetupInput {
+  host: SttHostStatus | null;
+  whistle: WhistleStatus | null;
+  local: StoredModel | null | undefined;
+}
+
+/** What the card names for an engine, from the host's `setup`, the host's model, or this phone's copy. */
+export function namedSetup(engine: EngineFact, input: NamedSetupInput): NamedSetup {
+  const setup = input.host?.setup;
+  switch (engine) {
+    case "command":
+      return { name: setup?.command ?? null, model: setup?.model ?? null, endpoint: null };
+    case "service":
+      return { name: setup?.model ?? null, model: null, endpoint: setup?.endpoint ?? null };
+    case "whistle": {
+      const held = input.whistle?.state === "ready" ? shortVersion(input.whistle.revision, input.whistle.sha256) : "";
+      return { name: null, model: setup?.model ?? (held === "" ? null : held), endpoint: null };
+    }
+    case "phone": {
+      const copy = input.local ? shortVersion(input.local.revision, input.local.sha256) : "";
+      return { name: null, model: copy === "" ? null : copy, endpoint: null };
+    }
+    case "chatgpt":
+      return { name: null, model: setup?.model ?? null, endpoint: null };
+    case "other":
+    case "off":
+      return NOTHING_NAMED;
+  }
+}
+
+/** Whether the host runs the old Whistle wrapper as its own command, which built-in Whistle replaces. */
+export function oldWhistleWrapper(host: SttHostStatus | null): boolean {
+  return host?.provider === "local-cli" && host.setup?.command === OLD_WHISTLE_WRAPPER;
+}
+
 // ── HOW TO SET UP EACH HOST OPTION ──────────────────────────────────────────────────────────────
 //
 // Every option on Host speech carries its steps, whether or not it can be switched from the app

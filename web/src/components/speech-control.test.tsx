@@ -127,12 +127,13 @@ function line(label: "Audio" | "Set up"): string {
   const dt = within(statusCard()).queryByText(label, { selector: "dt" });
   return dt === null ? "" : front(dt.nextElementSibling);
 }
-/** The in-use card as it reads now: the title, the line under it, the status, Audio and Set up. */
+/** The in-use card as it reads now: the title, its model line, the line under them, the status, Audio and Set up. */
 function inUse() {
   const heading = within(statusCard()).getByRole("heading", { level: 2 });
   return {
     title: front(heading),
-    where: front(heading.nextElementSibling),
+    model: front(heading.parentElement?.querySelector('[data-line="model"]')),
+    where: front(heading.parentElement?.querySelector('[data-line="where"]')),
     status: front(heading.parentElement?.nextElementSibling),
     audio: line("Audio"),
     setUp: line("Set up"),
@@ -167,6 +168,7 @@ describe("the hub", () => {
     render(<SpeechCards {...props(PHONE_HUB)} />);
     expect(inUse()).toEqual({
       title: "Whistle by Cactus Compute",
+      model: "Model ca52876",
       where: "On this phone",
       status: "Ready. Whistle ca52876 is on this phone.",
       audio: "Stays on this phone.",
@@ -203,12 +205,12 @@ describe("the hub", () => {
     {
       name: "your own command",
       over: { whistle: READY, host: { provider: "local-cli", available: true, configuredBy: "file", switchable: LOCKED("terminal") } },
-      expected: { title: "Your own command", where: "On your host", status: "Ready. Your host found the command and can run it." },
+      expected: { title: "Your own command", where: "Your own command on your host", status: "Ready. Your host found the command and can run it." },
     },
     {
       name: "the ChatGPT subscription",
       over: { whistle: READY, host: HOST_CODEX, hostStt: { provider: "codex", available: true } },
-      expected: { title: "ChatGPT subscription (OpenAI)", where: "On your host", status: "Ready. Codex on your host is signed in with ChatGPT." },
+      expected: { title: "ChatGPT subscription (OpenAI)", where: "Through Codex on your host", status: "Ready. Codex on your host is signed in with ChatGPT." },
     },
     { name: "a speech service", over: { whistle: READY, host: HOST_SERVICE }, expected: { title: "A speech service", where: "On your host" } },
   ];
@@ -224,6 +226,7 @@ describe("the hub", () => {
     render(<SpeechCards {...props()} />);
     expect(inUse()).toEqual({
       title: "Speech is not set up",
+      model: "",
       where: "",
       status: "Not set up. Nothing turns your speech into text yet.",
       audio: "Nothing is recorded.",
@@ -287,6 +290,7 @@ describe("the hub", () => {
     render(<SpeechCards {...props(WHISTLE_HUB)} />);
     expect(inUse()).toEqual({
       title: "Whistle by Cactus Compute",
+      model: "Model ca52876",
       where: "On your host",
       status: "Ready. Whistle ca52876 is on your host.",
       audio: "Goes to your host and stays there.",
@@ -340,10 +344,10 @@ describe("the hub", () => {
   });
 
   const STATUS_CASES: { name: string; host: SttHostStatus; expected: Partial<ReturnType<typeof inUse>> }[] = [
-    { name: "your own command, found", host: { provider: "local-cli", available: true, configuredBy: "file", switchable: LOCKED("terminal") }, expected: { title: "Your own command", setUp: "In a terminal on your host", status: "Ready. Your host found the command and can run it." } },
-    { name: "your own command, not found", host: { provider: "local-cli", available: false, reason: "the local transcription command was not found", configuredBy: "file", switchable: LOCKED("terminal") }, expected: { title: "Your own command", setUp: "In a terminal on your host", status: "Not ready. Your host cannot find or run the command." } },
+    { name: "your own command, found", host: { provider: "local-cli", available: true, configuredBy: "file", switchable: LOCKED("terminal") }, expected: { title: "Your own command", where: "Your own command on your host", setUp: "In a terminal on your host", status: "Ready. Your host found the command and can run it." } },
+    { name: "your own command, not found", host: { provider: "local-cli", available: false, reason: "the local transcription command was not found", configuredBy: "file", switchable: LOCKED("terminal") }, expected: { title: "Your own command", where: "Your own command on your host", setUp: "In a terminal on your host", status: "Not ready. Your host cannot find or run the command." } },
     { name: "a speech service", host: HOST_SERVICE, expected: { title: "A speech service", setUp: "In a terminal on your host", status: "Set up. Your host has the service's address. Collie tries the service only when you speak." } },
-    { name: "ChatGPT, signed in", host: HOST_CODEX, expected: { title: "ChatGPT subscription (OpenAI)", setUp: "In a terminal on your host", status: "Ready. Codex on your host is signed in with ChatGPT." } },
+    { name: "ChatGPT, signed in", host: HOST_CODEX, expected: { title: "ChatGPT subscription (OpenAI)", where: "Through Codex on your host", setUp: "In a terminal on your host", status: "Ready. Codex on your host is signed in with ChatGPT." } },
     { name: "a provider this build does not know", host: { ...HOST_SERVICE, provider: "future-stt", available: false, reason: "it is resting" }, expected: { title: "future-stt", setUp: "In a terminal on your host", status: "Not ready. Your host says: it is resting" } },
     { name: "Whistle named by the environment", host: { ...HOST_WHISTLE, configuredBy: "env", switchable: LOCKED("env") }, expected: { title: "Whistle by Cactus Compute", setUp: "By your host's environment", status: "Ready. Whistle ca52876 is on your host." } },
   ];
@@ -351,6 +355,93 @@ describe("the hub", () => {
   it.each(STATUS_CASES)("the card for $name says what its status rests on, never a bare Works", ({ host, expected }) => {
     render(<SpeechCards {...props({ whistle: READY, host })} />);
     expect(inUse()).toMatchObject({ where: "On your host", ...expected });
+  });
+
+  /** Altan's host: the old Whistle wrapper as his own command, with no arguments. */
+  const HOST_WRAPPER: SttHostStatus = {
+    provider: "local-cli",
+    available: true,
+    configuredBy: "file",
+    switchable: LOCKED("terminal"),
+    setup: { command: "whistle-stt" },
+  };
+
+  const NAMED_CASES: { name: string; over: Partial<SpeechCardsProps>; expected: Partial<ReturnType<typeof inUse>> }[] = [
+    {
+      name: "the old Whistle wrapper on bluefin",
+      over: { whistle: READY, host: HOST_WRAPPER, hostName: "bluefin" },
+      expected: { title: "whistle-stt", model: "", where: "Your own command on your host, bluefin", status: "Ready. Your host found the command and can run it." },
+    },
+    {
+      name: "a command with a model file",
+      over: { whistle: READY, host: { ...HOST_WRAPPER, setup: { command: "whisper-cli", model: "ggml-base.bin" } } },
+      expected: { title: "whisper-cli", model: "Model ggml-base.bin", where: "Your own command on your host" },
+    },
+    {
+      name: "a speech service with its model and host",
+      over: { whistle: READY, host: { ...HOST_SERVICE, setup: { model: "whisper-large-v3", endpoint: "api.groq.com" } } },
+      expected: { title: "whisper-large-v3", model: "", where: "A speech service at api.groq.com" },
+    },
+    {
+      name: "a speech service that names only its host",
+      over: { whistle: READY, host: { ...HOST_SERVICE, setup: { endpoint: "127.0.0.1:8080" } } },
+      expected: { title: "A speech service", where: "A speech service at 127.0.0.1:8080" },
+    },
+    {
+      name: "Whistle on the host, by its pinned version",
+      over: { ...WHISTLE_HUB, host: { ...HOST_WHISTLE, setup: { model: "ca52876" } }, hostName: "bluefin" },
+      expected: { title: "Whistle by Cactus Compute", model: "Model ca52876", where: "On your host, bluefin" },
+    },
+    {
+      name: "Whistle on this phone, by the copy's version",
+      over: { ...PHONE_HUB, local: { ...COPY, revision: "0123456789abcdef0123456789abcdef01234567" } },
+      expected: { title: "Whistle by Cactus Compute", model: "Model 0123456", where: "On this phone" },
+    },
+    {
+      name: "ChatGPT on bluefin",
+      over: { whistle: READY, host: HOST_CODEX, hostName: "bluefin" },
+      expected: { title: "ChatGPT subscription (OpenAI)", model: "", where: "Through Codex on your host, bluefin" },
+    },
+  ];
+
+  it.each(NAMED_CASES)("names what is configured: $name", ({ over, expected }) => {
+    render(<SpeechCards {...props(over)} />);
+    expect(inUse()).toMatchObject(expected);
+  });
+
+  it("a configured name is drawn in mono, as the host's settings spell it", () => {
+    render(<SpeechCards {...props({ whistle: READY, host: { ...HOST_WRAPPER, setup: { command: "whisper-cli", model: "ggml-base.bin" } } })} />);
+    expect(within(statusCard()).getByText("whisper-cli", { selector: "[data-active] *" }).className).toMatch(/font-mono/);
+    expect(within(statusCard()).getByText("ggml-base.bin").className).toMatch(/font-mono/);
+  });
+
+  it("the old Whistle wrapper: one plain line, and a button that opens Host speech", async () => {
+    const p = props({ whistle: READY, host: HOST_WRAPPER, hostName: "bluefin" });
+    render(<SpeechCards {...p} />);
+    expect(statusExtra()).toContain("This is the old Whistle wrapper. Collie now runs Whistle itself, without ffmpeg.");
+    await userEvent.click(within(statusCard()).getByRole("button", { name: "Switch to built-in Whistle" }));
+    expect(p.onOpenPage).toHaveBeenCalledWith("host");
+  });
+
+  it("no wrapper line for another command, a host that names none, or the phone in force", () => {
+    for (const host of [{ ...HOST_WRAPPER, setup: { command: "whisper-cli" } }, { ...HOST_WRAPPER, setup: undefined }]) {
+      render(<SpeechCards {...props({ whistle: READY, host })} />);
+      expect(within(statusCard()).queryByText(/old Whistle wrapper/)).toBeNull();
+      cleanup();
+    }
+    render(<SpeechCards {...props({ ...PHONE_HUB, host: HOST_WRAPPER })} />);
+    expect(statusExtra()).not.toContain("old Whistle wrapper");
+  });
+
+  it("with the wrapper, a tap between the two choices still moves no row", () => {
+    const base = props({ whistle: READY, host: HOST_WRAPPER, local: COPY, hostName: "bluefin" });
+    const { rerender } = render(<SpeechCards {...base} />);
+    const content = (el: HTMLElement) => ({ text: el.textContent, nodes: el.querySelectorAll("*").length });
+    const before = content(statusCard());
+    expect(inUse().title).toBe("whistle-stt");
+    rerender(<SpeechCards {...base} engine="phone" />);
+    expect(inUse()).toMatchObject({ title: "Whistle by Cactus Compute", model: "Model ca52876", where: "On this phone" });
+    expect(content(statusCard())).toEqual(before);
   });
 
   it("names the device and the time when the host's option was set from Settings, and the host by name in a crew", () => {
@@ -747,6 +838,26 @@ describe("Host speech", () => {
     cleanup();
     render(<SpeechCards {...host({ host: { ...HOST_WHISTLE, switchable: LOCKED("unreadable") } })} />);
     expect(screen.getByText("The speech settings file on the host cannot be read. To see why, run this on the host:")).toBeInTheDocument();
+  });
+
+  it("the option in use says what is configured, by name; an older host that names nothing says nothing", () => {
+    const configured = () => screen.queryByText((_, el) => el?.tagName === "P" && (el.textContent ?? "").startsWith("Configured: "));
+    const cases: [SttHostStatus, string | null][] = [
+      [{ ...HOST_SERVICE, provider: "local-cli", setup: { command: "whistle-stt" } }, "Configured: whistle-stt"],
+      [{ ...HOST_SERVICE, provider: "local-cli", setup: { command: "whisper-cli", model: "ggml-base.bin" } }, "Configured: whisper-cli, model ggml-base.bin"],
+      [{ ...HOST_SERVICE, setup: { model: "whisper-large-v3", endpoint: "api.groq.com" } }, "Configured: whisper-large-v3 at api.groq.com"],
+      [{ ...HOST_SERVICE, setup: { endpoint: "api.groq.com" } }, "Configured: a speech service at api.groq.com"],
+      [{ ...HOST_WHISTLE, setup: { model: "ca52876" } }, "Configured: model ca52876"],
+      [HOST_SERVICE, null],
+      [HOST_CODEX, null],
+    ];
+    for (const [h, expected] of cases) {
+      render(<SpeechCards {...host({ host: h })} />);
+      expect(configured()?.textContent ?? null).toBe(expected);
+      // In the card of the option in use, and nowhere else.
+      if (expected !== null) expect(configured()!.closest('[data-slot="card"]')).toHaveAttribute("data-selected");
+      cleanup();
+    }
   });
 
   it("ChatGPT in use: the identity, honest or the codex-cli fallback, in words", () => {

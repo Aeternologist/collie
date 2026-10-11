@@ -7,8 +7,11 @@ import {
   codexStateOf,
   hostOptionOf,
   modelChip,
+  namedSetup,
+  oldWhistleWrapper,
   phoneChoiceInForce,
   setupSteps,
+  shortVersion,
   statusFacts,
   tierOf,
   voiceStatus,
@@ -234,5 +237,63 @@ describe("guidedPlan: what one tap of Set up speech on this phone does", () => {
     expect(guidedPlan({ ...base, recording: false })).toBeNull();
     expect(guidedPlan({ ...base, local: undefined })).toBeNull();
     expect(guidedPlan({ ...base, whistle: null })).toBeNull();
+  });
+});
+
+describe("namedSetup: what the in-use card names beyond the kind", () => {
+  const LOCK = { ok: false, reason: "terminal" } as const;
+  const host = (provider: string, setup?: SttHostStatus["setup"]): SttHostStatus => {
+    const status: SttHostStatus = { provider, available: true, configuredBy: "file", switchable: { whistle: LOCK, codex: LOCK, off: LOCK } };
+    if (setup !== undefined) status.setup = setup;
+    return status;
+  };
+  const none = { name: null, model: null, endpoint: null };
+
+  it("a command names itself, and its model file when the host found one", () => {
+    expect(namedSetup("command", { host: host("local-cli", { command: "whistle-stt" }), whistle: null, local: null })).toEqual({ ...none, name: "whistle-stt" });
+    expect(namedSetup("command", { host: host("local-cli", { command: "whisper-cli", model: "ggml-base.bin" }), whistle: null, local: null })).toEqual({
+      ...none,
+      name: "whisper-cli",
+      model: "ggml-base.bin",
+    });
+  });
+
+  it("a speech service names its model as the title, and its host for the line under it", () => {
+    expect(namedSetup("service", { host: host("openai-compatible", { model: "whisper-large-v3", endpoint: "api.groq.com" }), whistle: null, local: null })).toEqual({
+      ...none,
+      name: "whisper-large-v3",
+      endpoint: "api.groq.com",
+    });
+  });
+
+  it("Whistle on the host: the host's pinned version, else the held model's; on this phone, the copy's", () => {
+    expect(namedSetup("whistle", { host: host("whistle", { model: "ca52876" }), whistle: null, local: null }).model).toBe("ca52876");
+    expect(namedSetup("whistle", { host: host("whistle"), whistle: { ...READY, revision: "0123456789" }, local: null }).model).toBe("0123456");
+    expect(namedSetup("whistle", { host: host("whistle"), whistle: null, local: null })).toEqual(none);
+    expect(namedSetup("phone", { host: null, whistle: null, local: { ...COPY, revision: "abcdef0123" } }).model).toBe("abcdef0");
+    expect(namedSetup("phone", { host: null, whistle: null, local: null })).toEqual(none);
+  });
+
+  it("ChatGPT names a model only when the host sends one; an older host, Off and an unknown provider name nothing", () => {
+    expect(namedSetup("chatgpt", { host: host("codex"), whistle: null, local: null })).toEqual(none);
+    expect(namedSetup("chatgpt", { host: host("codex", { model: "gpt-transcribe" }), whistle: null, local: null }).model).toBe("gpt-transcribe");
+    expect(namedSetup("command", { host: host("local-cli"), whistle: null, local: null })).toEqual(none);
+    expect(namedSetup("service", { host: null, whistle: null, local: null })).toEqual(none);
+    expect(namedSetup("off", { host: host("none", { command: "x" }), whistle: null, local: null })).toEqual(none);
+    expect(namedSetup("other", { host: host("future", { command: "x" }), whistle: null, local: null })).toEqual(none);
+  });
+
+  it("the old Whistle wrapper is a local-cli command named whistle-stt, and nothing else", () => {
+    expect(oldWhistleWrapper(host("local-cli", { command: "whistle-stt" }))).toBe(true);
+    expect(oldWhistleWrapper(host("local-cli", { command: "whisper-cli" }))).toBe(false);
+    expect(oldWhistleWrapper(host("local-cli"))).toBe(false);
+    expect(oldWhistleWrapper(host("whistle", { command: "whistle-stt" }))).toBe(false);
+    expect(oldWhistleWrapper(null)).toBe(false);
+  });
+
+  it("shortVersion: seven characters of the revision, else of the hash", () => {
+    expect(shortVersion("ca5287601bef", undefined)).toBe("ca52876");
+    expect(shortVersion(undefined, "b6e02f048568")).toBe("b6e02f0");
+    expect(shortVersion(undefined, undefined)).toBe("");
   });
 });

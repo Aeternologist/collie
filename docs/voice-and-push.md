@@ -136,9 +136,13 @@ write access can set this up." and cannot start the download.
 
 **Settings → Voice** is one page with two pages below it:
 
-- **Voice** puts what is in use first. The top card is titled with the engine itself, for example
-  **Whistle by Cactus Compute** with **On this phone** under it, or **ChatGPT subscription (OpenAI)**
-  with **On your host**. Then the status, which says what it rests on, for example "Ready. Whistle
+- **Voice** puts what is in use first. The top card is titled with what is configured: the
+  command your host runs, such as `whisper-cli` with **Model ggml-base.bin** and **Your own command
+  on your host** under it; a speech service's model, such as `whisper-large-v3` with **A speech
+  service at api.groq.com**; **Whistle by Cactus Compute** with **Model ca52876** and **On this
+  phone** or **On your host**; or **ChatGPT subscription (OpenAI)** with **Through Codex on your
+  host**. If the command is the old `whistle-stt` wrapper, the card says so and offers **Switch to
+  built-in Whistle**, which opens Host speech. Then the status, which says what it rests on, for example "Ready. Whistle
   ca52876 is on this phone." or "Not ready. Codex is signed out on your host.", where the **Audio**
   goes, and how it was **Set up** (from Settings by which device and when, or in a terminal on the
   host). Under the card is the hands-free switch. Everything else sits behind one row, **Change how
@@ -157,7 +161,8 @@ write access can set this up." and cannot start the download.
   audio further than the one it replaces asks first; a step back is sent on the tap. Every option
   has **How to set up**: numbered steps, the commands to copy, and the app's own buttons where the
   app may act. The step to take next is marked **Next**. It is open by itself only for the option in
-  use when it does not work.
+  use when it does not work. The option in use also says what is configured, for example
+  "Configured: whisper-cli, model ggml-base.bin".
 - **Whistle model** names the maker, Cactus Compute, the licence, and links to the model page on
   Hugging Face. It shows the copy on the host and the copy on this phone, each with its own state.
 

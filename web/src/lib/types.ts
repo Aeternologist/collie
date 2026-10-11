@@ -1859,6 +1859,19 @@ export interface SttHostSwitch {
 export type SttHostChoice = "whistle" | "codex" | "off";
 
 /**
+ * What the host's speech settings name, by name only. Never a path, an argument other than one model
+ * file's name, a key, or a URL's path. Mirrors `SttHostSetup` in bridge/types.ts.
+ */
+export interface SttHostSetup {
+  /** `local-cli`: the command's basename (`whistle-stt`, `whisper-cli`). */
+  command?: string;
+  /** `local-cli`: a model file's name. `openai-compatible`: the model. `whistle`: the pinned version, seven characters. */
+  model?: string;
+  /** `openai-compatible`: the service's host, with its port when it has one (`api.groq.com`). */
+  endpoint?: string;
+}
+
+/**
  * The host's speech provider, as `GET /api/stt/host` and `PUT /api/stt/host` report it (ADR 0097).
  * Mirrors `SttHostStatus` in bridge/types.ts.
  */
@@ -1879,6 +1892,8 @@ export interface SttHostStatus {
   changedBy?: string;
   /** When that device changed it, an ISO 8601 time. Present exactly when `changedBy` is. */
   changedAt?: string;
+  /** What the settings name: the command, the model, the service's host. Absent on an older host, or when they name nothing. */
+  setup?: SttHostSetup;
 }
 
 /**

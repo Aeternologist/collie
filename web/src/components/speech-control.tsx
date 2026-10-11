@@ -97,10 +97,13 @@ import {
   hostNotReady,
   hostOptionOf,
   modelChip,
+  namedSetup,
+  oldWhistleWrapper,
   optionOfChoice,
   phoneChoiceInForce,
   reachOf,
   setupSteps,
+  shortVersion,
   statusFacts,
   tierOf,
   voiceStatus,
@@ -109,8 +112,8 @@ import {
   type HostLock,
   type HostOption,
   type ModelChip,
+  type NamedSetup,
   type Readiness,
-  type RunsOnFact,
   type SetUpFact,
   type SetupStep,
   type StatusFacts,
@@ -323,10 +326,23 @@ function SentenceWithLink({ message, link }: { message: MessageKey; link: ReactN
   );
 }
 
-/** The first seven characters of a revision, or of the hash when the copy names no revision. */
-function shortVersion(revision: string | undefined, sha256: string | undefined): string {
-  if (revision !== undefined) return revision.slice(0, 7);
-  return sha256 === undefined ? "" : sha256.slice(0, 7);
+/** A name the host's settings give (a command, a model, a host name), as the terminal spells it. */
+function Mono({ children }: { children: string }) {
+  return <span className="font-mono break-all">{children}</span>;
+}
+
+/**
+ * A sentence with names in it, each drawn as a node. The message carries `{slot}` where each goes,
+ * so a language that orders them differently still reads right.
+ */
+function SentenceWith({ message, values }: { message: MessageKey; values: Record<string, ReactNode> }) {
+  const marks = Object.fromEntries(Object.keys(values).map((key) => [key, `{${key}}`]));
+  const parts = t(message, marks).split(/\{(\w+)\}/);
+  return (
+    <>
+      {parts.map((part, i) => (i % 2 === 0 ? part : <span key={i}>{values[part] ?? part}</span>))}
+    </>
+  );
 }
 
 /** The model's version: the first seven characters of the Hugging Face revision, linked to that revision. */
@@ -486,10 +502,16 @@ function notReadyDetail(readiness: Readiness, props: Pick<SpeechCardsProps, "hos
 }
 
 /**
- * The card's title: the engine itself, by name, with its maker where the name alone would not say
- * who made it. Nothing set up is said as such. A provider this build does not know is shown as the
- * host sent it.
+ * The card's title: what is configured, by name. A command or a speech service's model is the title
+ * itself, in mono, as the host's settings spell it; otherwise the engine by name, with its maker
+ * where the name alone would not say who made it. Nothing set up is said as such. A provider this
+ * build does not know is shown as the host sent it.
  */
+function titleNode(engine: EngineFact, named: NamedSetup, props: SpeechCardsProps): ReactNode {
+  if (named.name !== null) return <Mono>{named.name}</Mono>;
+  return titleWords(engine, props);
+}
+
 function titleWords(engine: EngineFact, props: SpeechCardsProps): string {
   switch (engine) {
     case "phone":
@@ -507,12 +529,48 @@ function titleWords(engine: EngineFact, props: SpeechCardsProps): string {
   }
 }
 
-/** The line under the title: where the engine runs. Nothing when no engine runs. */
-function whereWords(runsOn: RunsOnFact, hostName: string | null | undefined): string | null {
-  if (runsOn === "phone") return t("settings.speech.phone.heading");
-  if (runsOn === "nothing") return null;
-  return hostName ? t("settings.voice.inUse.hostNamed", { name: hostName }) : t("settings.speech.host.heading");
+/** The line under the title: what kind of setup it is and where it runs. Nothing when no engine runs. */
+function whereWords(facts: StatusFacts, named: NamedSetup, hostName: string | null | undefined): string | null {
+  if (facts.runsOn === "phone") return t("settings.speech.phone.heading");
+  if (facts.runsOn === "nothing") return null;
+  const name = hostName ? { name: hostName } : null;
+  switch (facts.engine) {
+    case "command":
+      return name ? t("settings.voice.inUse.commandHostNamed", name) : t("settings.voice.inUse.commandHost");
+    case "service":
+      if (named.endpoint !== null) return t("settings.voice.inUse.serviceAt", { endpoint: named.endpoint });
+      break;
+    case "chatgpt":
+      return name ? t("settings.voice.inUse.codexHostNamed", name) : t("settings.voice.inUse.codexHost");
+    default:
+      break;
+  }
+  return name ? t("settings.voice.inUse.hostNamed", name) : t("settings.speech.host.heading");
 }
+
+/** "Model ggml-base.bin", the line under the title, or nothing when no model is named. */
+function ModelLine({ model }: { model: string | null }) {
+  if (model === null) return null;
+  return <SentenceWith message="settings.voice.inUse.model" values={{ model: <Mono>{model}</Mono> }} />;
+}
+
+/**
+ * The old Whistle wrapper as the host's own command: one plain line, and a way to Host speech, whose
+ * lock note gives `collie stt off`, then Whistle. The lock itself stands (ADR 0097).
+ */
+function WrapperNote({ onOpenPage }: Pick<SpeechCardsProps, "onOpenPage">) {
+  return (
+    <div className="space-y-0.5">
+      <p className="text-xs text-muted-foreground">{t("settings.voice.wrapper.note")}</p>
+      <Button variant="link" className="h-11 px-0 text-xs" onClick={() => onOpenPage("host")}>
+        {t("settings.voice.wrapper.switch")}
+      </Button>
+    </div>
+  );
+}
+
+/** Whether a view of the card names the old Whistle wrapper. */
+const viewsWrapper = (view: StatusView, props: SpeechCardsProps): boolean => view.lead.engine === "command" && oldWhistleWrapper(props.host);
 
 function setUpWords(setUp: SetUpFact): string {
   switch (setUp.kind) {
@@ -550,6 +608,8 @@ interface StatusView {
   lead: StatusFacts;
   /** What "Set up speech on this phone" would do from this view, or `null` when it is not offered. */
   plan: GuidedPlan | null;
+  /** What the lead engine's setup names: a command, a model, a service's host. */
+  named: NamedSetup;
 }
 
 /** Whether a view of the card carries an action: Restore, Fix, or "Set up speech on this phone". */
@@ -660,7 +720,9 @@ function InUseCard({ views, active, props }: { views: readonly StatusView[]; act
   const slot = (key: string, render: (view: StatusView) => ReactNode) => (
     <OneOf key={key} active={active} options={views.map((view) => ({ key: view.key, node: render(view) }))} />
   );
-  const anyWhere = views.some((view) => whereWords(view.lead.runsOn, props.hostName) !== null);
+  const anyWhere = views.some((view) => whereWords(view.lead, view.named, props.hostName) !== null);
+  const anyModel = views.some((view) => view.named.model !== null);
+  const anyWrapper = views.some((view) => viewsWrapper(view, props));
   const anySetUp = views.some((view) => view.facts.setUp.kind !== "none");
   const anyNote = views.some((view) => statusNote(view.status, props) !== null);
   const anyAction = views.some(hasAction);
@@ -676,9 +738,18 @@ function InUseCard({ views, active, props }: { views: readonly StatusView[]; act
         <div className="space-y-1">
           <SectionLabel>{t("settings.voice.status.label")}</SectionLabel>
           <div role="heading" aria-level={2} className="text-base leading-snug font-semibold break-words">
-            {slot("title", (view) => titleWords(view.lead.engine, props))}
+            {slot("title", (view) => titleNode(view.lead.engine, view.named, props))}
           </div>
-          {anyWhere && <div className="text-sm text-muted-foreground">{slot("where", (view) => whereWords(view.lead.runsOn, props.hostName))}</div>}
+          {anyModel && (
+            <div data-line="model" className="text-sm break-words">
+              {slot("model", (view) => <ModelLine model={view.named.model} />)}
+            </div>
+          )}
+          {anyWhere && (
+            <div data-line="where" className="text-sm text-muted-foreground">
+              {slot("where", (view) => whereWords(view.lead, view.named, props.hostName))}
+            </div>
+          )}
         </div>
         {slot("status", (view) => <StateLine state={view.status.state}>{readinessWords(view.facts.readiness, props)}</StateLine>)}
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-xs leading-relaxed">
@@ -694,6 +765,7 @@ function InUseCard({ views, active, props }: { views: readonly StatusView[]; act
             )}
         </dl>
         {anyNote && slot("note", (view) => <p className="text-xs text-muted-foreground">{statusNote(view.status, props)}</p>)}
+        {anyWrapper && slot("wrapper", (view) => (viewsWrapper(view, props) ? <WrapperNote onOpenPage={props.onOpenPage} /> : null))}
         {anyAction && slot("action", (view) => <StatusAction view={view} props={props} />)}
       </section>
     </Card>
@@ -1097,7 +1169,8 @@ function VoiceHub(props: WithAbout) {
       const facts = statusFacts(status, factsInput);
       const lead = props.recording ? facts : statusFacts(voiceStatus({ ...input, engine: choice, recording: true }), factsInput);
       const plan = guidedPlan({ status, block: props.block, recording: props.recording, whistle: props.whistle, local: props.local, canWrite: props.canWrite });
-      return { key: choice, status, facts, lead, plan };
+      const named = namedSetup(lead.engine, { host: props.host, whistle: props.whistle, local: props.local });
+      return { key: choice, status, facts, lead, plan, named };
     });
   const works = views.find((view) => view.key === inForce)?.status.state === "works";
   const settled = props.hostRead && props.local !== undefined;
@@ -1278,6 +1351,16 @@ function OptionState(props: RowProps) {
       </div>,
     );
   }
+  if (inUse && option !== "off") {
+    const configured = configuredLine(option, host);
+    if (configured !== null) {
+      parts.push(
+        <p key="configured" className="text-xs text-muted-foreground">
+          {configured}
+        </p>,
+      );
+    }
+  }
   if (inUse && option === "chatgpt" && host?.identity !== undefined) {
     parts.push(
       <p key="identity" className="text-xs text-muted-foreground">
@@ -1308,6 +1391,32 @@ function OptionState(props: RowProps) {
   }
   if (parts.length === 0) return null;
   return <div className="space-y-2">{parts}</div>;
+}
+
+/**
+ * "Configured: whistle-stt, model ggml-base.bin": the option in use, by the names the host's settings
+ * give, on Host speech. `null` when the host named nothing (an older host, or nothing to name).
+ */
+function configuredLine(option: HostOption, host: SttHostStatus | null): ReactNode {
+  const setup = host?.setup;
+  if (setup === undefined) return null;
+  const { command, model, endpoint } = setup;
+  if (option === "command" && command !== undefined) {
+    return model === undefined ? (
+      <SentenceWith message="settings.voice.configured.command" values={{ command: <Mono>{command}</Mono> }} />
+    ) : (
+      <SentenceWith message="settings.voice.configured.commandModel" values={{ command: <Mono>{command}</Mono>, model: <Mono>{model}</Mono> }} />
+    );
+  }
+  if (option === "service" && endpoint !== undefined) {
+    return model === undefined ? (
+      <SentenceWith message="settings.voice.configured.endpoint" values={{ endpoint: <Mono>{endpoint}</Mono> }} />
+    ) : (
+      <SentenceWith message="settings.voice.configured.service" values={{ model: <Mono>{model}</Mono>, endpoint: <Mono>{endpoint}</Mono> }} />
+    );
+  }
+  if (model !== undefined) return <SentenceWith message="settings.voice.configured.model" values={{ model: <Mono>{model}</Mono> }} />;
+  return null;
 }
 
 /** The model's download, as a step's body: its bar while it runs, its failure, or the button. */
