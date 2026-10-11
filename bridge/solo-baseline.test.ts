@@ -634,6 +634,9 @@ describe("solo zero-tax — routes", () => {
       // One picture under the Files root, as its bytes (ADR 0090): the Files read's checks and gate,
       // the type read off the bytes, forwarded to the owning member like `files`.
       "/^\\/api\\/pane\\/([^/]+)\\/files\\/image$/",
+      // The Whistle model as bytes (ADR 0096 Decision 9): a content-addressed READ, the hash compared
+      // with the held file's and never made into a path. Lead-local, not forwardable.
+      "/^\\/api\\/stt\\/model\\/([^/]+)$/",
       "/^\\/api\\/tab\\/([^/]+)\\/(rename|close)$/",
       // The Changes view asked by workspace (ADR 0065): the same read as the pane route's `changes`,
       // read-gated and forwarded with `?host=` to the member that owns the space.
@@ -731,6 +734,12 @@ describe("solo zero-tax — routes", () => {
       // here rather than exempted, exactly as device pairing is. It is off until an operator
       // configures a provider, and it registers no crew route.
       "/api/stt",
+      // The Whistle model and the host engine's switch (ADR 0096): SOLO routes that legitimately
+      // extend this list, named here rather than exempted. Lead-local like `/api/stt`, gated like it,
+      // and none is forwardable. A bridge whose operator never taps "Set up Whistle" downloads nothing
+      // and writes nothing through them.
+      "/api/stt/whistle",
+      "/api/stt/whistle/host",
       "/api/subscribe",
       "/api/tab",
       // Starting an update from the phone (M15/05) — a SOLO route that legitimately extends this
@@ -1012,8 +1021,13 @@ const STATE_DIR_ENTRIES = [
   "pairing-pending.json",
   "push-subscriptions.json",
   "snooze.json",
-  // Speech-to-text settings. Absent until the operator runs `collie stt setup`, and READ ONLY by
-  // the bridge — `bridge/stt/config.ts` names this path and never writes it.
+  // The Whistle model's folder, `stt/whistle/` (ADR 0096): the model, its manifest and a download's
+  // part file. Absent until a write device taps "Set up Whistle" or the operator runs
+  // `collie stt whistle`; nothing else creates it.
+  "stt",
+  // Speech-to-text settings. Absent until the operator runs `collie stt setup`. The bridge writes it
+  // in one case only: the Whistle host engine's switch in Settings, which writes `{ "provider":
+  // "whistle" }` when no other provider is set, and removes it again (bridge/stt/whistle-http.ts).
   "stt.json",
   // The detached updater's own stdout and stderr (#283), with the run before it kept beside it as
   // `update-runner.log.1`. Absent until the first update started from the phone: the bridge opens it

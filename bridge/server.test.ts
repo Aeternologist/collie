@@ -52,6 +52,8 @@ import {
   resolveStaticPath,
   sendReplySteps,
   serveStatic,
+  STT_WORKER_CSP,
+  isSttWorkerScript,
   staticGzipStats,
   startupWarnings,
   healthBody,
@@ -99,7 +101,7 @@ import {
   type MuxTabRequest,
 } from "./mux/types.ts";
 import { muxCaps, neverProxy } from "./crew/fixtures.ts";
-import { forwardHeaders } from "./crew/forward.ts";
+import { crewRouteFor, forwardHeaders } from "./crew/forward.ts";
 import { crewDeviceOf, crewGate } from "./crew/peer-gate.ts";
 import { CrewLead } from "./crew/lead.ts";
 import { NARROW_PLAN, snapshotPlan } from "./crew/merge.ts";
@@ -2102,6 +2104,84 @@ describe("serveStatic — a text file ships gzipped", () => {
   });
 });
 
+// ADR 0096 Decision 8: the speech worker and the engine glue run under a policy of their own, and
+// that policy is the only one that lets wasm compile. The document's never does.
+describe("serveStatic — the speech worker's own policy", () => {
+  async function sttTree(): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), "collie-static-stt-"));
+    await mkdir(join(dir, "assets"), { recursive: true });
+    await mkdir(join(dir, "stt", "needle-3-test"), { recursive: true });
+    await writeFile(join(dir, "index.html"), "<!doctype html><p>shell</p>");
+    await writeFile(join(dir, "assets", "index-abc.js"), "export {};");
+    await writeFile(join(dir, "stt", "worker-abc123.js"), "self.onmessage = () => {};");
+    await writeFile(join(dir, "stt", "needle-3-test", "needle.js"), "var createNeedle = 1;");
+    await Bun.write(join(dir, "stt", "needle-3-test", "needle.wasm"), new Uint8Array([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]));
+    return dir;
+  }
+
+  test("the policy is exactly the ADR's", () => {
+    expect(STT_WORKER_CSP).toBe("default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; base-uri 'none'");
+  });
+
+  test("every .js under stt/ carries it, at the root and under a mount", async () => {
+    resetStaticGzipCache();
+    const dir = await sttTree();
+    for (const base of ["/", "/collie/"]) {
+      for (const path of ["/stt/worker-abc123.js", "/stt/needle-3-test/needle.js"]) {
+        const res = await serveStatic(path, null, dir, base);
+        expect(res.status).toBe(200);
+        expect(res.headers.get("content-security-policy")).toBe(STT_WORKER_CSP);
+        expect(res.headers.get("content-type")).toBe("text/javascript; charset=utf-8");
+        expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+      }
+    }
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("an app bundle and the shell do not, and the shell's policy never grants wasm", async () => {
+    resetStaticGzipCache();
+    const dir = await sttTree();
+    const asset = await serveStatic("/assets/index-abc.js", null, dir);
+    expect(asset.headers.get("content-security-policy")).toBeNull();
+    for (const base of ["/", "/collie/"]) {
+      const shell = await serveStatic("/", null, dir, base);
+      const policy = shell.headers.get("content-security-policy") ?? "";
+      expect(policy).toContain("script-src 'self'");
+      expect(policy).not.toContain("wasm-unsafe-eval");
+      expect(policy).not.toBe(STT_WORKER_CSP);
+    }
+    // The SPA fallback under stt/ is the shell, with the shell's policy: an extension-less path.
+    const fallback = await serveStatic("/stt/nothing", null, dir);
+    expect(fallback.headers.get("content-security-policy")).not.toContain("wasm-unsafe-eval");
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("the wasm is application/wasm with nosniff, revalidated, and gzipped when asked", async () => {
+    resetStaticGzipCache();
+    const dir = await sttTree();
+    const raw = await serveStatic("/stt/needle-3-test/needle.wasm", null, dir);
+    expect(raw.headers.get("content-type")).toBe("application/wasm");
+    expect(raw.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(raw.headers.get("cache-control")).toBe("no-cache");
+    expect(raw.headers.get("content-security-policy")).toBeNull();
+    // Past the gzip floor, so the compressed path is the one taken.
+    await Bun.write(join(dir, "stt", "needle-3-test", "needle.wasm"), new Uint8Array(4096));
+    const gz = await serveStatic("/stt/needle-3-test/needle.wasm", "gzip", dir);
+    expect(gz.headers.get("content-encoding")).toBe("gzip");
+    expect(Bun.gunzipSync(new Uint8Array(await gz.arrayBuffer())).byteLength).toBe(4096);
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("isSttWorkerScript reads the mount-stripped relative path", () => {
+    expect(isSttWorkerScript("stt/worker-a.js")).toBe(true);
+    expect(isSttWorkerScript("stt/needle-3-x/needle.js")).toBe(true);
+    expect(isSttWorkerScript("stt/needle-3-x/needle.wasm")).toBe(false);
+    expect(isSttWorkerScript("assets/stt/worker.js")).toBe(false);
+    expect(isSttWorkerScript("sttx/worker.js")).toBe(false);
+    expect(isSttWorkerScript("index.html")).toBe(false);
+  });
+});
+
 describe("stripMount — a proxy that forwards the mount instead of stripping it", () => {
   test("takes the mount off a path that carries it, and only then", () => {
     expect(stripMount("/collie/api/health", "/collie/")).toBe("/api/health");
@@ -2280,6 +2360,68 @@ describe("bridgeConfigBody — the masking switch is reported, and omitted when 
       "build",
       "redact",
     ]);
+  });
+});
+
+// ADR 0096: the Whistle block rides `/api/config` right after `stt`, and is absent on a peer's own
+// answer. The routes are lead-local and gated like `/api/stt`; the handler lives inside Bun.serve, so
+// the gate levels and the crew wiring are asserted on the source and through the pure pieces.
+describe("the Whistle routes and the /api/config block", () => {
+  const base = { push: true, vapidPublicKey: "BKey", build: "abc123", mode: "solo" } as const;
+  const whistle = { state: "absent", bytes: 16919407, hostEngine: false, hostTaken: false } as const;
+  const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+  const block = (start: string): string => {
+    const at = src.indexOf(start);
+    expect(at).toBeGreaterThan(0);
+    return src.slice(at, src.indexOf("\n      }\n", at));
+  };
+
+  test("the block is carried right after stt, and absent means no key", () => {
+    const stt = { provider: "whistle", available: true, input: "wav-16k", maxDurationMs: 240000 } as const;
+    expect(Object.keys(bridgeConfigBody({ ...base, stt, whistle, redact: true }))).toEqual([
+      "push",
+      "vapidPublicKey",
+      "build",
+      "stt",
+      "whistle",
+      "redact",
+    ]);
+    expect(bridgeConfigBody({ ...base, whistle }).whistle).toEqual(whistle);
+    expect("whistle" in bridgeConfigBody({ ...base })).toBe(false);
+  });
+
+  test("the config handler leaves it out on a peer's own answer, and carries the lead's under ?host=", () => {
+    const handler = block('if (pathname === "/api/config") {');
+    expect(handler).toContain('const whistleWire = crew.mode === "peer" ? undefined : await whistleStatus(whistleDeps);');
+    expect(handler).toContain("whistle: whistleWire,");
+  });
+
+  test("reads need the pairing token, writes take the /api/stt write gate", () => {
+    const status = block('if (pathname === "/api/stt/whistle") {');
+    expect(status).toContain('const denied = guard(req, cfg, "read", pairingGate);');
+    expect(status).toContain('const denied = guard(req, cfg, "write", pairingGate);');
+    // The read answers before the write gate is reached, and nothing but GET is let through it.
+    expect(status.indexOf('if (req.method === "GET")')).toBeLessThan(status.indexOf('"write"'));
+    expect(block('if (pathname === "/api/stt/whistle/host" && req.method === "PUT")')).toContain('guard(req, cfg, "write", pairingGate)');
+    expect(block("const sttModelMatch = pathname.match(STT_MODEL_ROUTE);")).toContain('guard(req, cfg, "read", pairingGate)');
+    expect(block('if (pathname === "/api/stt" && req.method === "POST")')).toContain('guard(req, cfg, "write", pairingGate)');
+  });
+
+  test("every write and every model copy is audited; the status poll is not", () => {
+    for (const action of ["stt.whistle.download", "stt.whistle.remove", "stt.whistle.host", "stt.model.read"]) {
+      expect(src).toContain(action);
+    }
+  });
+
+  test("none of them is forwarded to a crew member, and none reads ?host=", () => {
+    for (const path of ["/api/stt/whistle", "/api/stt/whistle/host", `/api/stt/model/${"a".repeat(64)}`, "/api/stt"]) {
+      expect(crewRouteFor(path)).toBeNull();
+    }
+    for (const start of ['if (pathname === "/api/stt/whistle") {', 'if (pathname === "/api/stt/whistle/host" && req.method === "PUT")', "const sttModelMatch = pathname.match(STT_MODEL_ROUTE);"]) {
+      const handler = block(start);
+      expect(handler).not.toContain("target(");
+      expect(handler).not.toMatch(/\bhost\b(?!["/ ])|crewLead|searchParams/);
+    }
   });
 });
 

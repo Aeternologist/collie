@@ -1297,6 +1297,11 @@ export const de: Dictionary = {
   "apiError.stt.unreadable": "Aufnahme konnte nicht gelesen werden.",
   "apiError.stt.empty": "Aufnahme enthält keine Audiodaten.",
   "apiError.stt.provider_failed": "Transkription fehlgeschlagen: {reason}",
+  "apiError.stt.wav_required": "Die Spracherkennung auf dem Host braucht eine WAV-Aufnahme.",
+  "apiError.stt.model_unknown": "Dein Host hat dieses Sprachmodell nicht mehr.",
+  "apiError.stt.whistle_provider_taken": "Auf dem Host ist schon ein anderer Sprachdienst eingerichtet.",
+  "apiError.stt.whistle_not_ready": "Richte Whistle zuerst auf dem Host ein.",
+  "apiError.stt.whistle_download_failed": "Whistle konnte nicht heruntergeladen werden: {reason}",
   "apiError.pairing.bad_request":
     "Code oder Name ungültig. Namen müssen 1 bis 48 Zeichen lang sein.",
   "apiError.pairing.no_pending": "Kein ausstehender Kopplungscode auf dem Host vorhanden.",

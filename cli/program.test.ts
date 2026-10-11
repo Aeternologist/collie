@@ -36,6 +36,9 @@ const SHELL_VERBS = [
   // the same kind of verb — plumbing another Collie spells, never an operator — and `crew add` runs
   // it on the member it has just installed (cli/mux-probe.ts).
   "_mux-probe",
+  // `_whistle-transcribe` has no shell ancestor either: the bridge's whistle provider spawns it
+  // (ADR 0096). Dispatched from cli/main.ts's bootstrap.
+  "_whistle-transcribe",
   "_exec-bridge",
   // The Windows launcher has no shell ancestor: it is the Task Scheduler half of what the community
   // Windows script did, and it sits beside the process it launches (M43 spec 05).
@@ -120,6 +123,7 @@ describe("the verb table", () => {
     expect(COMMANDS.filter((c) => c.internal === true).map((c) => c.name)).toEqual([
       "_apply-update",
       "_mux-probe",
+      "_whistle-transcribe",
       "_exec-bridge",
       "_supervise",
       // The emitter is spelled by a hook, never typed — see cli/beacon.ts.
@@ -465,6 +469,8 @@ describe("exit codes", () => {
       // It probes THIS machine's multiplexers — `tmux list-sessions` and `zellij list-sessions`
       // against the developer's own servers. cli/mux.test.ts drives it against fakes.
       "_mux-probe",
+      // It loads a speech engine and a 17 MB model. cli/whistle-transcribe.test.ts drives it.
+      "_whistle-transcribe",
       "_exec-bridge",
       // The Windows launcher writes a record into the config dir and runs a bridge until one exits 0.
       // cli/task-scheduler.test.ts drives its loop against fakes.

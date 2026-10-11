@@ -113,6 +113,13 @@ export const API_ERROR_CODES = [
   "stt.unreadable",
   "stt.empty",
   "stt.provider_failed",
+  "stt.wav_required",
+
+  // The Whistle model and the host engine — /api/stt/whistle, /api/stt/model/:sha256 (ADR 0096)
+  "stt.model_unknown",
+  "stt.whistle_provider_taken",
+  "stt.whistle_not_ready",
+  "stt.whistle_download_failed",
 
   // The prompt-cache watch list — /api/notifications/cache-watch (ADR 0042)
   "cache.pane_unknown",

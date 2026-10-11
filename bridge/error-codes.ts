@@ -217,6 +217,18 @@ export const ERROR_CODES = {
   "stt.empty": "the recording is empty",
   /** The provider itself failed. `detail.kind` is the SttError kind; the sentence is its own words. */
   "stt.provider_failed": "{reason}",
+  /** The whistle provider takes 16 kHz mono 16-bit PCM WAV only, and the upload was not that (415). */
+  "stt.wav_required": "the speech engine on this collie takes a 16 kHz mono 16-bit WAV recording only",
+
+  // ── The Whistle model and the host engine: /api/stt/whistle, /api/stt/model/:sha256 (ADR 0096) ──
+  /** The hash in the path is not the hash of the model this collie holds, or it holds none (404). */
+  "stt.model_unknown": "this collie holds no speech model with that hash",
+  /** Settings may not replace a provider the operator set up in the terminal (409). Nothing changed. */
+  "stt.whistle_provider_taken": "another speech-to-text provider is set up on this collie; change it with `collie stt`",
+  /** The host engine needs the model first (409). Nothing changed. */
+  "stt.whistle_not_ready": "the Whistle model is not on this collie yet",
+  /** The download could not even start (the folder could not be made, a symlink was in the way). */
+  "stt.whistle_download_failed": "the Whistle model could not be downloaded: {reason}",
 
   // ── Device pairing: POST /api/pair, POST /api/devices/revoke ───────────────────────
   //

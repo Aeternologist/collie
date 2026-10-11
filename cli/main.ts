@@ -28,14 +28,17 @@ import { cmdApplyUpdate } from "./update.ts";
 // of this file — commander have always been reached.
 //
 // The verb table, the parser and everything else live in `cli/program.ts`, one dynamic `import()`
-// away. The two verbs above are dispatched here instead, before it, by plain argv inspection.
+// away. The two verbs above are dispatched here instead, before it, by plain argv inspection. So is
+// a third, `_whistle-transcribe`, for a different reason: the bridge spawns it once per dictation
+// (bridge/stt/whistle.ts), and the verb table is weight a speech engine's child has no use for. Its
+// module is reached by a dynamic `import()` too, so it adds nothing to this file's import closure.
 
 /**
  * The verbs that must work with no dependencies installed, dispatched from this module rather than
  * from the table in `cli/program.ts`. They are still declared in that table — it is the single
  * declaration, and the usage line is built from it — but this is the path they actually take.
  */
-export const BOOTSTRAP_VERBS = ["build", "_apply-update"] as const;
+export const BOOTSTRAP_VERBS = ["build", "_apply-update", "_whistle-transcribe"] as const;
 
 /**
  * The verb an argv names, for the pre-dispatch. `--plain` is stripped first, exactly as
@@ -69,6 +72,10 @@ export async function main(argv: readonly string[], io: Io, isTTY = false): Prom
       // with `--to` it is the detached runner that flips, restarts and verifies — and a bootstrap
       // dispatch that dropped the flags would silently run the other one.
       return await cmdApplyUpdate(updateDeps(io), argv.slice(1));
+    case "_whistle-transcribe": {
+      const { cmdWhistleTranscribe } = await import("./whistle-transcribe.ts");
+      return await cmdWhistleTranscribe(takePlainFlag(argv).rest.slice(1), { io, env: process.env });
+    }
   }
   let program: typeof import("./program.ts");
   try {

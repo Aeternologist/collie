@@ -112,6 +112,7 @@ describe("the pre-dispatch", () => {
     expect(bootstrapVerb(["--plain", "build"])).toBe("build");
     expect(bootstrapVerb(["build", "--plain"])).toBe("build");
     expect(bootstrapVerb(["_apply-update"])).toBe("_apply-update");
+    expect(bootstrapVerb(["_whistle-transcribe", "/tmp/x/recording.wav"])).toBe("_whistle-transcribe");
   });
 
   // #392: a help request is not a build and not an update half, so it goes to the table's guard.

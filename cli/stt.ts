@@ -11,6 +11,7 @@ import {
   STT_FILENAME,
   STT_PROVIDERS,
   sttEnvSettings,
+  writeSttSettingsFile,
   type CodexSttSettings,
   MAX_LOCAL_CLI_ARGS,
   type SttProviderName,
@@ -173,14 +174,11 @@ export async function cmdSttSetup(deps: SttDeps, args: readonly string[]): Promi
   // Written through a temporary name in the same directory and renamed into place: a `setup` that
   // died mid-write must leave the previous configuration intact, never a half-file the bridge would
   // then read as "the operator turned this off".
+  // `writeSttSettingsFile` is the one writer: 0600, through a temporary name renamed into place.
   const path = settingsPath(deps);
-  const temporary = `${path}.tmp`;
   try {
-    deps.files.mkdirp(deps.ctx.stateDir, 0o700);
-    deps.files.write(temporary, `${JSON.stringify(document, null, 2)}\n`, 0o600);
-    deps.files.rename(temporary, path);
+    writeSttSettingsFile(deps.ctx.stateDir, document, deps.files);
   } catch (err) {
-    deps.files.remove(temporary);
     deps.io.err(`error: could not write ${path} — ${err instanceof Error ? err.message : String(err)}`);
     return EXIT.FAIL;
   }
@@ -192,16 +190,24 @@ export async function cmdSttSetup(deps: SttDeps, args: readonly string[]): Promi
   return EXIT.OK;
 }
 
+/** The providers `setup` asks about. Whistle is not one: it has no question, see {@link chooseProvider}. */
+const SETUP_PROVIDERS = STT_PROVIDERS.filter((p): p is Exclude<SttProviderName, "whistle"> => p !== "whistle");
+
 /** Which provider, from the flag or from the operator. `null` when there is no usable answer. */
 async function chooseProvider(
   deps: SttDeps,
   flag: string | undefined,
-): Promise<SttProviderName | null> {
+): Promise<Exclude<SttProviderName, "whistle"> | null> {
   const named = flag ?? (await askProvider(deps));
   if (named === null) return null;
-  const known = STT_PROVIDERS.find((p) => p === named);
+  // Whistle has nothing to ask and is set up by its own verb, which also fetches the model.
+  if (named === "whistle") {
+    deps.io.err("error: Whistle is set up with `collie stt whistle --host`, or from Settings → Speech. Nothing was written.");
+    return null;
+  }
+  const known = SETUP_PROVIDERS.find((p) => p === named);
   if (known === undefined) {
-    deps.io.err(`error: unknown provider \`${named}\` — expected ${STT_PROVIDERS.join(" or ")}.`);
+    deps.io.err(`error: unknown provider \`${named}\` — expected ${SETUP_PROVIDERS.join(" or ")}.`);
     for (const line of SETUP_USAGE) deps.io.err(line);
     return null;
   }
@@ -615,7 +621,7 @@ export async function cmdSttTest(deps: SttDeps): Promise<number> {
   const settings = loadSettings(deps);
   if (settings === null) return EXIT.FAIL;
 
-  const provider = (deps.create ?? createSttProvider)(settings);
+  const provider = deps.create?.(settings) ?? createSttProvider(settings, { stateDir: deps.ctx.stateDir });
   const clock = deps.now ?? Date.now;
   deps.io.out(`provider: ${describeProvider(settings)}`);
 
@@ -719,6 +725,7 @@ function describeProvider(settings: SttSettings): string {
   if (settings.provider === "local-cli") {
     return `local-cli (${settings.command}, ${settings.args.length} argument(s) before the recording)`;
   }
+  if (settings.provider === "whistle") return "whistle (Collie's own engine, the model in the state dir)";
   const language = settings.language === undefined ? "auto-detect" : settings.language;
   return `openai-compatible (${settings.baseUrl}, model ${settings.model}, language ${language})`;
 }
@@ -795,6 +802,8 @@ export function cmdSttStatus(deps: SttDeps): number {
       deps.io.err("       Fix the file, or run `collie stt setup --provider local-cli` again.");
       return EXIT.FAIL;
     }
+  } else if (settings.provider === "whistle") {
+    row("engine", "Collie's own, in a child of this binary", "fixed");
   } else {
     row("endpoint", settings.baseUrl, source("baseUrl"));
     row("model", settings.model, source("model", "default"));

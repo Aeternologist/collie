@@ -1292,6 +1292,11 @@ export const es: Dictionary = {
   "apiError.stt.unreadable": "No se pudo procesar el archivo de audio.",
   "apiError.stt.empty": "La grabación no contiene datos.",
   "apiError.stt.provider_failed": "Fallo en el servicio de transcripción: {reason}",
+  "apiError.stt.wav_required": "El motor de voz del host necesita una grabación WAV.",
+  "apiError.stt.model_unknown": "Tu host ya no tiene ese modelo de voz.",
+  "apiError.stt.whistle_provider_taken": "El host ya tiene otro servicio de voz configurado.",
+  "apiError.stt.whistle_not_ready": "Configura Whistle en el host primero.",
+  "apiError.stt.whistle_download_failed": "No se pudo descargar Whistle: {reason}",
   "apiError.pairing.bad_request":
     "Código o nombre no válido. El nombre debe tener entre 1 y 48 caracteres.",
   "apiError.pairing.no_pending": "No hay solicitudes de vinculación pendientes en el host.",
