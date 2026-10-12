@@ -94,16 +94,16 @@
       }
     },
     "pi": {
-      "version": "0.85.1",
+      "version": "0.87.1",
       "verified": "2026-10-12",
-      "how": "capture",
+      "how": "canary",
       "adapter": true,
-      "evidence": "Stock pi 0.85.1 editor: pi--v0851-idle.txt and pi--v0851-draft.txt, plus a live phone send through the guarded reply path. The Ask dialog and editor of OmO 5.1.30 (Senpi 2026.10.11), which Herdr also reports as pi: pi--omo-v5130-*.txt. pi/ASK_NOTES.md holds both. Stock pi question extensions are not read.",
+      "evidence": "canary run 20261012T104925Z: idle, drafts, sends, journal, narrow, start-exit pass",
       "journal": {
         "version": "0.87.1",
-        "verified": "2026-09-30",
+        "verified": "2026-10-12",
         "how": "canary",
-        "evidence": "canary run 20260930T135314Z: journal kinds asserted, nothing unrecognised"
+        "evidence": "canary run 20261012T104925Z: journal kinds asserted, nothing unrecognised"
       }
     },
     "hermes": {

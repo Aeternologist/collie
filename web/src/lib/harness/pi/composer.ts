@@ -119,12 +119,18 @@ export function locateComposer(lines: StyledLine[]): PiComposer | null {
     if (!ok) return null;
     layout = "omo";
   } else {
-    // Stock pi: the draft starts at column zero. A row opening with a space or a box glyph is a
-    // panel drawn between the rules (every question dialog opens its question row with a space),
-    // never a draft.
-    const ok = rows.every((row) => {
+    // Stock pi: the draft starts at column zero. Its first row is the operator's text, so a first
+    // row opening with a space is a panel drawn between the rules (every question dialog in the
+    // corpus opens with a one-space title or question row, and so does OmO's), never a draft. Later
+    // rows may be indented: a pasted code block (the canary's `07-indented` message). A box glyph
+    // is a panel on any row, unless it is a shorter pasted rule.
+    const firstText = rows.findIndex((row) => text(row) !== "");
+    const ok = rows.every((row, index) => {
       const value = text(row);
-      return value === "" || (!value.startsWith(" ") && (!BOX_EDGE.test(value) || pastedRule(value, width)) && !PROMPT.test(value));
+      if (value === "") return true;
+      if (index === firstText && value.startsWith(" ")) return false;
+      const glyph = value.trimStart();
+      return (!BOX_EDGE.test(glyph) || pastedRule(glyph, width)) && !PROMPT.test(glyph);
     });
     if (!ok) return null;
     layout = "stock";
@@ -143,7 +149,12 @@ function draftOf(lines: StyledLine[], composer: PiComposer): string | null {
       if (composer.layout === "stock") return value;
       return index === 0 ? (PROMPT.exec(value)?.[1] ?? "") : value.slice(2);
     })
-    .join(" ").trim();
+    // One space per row seam, and nothing for a blank row or an indent: the read-back
+    // (`draftCarriesSend`, lib/reply-action.ts) lets exactly one space stand for any whitespace
+    // the send carried there (`\n\n`, `\n    `), and takes every other gap literally.
+    .map((row) => row.trim())
+    .filter((row) => row !== "")
+    .join(" ");
   return draft || null;
 }
 

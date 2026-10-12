@@ -7,6 +7,10 @@ where there is content, and every bullet opens with a short bold lead sentence, 
 the GitHub Release page prints. Older versions carry a single flat list. Every entry links to its commit and credits the contributor where there is one. The
 `## [Unreleased]
 
+### Added
+
+- **pi and OmO questions get buttons in Chat.** One reader serves every pi-family question screen. It reads the screen's shape and its key-hint footer, and sends only the keys that footer names: the arrows and then Enter, or the digit OmO prints. It names no extension, so pi's own `question` and `questionnaire` examples, OmO's built-in ask and other extensions with such a footer all get buttons, and a complete Submit page gets Submit and Cancel. Multi-select, a free-text answer and every screen the reader does not know stay in the terminal view with an Escape card. Stock pi sends now go through the guarded send, which reads the draft back before Enter. Thanks @welldoingk and @raffaelenatale (#412, #397).
+
 ## [1.20.0] - 2026-10-11
 
 ### Added

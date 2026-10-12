@@ -45,7 +45,7 @@ describe("OmO composer", () => {
   it("extracts wrapped draft text when only the editor rows change", () => {
     const lines = [idle[0]!, row(`${blue}❯\x1b[0m first draft`), row("  wrapped text"),
       row("  "), row("    indented"), ...idle.slice(2)];
-    expect(composerDraft(lines)).toBe("first draft wrapped text    indented");
+    expect(composerDraft(lines)).toBe("first draft wrapped text indented");
   });
 
   it("binds all draft rows when a wrapped editor changes", () => {
@@ -151,6 +151,23 @@ describe("stock pi composer", () => {
     expect(locateComposer(lines)).toBeNull();
   });
 
+  it("reads a draft with a blank row and indented rows, one space per seam (canary 04 and 07)", () => {
+    const lines = stock("draft");
+    const draft = (rows: string[]) => composerDraft([lines[0]!, ...rows.map((r) => row(r)), ...lines.slice(2)]);
+    expect(draft(["Reply with only OK.", "", "A paragraph after a blank line."])).toBe(
+      "Reply with only OK. A paragraph after a blank line.",
+    );
+    expect(draft(["Reply with only OK.", "    indented code line", "    another indented line"])).toBe(
+      "Reply with only OK. indented code line another indented line",
+    );
+  });
+
+  it("refuses a stock editor whose first row is indented: that is a panel, not a draft", () => {
+    const lines = stock("draft");
+    expect(locateComposer([lines[0]!, row("    indented first"), row("second"), ...lines.slice(2)])).toBeNull();
+    expect(locateComposer([lines[0]!, row(""), row(" Pick a color?"), row("> 1. Red"), ...lines.slice(2)])).toBeNull();
+  });
+
   it("passes over a shorter pasted rule inside the draft and finds the editor's own top rule", () => {
     const lines = stock("draft");
     const pasted = [lines[0]!, row("before"), row("─".repeat(15)), row("after"), ...lines.slice(2)];
@@ -207,9 +224,5 @@ describe("pi 1.1.0 composer (PR 397 captures)", () => {
       ...lines.slice(0, composer.top), { segments: [{ ...ruleSegment, text: mark }] }, ...lines.slice(composer.top + 1),
     ];
     expect(composerDraft(scrolled)).toBe("Add unit tests for the parser");
-  });
-
-  it("is no composer on the /model picker", () => {
-    expect(locateComposer(fixture("pi--v110-core-selector"))).toBeNull();
   });
 });

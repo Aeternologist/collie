@@ -1,39 +1,47 @@
-# OmO single-choice questions reported as `pi`
+# pi question screens: what the reader reads, and the evidence
 
-Captured on 2026-10-12 with OmO 5.1.30 (engine Senpi 2026.10.11), Herdr 0.9.3,
-in a disposable sandbox tab at 113 columns. Herdr reports this executable as `agent: "pi"`.
-The adapter lifts only OmO's built-in `ask_user_question` / `request_user_input` screen,
-not every question extension a pi installation might load.
+Herdr reports stock pi and OmO (the Senpi engine) alike as `agent: "pi"`. pi's question tools are
+extensions, and npm lists many. So `ask.ts` reads every one of them by shape and footer, and names
+none (`.adr/0098`). This file holds the evidence for each rule: the captures, the source lines read,
+and the live probes.
 
-## The captured screen
+## The screens in the corpus
 
-The question replaces the composer between two horizontal rules. The ordinary styled status
-tail remains below the lower rule.
+| Screen | Footer | Plan | Proof |
+| --- | --- | --- | --- |
+| stock `question` (pi 0.87.1, 1.1.0) | `↑↓ navigate • Enter to select • Esc to cancel` | (a) walk | `pi--v0871-question-*`, `pi--v110-question-*`; source below |
+| stock `questionnaire`, one question | `↑↓ navigate • Enter select • Esc cancel` | (a) walk | `pi--v*-questionnaire-single*` |
+| stock `questionnaire`, a tab page | `Tab/←→ navigate • ↑↓ select • Enter confirm • Esc cancel` | (a) walk, captioned | `pi--v*-questionnaire-tabs*` |
+| stock `questionnaire`, Submit page | the same footer, `Press Enter to submit` in the body | review (Enter, Escape) | `pi--v*-questionnaire-submit-ready.txt` |
+| PR 397 extension, single | `↑↓ navigate • Enter to select • Tab to add note • type a number or an answer • Esc to cancel` | (a) walk | `pi--v110-single*` |
+| PR 397 extension, a tab page | `←→ tabs • ↑↓ navigate • Enter select • type a number or text • Esc cancel` | (a) walk, captioned | `pi--v110-tabs-single*`, `-tabs-compact` |
+| PR 397 extension, Review page | `←→ tabs • Enter submit • Esc cancel` | review (Enter, Escape) | `pi--v110-review-complete.txt` |
+| OmO ask, one question | `↑↓ move  1-9 select  space select  enter next  tab next question  c comment  esc cancel` | (b) digit | `pi--omo-v5130-single-described*`; probe below |
 
-```text
-────────────────────────────────────────────────────────────
+Raw, with the Escape card: every multi-select (`[ ]` rows, or a footer that gives Space a tick or a
+toggle), a pointer on the free-text row, every inline answer editor (`Enter to submit • Esc to go
+back`), an incomplete Submit or Review page (`Unanswered: …`, `Enter goes to the first unanswered`),
+and pi's own `/model` picker (`pi--v110-core-selector.txt`).
 
- Ask user · 30m
- → Color    Submit
- Pick a color for the Collie sandbox probe?
- → 1. Red (Recommended)
-      Warm color.
-   2. Green
-      Cool color.
-   3. Blue
-      Deep color.
-   Type your own answer...
- Submit (0/1 answered) — Enter advances
- ↑↓ move  1-9 select  space select  enter next  tab next question  c comment  esc cancel
+## Stock pi, read from its source
 
-────────────────────────────────────────────────────────────
-```
+pi's own examples, `examples/extensions/question.ts` and `questionnaire.ts`, are the same in pi
+0.87.1 and 1.1.0.
 
-`pi--omo-v5130-single-described.txt` and its `-moved` twin differ only in the pointer.
-The single question's descriptions are required by the public tool: a live call with no
-descriptions returned `option description is required` without opening a dialog.
+- `question.ts`: Up and Down move the pointer and clamp at both ends, over every row including the
+  last one, `Type something.` (`Math.max(0, …)`, `Math.min(allOptions.length - 1, …)`). So the ends
+  do not clamp at the last real option, and the reader sets no `clampedEnds`. Enter on an option
+  answers and closes. Enter on `Type something.` opens an inline editor (`Your answer:`), and Escape
+  there goes back to the list. Digits do nothing.
+- `questionnaire.ts`: on a question page, Up and Down move and clamp, and Enter saves the pointed
+  option and moves to the next tab (or to Submit after the last). Tab and Left/Right move between
+  tabs and wrap. On the Submit tab, Enter submits only when every question has an answer. The
+  current tab chip is drawn with a background colour only (`48;2;…`), so the reader finds it by
+  that segment; answered chips are `■`.
 
-## Verified key recipe
+## OmO, probed by the PR 412 author
+
+Captured on 2026-10-12 with OmO 5.1.30 (Senpi 2026.10.11), Herdr 0.9.3, a 113-column sandbox tab.
 
 | Action | Keys | Observed result |
 | --- | --- | --- |
@@ -45,69 +53,35 @@ descriptions returned `option description is required` without opening a dialog.
 | Cancel an unanswered question | `Escape` | Tool reports `cancelled`; agent resumes |
 | Cancel a multi-select question | `Escape` | Tool reports `cancelled`; agent resumes |
 
-**A choice sends its printed digit alone, never a trailing Enter.** The runtime's
-`dist/modes/interactive/components/ask-user-question-keys.js` dispatches `1` through `9`
-to `activateOption`; for one question and `multiSelect: false`, it immediately calls
-`attemptSubmit`. The `3` probe above confirmed this against the live agent.
-The arrow walk used by omp is unnecessary here, and no new action-layer recipe is added.
+A choice sends its printed digit alone, never a trailing Enter. OmO's
+`dist/modes/interactive/components/ask-user-question-keys.js` sends `1` to `9` to
+`activateOption`, and for one question with `multiSelect: false` it submits at once. The `3` probe
+confirmed it. Enter there means "next", so the footer gives no Enter plan, and plan (b) applies
+only on one question: one question chip, and the `Submit (0/1 answered)` counter when it is there.
 
-The detector requires the exact single-select footer, one question chip plus Submit, the
-`0/1 answered` line, contiguous numbered options with descriptions, exactly one option
-pointer, and the unpointed Other field. Its signature includes the whole dialog, including
-the pointer and countdown; the changing status counters below it do not affect a tap.
-A changed countdown can refuse a stale tap, which is the safe side.
+OmO's multi-select prints no checkbox. Its footer says `space toggle  enter toggle`, and Enter
+toggles, so the footer alone keeps it raw (`pi--omo-v5130-multi.txt`).
 
-## Screens deliberately kept raw
+OmO's title row counts down (`Ask user · 30m`). `coreSignature` blanks that clock and the pointer,
+`signature` keeps both, so a tap on a screen whose clock moved is refused and the phone reads again.
 
-- Multi-select: `space toggle`, `enter toggle`, `tab next / Submit`. Enter toggles, not submits.
-  `pi--omo-v5130-multi.txt` is the negative control.
-- Focused Other row and its answer editor: captured separately. No digit buttons or composer
-  typing are enabled there; the user can use the terminal view and Keys. The unread-dialog
-  card names Escape, which discards the editor rather than promising to cancel the whole call.
-- Several questions, review/comment tabs, existing answers, unfamiliar footers, more than nine
-  options, missing/clipped rows and unknown status tails. No recipe is inferred.
-- Stock pi's optional `question` extensions. Their screens are not read; the raw mirror stays.
+**Probed live, 2026-10-12, by the PR 412 author** (OmO 5.1.30, Herdr 0.9.3, a paired headless
+Chromium at the `iphone-14` preset). Chat drew the card with three option buttons and Cancel. With
+the pointer on Red, a tap on Green answered `Color: Green`.
 
-## Stock pi's editor, and why this adapter reads it
+## The editor
 
-Registering any adapter for `pi` moves every `pi` pane off the one-step send and onto the guarded
-one (`lib/reply-action.ts`), which types only when `composerReady` says yes and submits only when
-the draft reads back. So the stock pi editor has to be read too, or a stock pi send is refused.
+Registering an adapter for `pi` moves every pi pane off the one-step send onto the guarded one
+(`lib/reply-action.ts`), so `composer.ts` reads both editors: stock pi (0.85.1, 0.87.1, 1.1.0: a
+rule, the draft at column zero, a rule, status rows) and OmO (a `❯` row and two-space continuations).
+The slash palette, a labelled top rule and a pasted shorter rule come from the PR 397 captures and
+the canary's `15-rule` message. `composerReady` is false whenever `piModalOnScreen` holds, so the
+phone never types into a question's answer editor.
 
-Stock pi 0.85.1 (`pi--v0851-idle.txt`, `pi--v0851-draft.txt`, 2026-10-12, run through `bunx` in a
-sandbox pane) draws the same frame without the prompt glyph: a rule, the draft at column zero,
-a rule of the same colour, then styled status rows. While a turn runs, the top rule carries a
-label (`── ⠴ Working ───`, `pi--v085-working-editor.txt`), and so does OmO's. A row between the
-rules that opens with a space is never a stock draft, which is what keeps OmO's Ask dialog from
-reading as one; `composerReady` also refuses whenever `askModalOnScreen` holds.
+## Not covered
 
-**Probed live, 2026-10-12:** a phone send of `collie stock pi send probe` to that stock pi pane
-typed, read back and submitted. Pi answered `No API key found` (the sandbox has no login) and
-the editor was empty again.
-
-## Comparison with omp and upstream PR 397
-
-omp's Ask is a bordered radio list ending in `Other (type your own)`, with a footer naming
-arrows and Enter. Its taps walk, verify the pointer, then commit with Enter.
-OmO instead prints digits, `→`, a separate unnumbered field, and a persistent status tail.
-Only the neutral `PromptModel`, renderer and guarded action dispatch are reused.
-
-Stock pi's [built-in tool registry](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/tools/index.ts)
-does not include this question tool. This host's `pi` executable is Senpi/OmO, not a separate
-stock pi installation, so a stock pi live question was not claimed.
-[PR 397](https://github.com/AltanS/collie/pull/397) targets pi 1.1.0 with a question extension:
-its notes use `["N", "Enter"]`, and its multi-select draws `[ ]` / `[x]`. Those recipes must not
-be applied to OmO. Both contributions register `pi`, so their registry integration must be
-reconciled if PR 397 lands first.
-
-## Browser verification
-
-**Probed live, 2026-10-12 (OmO 5.1.30, Herdr 0.9.3, this branch's bridge on loopback, paired
-headless Chromium at the `iphone-14` preset).** The default Chat view drew the card under the
-question with three option buttons, each with its description, plus Cancel. With the pointer on
-Red, a tap on Green answered the tool `Color: Green`, and the agent replied
-`BROWSER_ANSWER=Green`.
-
-Not probed from the browser: the Cancel button, a pointer moved at the desk between render and
-tap, and the unread-dialog card on the multi-select and Other-editor states (those are pinned
-by fixtures only).
+- The PR 397 extension is not published, so its screens are read from the contributor's captures
+  only, and three of its walk groups have one capture each (`WALK_GAPS`).
+- Multi-select on any pi screen. The only evidence for a Space-then-Enter recipe is the PR 397
+  extension, and OmO's Enter toggles. It stays raw until a published extension proves the recipe.
+- OmO with several questions, or with an answered question.

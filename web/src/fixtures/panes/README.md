@@ -28,9 +28,9 @@ This cohort is OmO's built-in question UI, not stock pi's optional question exte
 
 | Fixture suffix | State |
 | --- | --- |
-| `single-described` | One unanswered single-select, descriptions and Red pointed |
+| `single-described` | One unanswered single-select, descriptions and Red pointed; lifts, a tap sends the digit |
 | `single-described-moved` | Same question after Down, Green pointed |
-| `single-other-focused` | Unnumbered Other row pointed; no option lift |
+| `single-other-focused` | Unnumbered Other row pointed; raw, Escape card |
 | `answer-editor` | Other editor open, `> ` input and changed footer; raw-only |
 | `multi` | Multi-select's toggle footer; raw-only |
 | `idle` | Empty rule/`❯`/rule composer with three styled status rows |
@@ -40,7 +40,7 @@ This cohort is OmO's built-in question UI, not stock pi's optional question exte
 225-column pane in `/tmp/stock-pi-cwd` with no login: the empty editor and the literal draft
 `collie stock pi draft probe`. They pin that stock pi's editor still reads as a composer.
 
-Keystroke probes and scope: [`pi/ASK_NOTES.md`](../../lib/harness/pi/ASK_NOTES.md).
+Keystroke probes, and what each pi screen reads as: [`pi/ASK_NOTES.md`](../../lib/harness/pi/ASK_NOTES.md).
 
 ## pi 1.1.0 corpus, PR 397 (captured 2026-10-10 by @raffaelenatale, pi 1.1.0 with a pi question extension, Linux sandbox panes)
 
@@ -99,6 +99,44 @@ with footer `Enter to submit • Esc to go back`.
 | `pi--v110-tabs-editor-open.txt` | Questionnaire tab page with free-answer editor open, footer `Enter to submit • Esc to go back` | `blocked` |
 | `pi--v110-review-incomplete.txt` | Questionnaire on `Review` tab with incomplete answers, showing `Unanswered: Features, Deploy` and footer `Enter goes to the first unanswered` | `blocked` |
 | `pi--v110-review-complete.txt` | Questionnaire on `Review` tab with all tabs answered, showing `✓ All answered — Enter to submit` and footer `Enter submit` | `blocked` |
+
+## Stock pi 0.87.1 and 1.1.0 question corpus (captured 2026-10-12, Herdr 0.9.3, throwaway Herdr session)
+
+Stock pi with pi's own example extensions, `examples/extensions/question.ts` or `questionnaire.ts`
+(`pi -e <path>`), in a disposable `/tmp` project, run in the harness canary's own Herdr session. pi
+0.87.1 is the installed `pi`; 1.1.0 ran from its npm package. The model (`google/gemini-3.5-flash-lite`
+on OpenRouter, thinking off) was asked to call the tool with fixed arguments, so every dialog is the
+tool's own, opened by a real model turn. Read through the bridge's `readPane`, the way the phone reads
+it, at 120 columns, and at 50 for the `narrow` files. The 1.1.0 files are cut to their last 40 rows,
+whole rows only, after a check that the kept rows parse the same as in the full read; the cut drops
+pi's changelog. CRLF line ends as read. No key, user, host or home path is in any file; the only
+path is `/tmp/pi-cap-cwd`.
+
+`<v>` is `v0871` or `v110`. The idle and draft files of 1.1.0 are `pi--v110-stock-*`, so they do not
+collide with the PR 397 corpus above.
+
+| Fixture | State | Reads as |
+| --- | --- | --- |
+| `pi--v0871-idle.txt`, `pi--v110-stock-idle.txt` | Empty editor, two status rows | composer |
+| `pi--v0871-draft.txt`, `pi--v110-stock-draft.txt` | `collie stock pi draft probe` typed, not sent | composer, draft read back |
+| `pi--v0871-narrow-idle.txt`, `pi--v110-stock-narrow-idle.txt` | Empty editor at 50 columns | composer |
+| `pi--<v>-question-single.txt` | `question`: three options with descriptions, `4. Type something.`, `>` on 1 | walk |
+| `pi--<v>-question-single-moved.txt` | Same after Down, `>` on 2 | walk, pair |
+| `pi--<v>-question-plain.txt`, `-plain-moved.txt` | Three options with no descriptions, `>` on 1, then on 3 | walk, pair |
+| `pi--<v>-question-narrow.txt`, `-narrow-moved.txt` | The described question at 50 columns, `>` on 1, then on 2 | walk, pair |
+| `pi--<v>-question-other-focused.txt` | `>` on `4. Type something.` | raw, Escape card |
+| `pi--<v>-question-answer-editor.txt` | Enter on that row: `Your answer:`, an indented editor, `Enter to submit • Esc to go back` | raw, Escape card |
+| `pi--<v>-question-answer-editor-typed.txt` | Same, with `teal` typed | raw, Escape card |
+| `pi--<v>-question-answered.txt` | After Enter on an option: the tool result and the empty editor | composer |
+| `pi--<v>-questionnaire-single.txt`, `-single-moved.txt` | `questionnaire`, one question, no tab strip, `>` on 1, then on 2 | walk, pair |
+| `pi--<v>-questionnaire-tabs.txt`, `-tabs-moved.txt` | Two questions: the `Color` tab, `>` on 1, then on 2 | walk, captioned, pair |
+| `pi--<v>-questionnaire-tabs-second.txt`, `-tabs-second-moved.txt` | The `Size` tab after Tab, `>` on 1, then on 2 | walk, captioned, pair |
+| `pi--<v>-questionnaire-tabs-answered.txt` | Back on `Color` with both questions answered (`■ Color   ■ Size`) | walk, captioned |
+| `pi--<v>-questionnaire-submit-incomplete.txt` | The `Submit` tab with `Unanswered: Size` | raw, Escape card |
+| `pi--<v>-questionnaire-submit-ready.txt` | The `Submit` tab with both answers and `Press Enter to submit` | wizard review |
+| `pi--<v>-questionnaire-answer-editor.txt` | The free-text editor of a tab page | raw, Escape card |
+
+What each footer means, and the source lines behind it: [`pi/ASK_NOTES.md`](../../lib/harness/pi/ASK_NOTES.md).
 
 ## Codex corpus (captured 2026-08-22, Codex v0.149.0, sandbox panes)
 
