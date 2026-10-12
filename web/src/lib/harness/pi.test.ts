@@ -11,7 +11,7 @@ import { adapterFor } from "./registry";
 const PANES = join(import.meta.dirname, "../../fixtures/panes");
 const fixtures = readdirSync(PANES).filter((name) => name.endsWith(".txt")).toSorted();
 const own = fixtures.filter((name) => name.startsWith("pi--omo-v5130-"));
-const stockPi = fixtures.filter((name) => name.startsWith("pi--v0851-"));
+const stockPi = fixtures.filter((name) => name.startsWith("pi--v0851-") || name.startsWith("pi--v110-"));
 const lifted = own.filter((name) => /-single-described(?:-moved)?\.txt$/.test(name));
 const load = (name: string) => splitLines(parseAnsi(readFileSync(join(PANES, name), "utf8")));
 
@@ -20,6 +20,8 @@ describeAdapterConformance(piAdapter, {
   // Deliberately unsupported dialogs join the raw cohort, not the interactive one.
   neutralFixtures: [...own.filter((name) => !lifted.includes(name)), ...stockPi],
   foreignFixtures: fixtures.filter((name) => !name.startsWith("pi--omo-v5130-") && !stockPi.includes(name)),
+  // The slash palette pushes the editor frame out of the bridge's six-row tail window.
+  unboundComposerFixtures: ["pi--v110-slash-palette.txt"],
 });
 
 describe("pi adapter routing", () => {
