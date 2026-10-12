@@ -138,6 +138,25 @@ collide with the PR 397 corpus above.
 
 What each footer means, and the source lines behind it: [`pi/ASK_NOTES.md`](../../lib/harness/pi/ASK_NOTES.md).
 
+## pi quoted-dialog negatives (built 2026-10-12 from the captures above)
+
+Agent prose can quote a whole question dialog. These four files are BUILT, not captured: a real
+dialog's own rows, bytes as captured (`pi--v0871-question-single.txt`, or
+`pi--omo-v5130-single-described.txt` for the OmO one), placed where pi draws agent prose or a tool
+result, with a real editor and status rows below (`pi--v0871-idle.txt`, `pi--omo-v5130-idle.txt`)
+or with no editor at all. The builder kept every row whole. Every file must stay raw.
+
+| Fixture | What is quoted, and what is below it | Reads as |
+| --- | --- | --- |
+| `pi--prose-quoted-dialog-above-editor.txt` | The stock dialog with its two rules and its footer, in a reply; the idle editor below | raw, composer ready, no card |
+| `pi--prose-quoted-omo-dialog-above-editor.txt` | OmO's dialog (`→` pointer, `1-9 select` footer), in a reply; OmO's idle editor below | raw, composer ready, no card |
+| `pi--prose-quoted-dialog-in-tool-result.txt` | The stock dialog's text inside a tool result (one column in, result background); the idle editor below | raw, composer ready, no card |
+| `pi--prose-quoted-dialog-then-shell.txt` | The stock dialog as the last rows after pi exited, then a plain `$ ` shell prompt | raw, no card |
+
+The same block with nothing under its bottom rule is built inside `pi/ask.test.ts`, not kept as a
+file: agy's generic menu claims that screen, and the agy suite fails on any foreign fixture it lifts.
+The pi reader refuses it, because pi always paints a status row under a dialog.
+
 ## Codex corpus (captured 2026-08-22, Codex v0.149.0, sandbox panes)
 
 Byte-faithful `format:ansi` captures with one sanitization pass, every substitution

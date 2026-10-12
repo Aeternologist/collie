@@ -23,6 +23,13 @@ toggle), a pointer on the free-text row, every inline answer editor (`Enter to s
 back`), an incomplete Submit or Review page (`Unanswered: …`, `Enter goes to the first unanswered`),
 and pi's own `/model` picker (`pi--v110-core-selector.txt`).
 
+A dialog quoted in agent prose or a tool result stays prose (`pi--prose-quoted-*`). The tail
+decides: the bottom rule must have one to four styled status rows under it and nothing else, and
+the footer row must be styled. With the editor below, the editor's own rules are the tail, so the
+quoted block above it is never read. With no editor, a quoted block lifts only when every tail rule
+holds, which is pi's own screen; a walked tap there still sends no Enter, because the pointer never
+moves and the poll times out.
+
 ## Stock pi, read from its source
 
 pi's own examples, `examples/extensions/question.ts` and `questionnaire.ts`, are the same in pi

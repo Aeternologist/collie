@@ -332,3 +332,61 @@ describe("piModalOnScreen", () => {
     expect(piModalOnScreen(load("pi--v110-core-selector.txt"))).toBe(true);
   });
 });
+
+// Agent prose can quote a whole dialog: a real dialog's own rows (pi--prose-*, built from the real
+// captures, see the fixtures README) in the reply, in a tool result, or left at the tail after pi exited.
+describe("a quoted dialog is not a dialog", () => {
+  it.each([
+    "pi--prose-quoted-dialog-above-editor.txt",
+    "pi--prose-quoted-omo-dialog-above-editor.txt",
+    "pi--prose-quoted-dialog-in-tool-result.txt",
+  ])("%s: the real editor below wins, nothing lifts and no modal is claimed", (name) => {
+    const lines = load(name);
+    expect(detectPiQuestion(lines)).toBeNull();
+    expect(readPiFrame(lines)).toBeNull();
+    expect(piModalOnScreen(lines)).toBe(false);
+  });
+
+  /** The quoted block alone at the tail, nothing under its bottom rule: the shell fixture without its
+   *  prompt. Not a fixture of its own, because agy's generic menu claims that screen (a foreign claim
+   *  the agy suite would fail on); the pi reader is what this file pins. */
+  const atTail = () => {
+    const lines = load("pi--prose-quoted-dialog-then-shell.txt");
+    const bottom = lines.findLastIndex((line) => /^─{8,}$/.test(lineText(line).trimEnd()));
+    return lines.slice(0, bottom + 1);
+  };
+
+  it("with no editor below, the tail rules refuse the quoted block, with a shell prompt under it or nothing", () => {
+    for (const lines of [load("pi--prose-quoted-dialog-then-shell.txt"), atTail()]) {
+      expect(detectPiQuestion(lines)).toBeNull();
+      expect(piModalOnScreen(lines)).toBe(false);
+    }
+    expect(lineText(atTail().at(-1)!)).toMatch(/^─{8,}/);
+  });
+
+  // Without an editor below, the quoted rows lift only when EVERY tail rule holds: one to four
+  // styled, non-rule rows under the bottom rule and nothing else; two full rules of one length and
+  // colour; a styled footer row of known key hints that names Esc, at most one blank row above the
+  // bottom rule; and the option shape. That is pi's own screen, so a styled row under a quoted block
+  // is the one case the screen cannot tell apart. A walked tap there still sends no Enter: the pointer
+  // never moves, the poll times out (lib/prompt-action.ts).
+  it("states the limit: a quoted block at the tail lifts only when every tail rule holds", () => {
+    const quoted = atTail();
+    const styled = (t: string): StyledLine => ({ segments: [{ text: t, style: {}, muted: true }] });
+    const plain: StyledLine = { segments: [{ text: "$ ", style: {}, muted: false }] };
+    expect(detectPiQuestion(quoted)).toBeNull();
+    expect(detectPiQuestion([...quoted, plain])).toBeNull();
+    expect(detectPiQuestion([...quoted, styled("a"), plain])).toBeNull();
+    expect(detectPiQuestion([...quoted, ...["a", "b", "c", "d", "e"].map(styled)])).toBeNull();
+    expect(detectPiQuestion([...quoted, styled("─".repeat(20))])).toBeNull();
+    expect(detectPiQuestion([...quoted, styled("/tmp/project")])?.kind).toBe("prompt-select");
+  });
+
+  it("does not take key hints typed into a draft for a footer", () => {
+    const draft = raw("pi--v0871-draft.txt");
+    const typed = replaceLast(draft, "collie stock pi draft probe", "see this:\r\n ↑↓ navigate • Enter to select • Esc to cancel");
+    const lines = linesOf(typed);
+    expect(piModalOnScreen(lines)).toBe(false);
+    expect(detectPiQuestion(lines)).toBeNull();
+  });
+});

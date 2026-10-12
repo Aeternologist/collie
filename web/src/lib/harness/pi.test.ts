@@ -93,6 +93,23 @@ describe("pi adapter routing", () => {
     },
   );
 
+  it.each([
+    "pi--prose-quoted-dialog-above-editor.txt",
+    "pi--prose-quoted-omo-dialog-above-editor.txt",
+    "pi--prose-quoted-dialog-in-tool-result.txt",
+  ])("keeps %s sendable: the quoted dialog stays prose, the editor below is the composer", (name) => {
+    const lines = load(name);
+    expect(piAdapter.composerReady?.(lines)).toBe(true);
+    expect(piAdapter.extractInputDraft(lines)).toBeNull();
+    expect(buildBlocks(lines, { agent: "pi" }).every((block) => block.kind === "raw")).toBe(true);
+  });
+
+  it("shows a quoted dialog under which pi exited as raw text with no card", () => {
+    const lines = load("pi--prose-quoted-dialog-then-shell.txt");
+    expect(piAdapter.composerReady?.(lines)).toBe(false);
+    expect(buildBlocks(lines, { agent: "pi" })).toEqual([{ kind: "raw", lines }]);
+  });
+
   it("strips the editor off the mirror on an idle screen", () => {
     const lines = load("pi--v0871-draft.txt");
     const [block] = buildBlocks(lines, { agent: "pi" });

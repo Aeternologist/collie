@@ -20,10 +20,10 @@
 //     3. Type something.                       an optional free-text row, last, numbered or not
 //                                              blank rows
 //    Submit (0/1 answered) — Enter advances    up to two trailer rows, one space in (OmO)
-//    ↑↓ navigate • Enter to select • Esc …     the footer, one space in, up to three wrapped rows
+//    ↑↓ navigate • Enter to select • Esc …     the footer, one space in, styled, up to three rows
 //                                              at most one blank row
 //   ──────────────────────────────────────     bottom rule
-//   /tmp/project                               up to four status rows, no rule among them
+//   /tmp/project                               one to four styled status rows, no rule among them
 //
 // Two pointer columns are read: column 0 (`> 1.`, stock pi and the PR 397 extension) and column 1
 // (` → 1.`, OmO). The pointer glyph is `>` or `→`, the two the captures show; Claude's `❯` is not one.
@@ -90,6 +90,26 @@ function ruleColor(line: StyledLine): string | undefined {
   return line.segments.find((s) => s.text.trim() !== "")?.fg;
 }
 
+/**
+ * The bottom rule of the live tail: a full rule with one to four status rows under it and nothing
+ * else, or null. pi always paints at least one status row under the area a dialog replaces (every pi
+ * frame in the corpus has one to three), so a rule-bounded block with nothing under it is text that
+ * scrolled to the tail, such as a dialog quoted in agent prose after pi exited
+ * (pi/ask.test.ts, "a quoted dialog is not a dialog"). Status rows are styled (pi paints them muted or coloured)
+ * and never a rule; a plain row under the frame is output written after it
+ * (pi--prose-quoted-dialog-then-shell.txt).
+ */
+function statusTailBottom(lines: StyledLine[], texts: string[], end: number): number | null {
+  let bottom = end;
+  while (bottom >= 0 && end - bottom <= MAX_STATUS_ROWS && !RULE.test(texts[bottom]!)) bottom--;
+  if (bottom < 0 || !RULE.test(texts[bottom]!) || end - bottom > MAX_STATUS_ROWS || end === bottom) return null;
+  for (let i = bottom + 1; i <= end; i++) {
+    if (texts[i] === "") continue;
+    if (/^\s*─{3,}/.test(texts[i]!) || !styledRow(lines[i]!)) return null;
+  }
+  return bottom;
+}
+
 /** Read the frame at the tail of `lines`, or null. Says nothing yet about what is inside it. */
 export function readPiFrame(lines: StyledLine[]): PiFrame | null {
   const texts = lines.map((l) => lineText(l).trimEnd());
@@ -97,16 +117,8 @@ export function readPiFrame(lines: StyledLine[]): PiFrame | null {
   while (end >= 0 && texts[end] === "") end--;
   if (end < 0) return null;
 
-  // The bottom rule, with only status rows under it.
-  let bottom = end;
-  while (bottom >= 0 && end - bottom <= MAX_STATUS_ROWS && !RULE.test(texts[bottom]!)) bottom--;
-  if (bottom < 3 || !RULE.test(texts[bottom]!) || end - bottom > MAX_STATUS_ROWS) return null;
-  // Status rows are styled (pi paints them muted or coloured) and are never a rule. A plain row under
-  // the frame is output written after it, so the frame is no longer the live tail.
-  for (let i = bottom + 1; i <= end; i++) {
-    if (texts[i] === "") continue;
-    if (/^\s*─{3,}/.test(texts[i]!) || !styledRow(lines[i]!)) return null;
-  }
+  const bottom = statusTailBottom(lines, texts, end);
+  if (bottom === null || bottom < 3) return null;
 
   // The footer: OmO leaves one blank row above the rule, stock pi none.
   let footerEnd = bottom - 1;
@@ -114,7 +126,9 @@ export function readPiFrame(lines: StyledLine[]): PiFrame | null {
   let best: { start: number; footer: PiFooter } | null = null;
   for (let k = 1; k <= MAX_FOOTER_ROWS; k++) {
     const start = footerEnd - k + 1;
-    if (start <= 0 || !HEADER_ROW.test(texts[start]!)) break;
+    // A footer row is painted (dim or coloured) in every capture. A plain row is text someone typed,
+    // such as a key hint quoted in a draft (pi/ask.test.ts, "quoted key hints").
+    if (start <= 0 || !HEADER_ROW.test(texts[start]!) || !styledRow(lines[start]!)) break;
     const footer = parsePiFooter(texts.slice(start, footerEnd + 1).map((t) => t.trim()).join(" "));
     if (footer !== null) best = { start, footer };
   }
@@ -151,12 +165,11 @@ function coreModalFooter(lines: StyledLine[]): boolean {
   const texts = lines.map((l) => lineText(l).trimEnd());
   let end = texts.length - 1;
   while (end >= 0 && texts[end] === "") end--;
-  for (let bottom = end; bottom >= 0 && end - bottom <= MAX_STATUS_ROWS; bottom--) {
-    if (!RULE.test(texts[bottom]!)) continue;
-    const footer = parsePiFooter(texts[bottom - 1] ?? "");
-    return footer !== null && footer.escapeVerb !== null;
-  }
-  return false;
+  const bottom = statusTailBottom(lines, texts, end);
+  if (bottom === null || bottom < 1) return false;
+  const row = lines[bottom - 1]!;
+  if (!styledRow(row)) return false;
+  return parsePiFooter(texts[bottom - 1]!)?.escapeVerb != null;
 }
 
 /** One option row, read. */
