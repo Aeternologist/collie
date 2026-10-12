@@ -159,12 +159,6 @@ function lift(lines: StyledLine[], startLine: number, region: string, dialog: Bl
 }
 
 /**
- * The Muse adapter: Tier-1 composer/status/draft/chrome probes plus the four Tier-2 dialog lifts.
- * Registers under the EXACT Herdr agent string "muse" (registry.ts) — prefix-matching is banned
- * (AltanS/collie#99). The paste supplement + opacity predicate are what keep long sends verifying
- * once this registration flips the reply path off one-shot.
- */
-/**
  * Positive evidence that Muse's own TUI owns the tail, for the unread-dialog card (.adr/0053, addendum
  * 2026-09-26): its bottom rule and statusline are there (`locateTail`). Every Muse dialog keeps them,
  * the approval that replaces the box and the tasks popup between them included, while the shell after
@@ -176,6 +170,12 @@ function museModalOnScreen(lines: StyledLine[]): boolean {
   return locateTail(lines) !== null;
 }
 
+/**
+ * The Muse adapter: Tier-1 composer/status/draft/chrome probes plus the four Tier-2 dialog lifts.
+ * Registers under the EXACT Herdr agent string "muse" (registry.ts) — prefix-matching is banned
+ * (AltanS/collie#99). The paste supplement + opacity predicate are what keep long sends verifying
+ * once this registration flips the reply path off one-shot.
+ */
 export const museAdapter: HarnessAdapter = {
   agent: "muse",
   buildBlocks: museBuildBlocks,

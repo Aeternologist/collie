@@ -26,6 +26,13 @@ Running a crew? Update the lead first; members follow on their own. Details:
 ### Fixed
 
 - **Messages and slash commands reach OmO again, and pi's pickers show in Chat.** Since 1.20.1 Collie refused every send to an OmO pane on a default install, because OmO prints its last status row with no colour, and it refused a `/` command while OmO's completion list was open. Both now send. The `/model`, `/tree` and `/resume` pickers of OmO and stock pi show the Escape card in Chat, and Collie no longer types into them. When OmO's side panel runs beside the editor on a wide fullscreen pane, Collie reads the editor without the panel's text; a question beside the panel shows the Escape card instead of buttons. Thanks @welldoingk (#416, #412).
+- **A crew peer's update now checks which build came back.** A peer with no standby door is checked by its TLS certificate, which names no build, so a restart that brought the old build back up passed as the update. The bridge now records its build in its runtime marker, and the update compares it as it does on every other machine. Thanks @dannon (#415).
+- **pi, Oh My Pi and Codex bookkeeping rows are known rows in the journal reader.** pi's session name row, Oh My Pi's title rows and Codex's context-compaction row draw nothing, and the harness canary no longer reports them as unknown. Thanks @GGGODLIN (#418).
+- **Codex 0.159 keeps its input box after the first reply.** Once a thread has a title, Codex paints the space before a status-row separator in the previous field's colour, so the status row was refused and every later send was blocked. Thanks @GGGODLIN (#419).
+- **An Antigravity draft with a pasted rule line stays sendable.** A ──── line in the draft was read as the input box's top border, so the send was refused. Thanks @GGGODLIN (#419).
+- **Oh My Pi 18.10 sends multi-line messages again.** It paints a draft's later lines under the prompt row, where they were read as autocomplete, so every multi-line send stalled and a blank line hid the input box. Thanks @GGGODLIN (#419).
+- **A Muse draft with an indented line stays sendable.** A line that began with spaces was read as a torn frame, so the input box disappeared and the send was refused. Thanks @GGGODLIN (#419).
+- **The unread-dialog card no longer flashes when Codex, Grok or Muse starts or exits.** The card now also needs the agent's own dialog on screen. On Grok it had offered to send ctrl+c to the shell left behind. Thanks @GGGODLIN (#419).
 
 ## [1.20.1] - 2026-10-12
 
