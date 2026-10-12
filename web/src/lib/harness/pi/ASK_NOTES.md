@@ -21,11 +21,12 @@ and the live probes.
 Raw, with the Escape card: every multi-select (`[ ]` rows, or a footer that gives Space a tick or a
 toggle), a pointer on the free-text row, every inline answer editor (`Enter to submit • Esc to go
 back`), an incomplete Submit or Review page (`Unanswered: …`, `Enter goes to the first unanswered`),
-and pi's own `/model` picker (`pi--v110-core-selector.txt`).
+every picker (below), and a question beside OmO's side panel (below).
 
 A dialog quoted in agent prose or a tool result stays prose (`pi--prose-quoted-*`). The tail
-decides: the bottom rule must have one to four styled status rows under it and nothing else, and
-the footer row must be styled. With the editor below, the editor's own rules are the tail, so the
+decides: the bottom rule must have one to four status rows under it and nothing else, every one
+styled except the last, which may be plain under a styled one (pi's extension-status line, see "The
+editor"), and the footer row must be styled. With the editor below, the editor's own rules are the tail, so the
 quoted block above it is never read. With no editor, a quoted block lifts only when every tail rule
 holds, which is pi's own screen; a walked tap there still sends no Enter, because the pointer never
 moves and the poll times out.
@@ -85,6 +86,68 @@ The slash palette, a labelled top rule and a pasted shorter rule come from the P
 the canary's `15-rule` message. `composerReady` is false whenever `piModalOnScreen` holds, so the
 phone never types into a question's answer editor.
 
+The status rows are styled, except the last, which may be plain under a styled row. pi's footer
+(`components/footer.js` in pi-coding-agent 1.1.0) joins every extension's `ctx.ui.setStatus` text
+into ONE row after its own, truncated and unstyled unless the extension paints it. A default OmO
+install prints its badge and memory there with no colour (`pi--omo-v5130-plain-idle.txt`), so
+in 1.20.1 no OmO editor was found and every send was refused (#416; the reporter's own extension
+painted a segment of that row, which hid it). Two plain rows, or a plain row straight under the
+rule, are still output and not pi; across the whole corpus the only other screens that read as a
+pi editor are the same three agy prompts as before (`composer.test.ts`).
+
+The `/` completion list stands between the bottom rule and the status rows in two forms: stock pi's
+`→ name` and `  name` with a `(n/m)` counter, and OmO's `  → name` and `    name`. One row carries
+the arrow, on any row of the list, and the list counts only under a `/` draft.
+
+## Pickers
+
+Probed live 2026-10-12. pi's own `/model`, `/tree` and `/resume`, and OmO's, replace the editor
+with a picker. OmO's `/model` and `/resume`, and stock `/resume`, sit between two rules of the
+editor's width with rows the stock editor shape accepts, so in 1.20.1 they read as a ready
+editor holding the picker's rows as a draft, and a phone send typed into the picker's search. The
+others read as nothing at all, so Chat showed no card.
+
+Every picker prints a key-hint row, and that row is what tells a picker (`ask.ts`,
+`pickerOnScreen`):
+
+| Picker | Hint row |
+| --- | --- |
+| OmO `/model` | `enter select ctrl+s select as default ctrl+f favorite` (single spaces) |
+| OmO and stock `/tree` | `↑/↓ move · ←/→ page · ctrl+←/→ branch · ctrl+x copy · …` over an inner rule |
+| OmO and stock `/resume` | `ctrl+s sort · ctrl+n named · ctrl+d delete · ctrl+p path (off) · ctrl+r rename` |
+| stock `/model` | `Enter to select · Ctrl+S to set as default · Escape/Ctrl+C to cancel` |
+
+A hint row is painted, and nothing but two or more key/action pairs (`keyHintPairs`, `footer.ts`).
+With single spaces, a chord or an arrow always starts a pair, so `ctrl+d delete` is one pair.
+It stands between the bottom rule and the nearest rule of its width above, or, when that section
+is not an editor, in a header of at most eight rows above it. It never counts inside an OmO `❯`
+frame, and a stock editor's rows are typed text, which pi never paints: a draft that reads
+`enter select ctrl+s …` is a draft (`ask.test.ts`). Escape closes every picker; the card offers it.
+
+## The side panel
+
+OmO's fullscreen mode draws a panel at the right when the pane is at least 120 columns wide
+(`side_panel` in `~/.omo/omo.jsonc`). When the panel is taller than the free rows it runs beside the
+editor and the dialogs, starting at the column where the editor's rules end, W. `panel.ts` crops
+every row at W when a rule runs straight into text, or when a row of the frame at the tail is padded
+to W and then carries text. W counts only when it is the run of the tail frame's own bottom rule and
+the sign is a row of that frame: agent output can print a rule straight into text too (a markdown
+heading), and that must not crop the real frame (`panel.test.ts`). Windows ConPTY is not verified. Probed live 2026-10-12 at 125 columns: an idle send, a draft read back
+without panel text, a `/` command. The panel ticks (`elapsed 1m21`), so nothing read from a cropped
+screen is bound: the write is unbound and Enter still waits for the read-back, and a question there
+stays raw with the Escape card, because the bridge matches whole screen rows and would refuse every
+tap. On an 18-row pane a picker pushes the bottom rule off the screen; that screen reads as nothing
+and a send is refused.
+
+## OmO's question banner
+
+When OmO's ask arrives during a turn it may first show a banner over a ready editor:
+`? Question pending (1 unanswered)`, the options as `[ Red ]  [ Green ]`, and `enter or alt+up to
+answer · /answer · or just type your reply`. Enter on the empty editor opens the real dialog, which
+lifts. Probed live 2026-10-12: a phone send while the banner shows is typed, read back and
+submitted, and OmO takes it as the free-text answer (`↳ Color: "Blue please"`), as the banner says.
+Nothing is lost or sent elsewhere, so the banner is left as it is: a ready editor, no card.
+
 ## Not covered
 
 - The PR 397 extension is not published, so its screens are read from the contributor's captures
@@ -92,3 +155,5 @@ phone never types into a question's answer editor.
 - Multi-select on any pi screen. The only evidence for a Space-then-Enter recipe is the PR 397
   extension, and OmO's Enter toggles. It stays raw until a published extension proves the recipe.
 - OmO with several questions, or with an answered question.
+- A question beside OmO's side panel: it needs the bridge to bind to cropped rows.
+- A picker taller than the pane, which pushes the bottom rule off the screen.

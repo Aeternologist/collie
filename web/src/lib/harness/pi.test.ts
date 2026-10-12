@@ -21,13 +21,21 @@ describeAdapterConformance(piAdapter, {
   ownFixtures: lifted,
   neutralFixtures: pi.filter((name) => !lifted.includes(name)),
   foreignFixtures: fixtures.filter((name) => !name.startsWith("pi--")),
-  // The slash palette pushes the editor frame out of the bridge's six-row tail window.
-  unboundComposerFixtures: ["pi--v110-slash-palette.txt"],
+  // The slash palette pushes the editor frame out of the bridge's six-row tail window. Beside OmO's
+  // side panel the editor is read from rows cropped at the panel (pi/panel.ts), which the bridge
+  // cannot find on the screen, so the write goes out unbound.
+  unboundComposerFixtures: [
+    "pi--v110-slash-palette.txt",
+    "pi--omo-v5130-panel-draft.txt",
+    "pi--omo-v5130-panel-phantom.txt",
+    "pi--omo-v5130-panel-running.txt",
+    "pi--omo-v5130-panel-slash-model.txt",
+  ],
 });
 
 describe("pi adapter routing", () => {
   it("lifts every question screen the corpus proves, and no fewer", () => {
-    expect(lifted).toHaveLength(38);
+    expect(lifted).toHaveLength(39);
   });
 
   it.each([
@@ -49,11 +57,54 @@ describe("pi adapter routing", () => {
     "pi--v110-questionnaire-submit-incomplete.txt",
     "pi--v110-multi.txt",
     "pi--v110-core-selector.txt",
+    "pi--omo-v5130-picker-model.txt",
+    "pi--omo-v5130-picker-tree.txt",
+    "pi--omo-v5130-picker-resume.txt",
+    "pi--omo-v5130-panel-picker-tree.txt",
+    "pi--omo-v5130-panel-question.txt",
+    "pi--v110-stock-picker-resume.txt",
+    "pi--v110-stock-picker-tree.txt",
   ])("offers only the printed Escape key on the unmodelled %s", (name) => {
     const lines = load(name);
     expect(piAdapter.buildBlocks(lines).every((block) => block.kind === "raw")).toBe(true);
     expect(piAdapter.composerReady?.(lines)).toBe(false);
     expect(buildBlocks(lines, { agent: "pi" }).map((block) => block.kind)).toContain("unread-dialog");
+  });
+
+  // Issue 416: a default OmO install, whose last status row is a plain badge, and its slash
+  // commands, whose completion list stands under the editor.
+  it.each([
+    ["pi--omo-v5130-plain-idle.txt", null],
+    ["pi--omo-v5130-plain-draft.txt", "hello collie draft"],
+    ["pi--omo-v5130-plain-running.txt", null],
+    ["pi--omo-v5130-slash-model.txt", "/model"],
+    ["pi--omo-v5130-slash-compact.txt", "/compact"],
+    ["pi--omo-v5130-question-banner.txt", null],
+    ["pi--omo-v5130-panel-idle.txt", null],
+  ])("sends to the default OmO install: %s is a composer bound to its frame", (name, draft) => {
+    const lines = load(name);
+    expect(piAdapter.composerReady?.(lines)).toBe(true);
+    expect(piAdapter.extractInputDraft(lines)).toBe(draft);
+    expect(piAdapter.composerPrompt?.(lines)).not.toBeNull();
+    expect(piAdapter.modalOnScreen?.(lines)).toBe(false);
+  });
+
+  // The side panel (#412): the editor is read from rows cropped at the panel, so no panel text
+  // reaches the draft, and the write is unbound because the bridge matches whole screen rows.
+  it.each([
+    ["pi--omo-v5130-panel-draft.txt", "hello collie draft"],
+    ["pi--omo-v5130-panel-phantom.txt", null],
+    ["pi--omo-v5130-panel-running.txt", null],
+    ["pi--omo-v5130-panel-slash-model.txt", "/model"],
+  ])("reads %s beside the side panel without the panel's text", (name, draft) => {
+    const lines = load(name);
+    expect(piAdapter.composerReady?.(lines)).toBe(true);
+    expect(piAdapter.extractInputDraft(lines)).toBe(draft);
+    expect(piAdapter.composerPrompt?.(lines)).toBeNull();
+    // The status rows end at the panel's column too: 91 here, the editor's rule.
+    const status = piAdapter.extractStatusLines?.(lines) ?? [];
+    expect(status.length).toBeGreaterThan(0);
+    for (const line of status) expect(line.segments.map((s) => s.text).join("").trimEnd().length).toBeLessThanOrEqual(91);
   });
 
   it("keeps pi's own /model picker on the mirror and reads no draft from it", () => {

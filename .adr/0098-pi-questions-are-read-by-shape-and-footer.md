@@ -57,3 +57,35 @@ secret, `get_state` and `subscribe` to read, `extension_ui_response` to answer, 
 it is a separate decision, because an answer through it is an action from an emitter
 ([ADR 0024](./0024-a-beacon-is-a-hint-never-a-control-channel.md)).
 Every pi screen without such a path keeps this reader.
+
+## Amendment — 2026-10-12: pickers are dialogs by their hint row, and OmO's side panel is cropped
+
+Status: **Accepted** (2026-10-12). Amends the Decision above for two screens it did not cover.
+Trail: [issue 416](https://github.com/AltanS/collie/issues/416) · the side-panel comment on
+[issue 412](https://github.com/AltanS/collie/issues/412) · `web/src/lib/harness/pi/panel.ts`,
+`ask.ts` (`pickerOnScreen`), `footer.ts` (`keyHintPairs`). Tested live and on captures against
+OmO 5.1.30 (Senpi 2026.10.11) and stock pi 0.87.1 and 1.1.0, on Linux under Herdr 0.9.3.
+
+### Pickers
+
+pi's own `/model`, `/tree` and `/resume`, OmO's, and any selector an extension draws in the
+editor's place, are dialogs: Chat shows the unread-dialog card with Escape, and the phone does not
+type. A picker is told by its key-hint row alone, never by its title, its name or the extension
+behind it. The row is painted and is nothing but two or more key/action pairs, joined by the
+footers' separators or, as OmO's `/model` prints it, by single spaces with at least one chord or
+arrow. In the single-space form a chord or an arrow always starts a pair, so a named key right after
+a key is that key's action (`ctrl+d delete`). It stands in the frame at the tail, never in an OmO `❯` editor. A stock editor's rows are
+typed text, which pi never paints, so a draft that happens to read like key hints is still a draft.
+
+### The side panel
+
+OmO's fullscreen side panel can run beside the editor and the dialogs, starting at the column where
+the editor's rules end. The reader crops every row at that column when a rule runs straight into
+text, or when a row of the frame at the tail is padded to that column and then carries text. The
+column counts only when it is the run of the tail frame's own bottom rule and the sign is a row of
+that frame, so a rule run into text in the agent's output, or a short one in a draft, crops nothing.
+A pane without either sign is read as before. Whether Windows ConPTY pads the panel's rows the way
+these signs expect is not verified. Nothing read from a cropped screen is bound, because the
+bridge matches whole screen rows: a reply goes out as an unbound write and still waits for the
+read-back before Enter, and a question there stays raw with the Escape card. Lifting it would need
+the bridge to bind to cropped rows, which is a separate decision.

@@ -6,8 +6,15 @@
 // While a turn runs the top rule may carry a label (`── ⠴ Working ───`, pi--v085-working-editor.txt),
 // and a scrolled editor writes its overflow into a rule (`─── ↑ 2 more ───`, read from pi's editor by
 // the PR 397 contributor; no capture yet). Between the bottom rule and the status rows the slash
-// palette can stand while a `/` draft is typed (pi--v110-slash-palette.txt): `→ ` on the selected
-// entry, two spaces before the others and before its `(n/m)` counter.
+// palette can stand while a `/` draft is typed, in two forms: stock pi's (pi--v110-slash-palette.txt),
+// `→ ` on the selected entry, two spaces before the others and before its `(n/m)` counter; and OmO's
+// (pi--omo-v5130-slash-model.txt), `  → ` on the selected entry and four spaces before the others. The
+// `→` may stand on any one row: the list scrolls under it.
+//
+// The status rows are painted (pi dims its own footer rows), except the last, which may be plain:
+// pi's footer prints every extension's `ctx.ui.setStatus` text on ONE row after its own, unstyled
+// unless the extension paints it (pi-coding-agent's components/footer.js). A default OmO install
+// prints its badge and memory status there with no colour (pi--omo-v5130-plain-idle.txt).
 //
 // A question replaces the editor between the rules, so a frame is a composer only when no pi modal
 // is on screen (index.ts asks ask.ts for that too); a status tail alone never permits typing.
@@ -23,6 +30,9 @@ const MAX_EDITOR_ROWS = 100;
 const MAX_STATUS_ROWS = 4;
 /** The palette is a window onto a longer list; its height is the pane's, and this bounds the scan. */
 const MAX_PALETTE_ROWS = 32;
+/** A picker's header sits between two rules above its list (OmO's and pi's `/tree`: a title, two
+ *  hint rows, the search row, pi--omo-v5130-picker-tree.txt); this bounds that section. */
+export const MAX_PICKER_HEADER_ROWS = 8;
 
 function text(line: StyledLine): string {
   return lineText(line).trimEnd();
@@ -46,11 +56,43 @@ function isRule(value: string): boolean {
   return RULE.test(value) || LABELLED_RULE.test(value);
 }
 
-/** A status row: styled, not blank, not a box edge, not a prompt row, not the palette. */
+/** A status row's shape: not blank, not a box edge, not a prompt row, not the palette. */
 function statusRow(line: StyledLine): boolean {
   const value = text(line);
   return value !== "" && !BOX_EDGE.test(value.trimStart()) && !PROMPT.test(value) && !value.startsWith(" ") &&
-    !value.startsWith("→ ") && styled(line);
+    !value.startsWith("→ ");
+}
+
+/**
+ * pi's status rows are painted, every one, except that the LAST may be plain when a painted row
+ * stands above it: that row is the one extension-status line pi's footer prints (see the header).
+ * Blank rows are skipped. So a plain row straight under a rule, or two plain rows, is output, not pi.
+ */
+export function paintedStatus(rows: StyledLine[]): boolean {
+  const filled = rows.filter((row) => text(row) !== "");
+  if (filled.length === 0) return false;
+  return filled.every((row, index) => styled(row) || (index > 0 && index === filled.length - 1));
+}
+
+/** The palette rows in either form (see the header): exactly one entry carries the `→`, and every
+ *  other row is an entry of the same form or the stock counter. */
+function paletteRows(rows: string[]): boolean {
+  const stock = rows.filter((row) => row.startsWith("→ ")).length;
+  const omo = rows.filter((row) => row.startsWith("  → ")).length;
+  if (stock + omo !== 1) return false;
+  const other = stock === 1 ? /^ {2}(?!→ )\S/ : /^ {4}\S/;
+  return rows.every((row) => row.startsWith("→ ") || row.startsWith("  → ") || /^ {2}\(\d+\/\d+\)$/.test(row) || other.test(row));
+}
+
+/**
+ * The nearest row above `from`, at most `limit` rows up, that is a rule of `width` characters, bare
+ * or labelled: the top of the section whose bottom rule is `from`. -1 when there is none.
+ */
+export function ruleAbove(texts: string[], from: number, width: number, limit: number): number {
+  for (let r = from - 1; r >= 0 && from - r <= limit; r--) {
+    if (texts[r]!.length === width && isRule(texts[r]!)) return r;
+  }
+  return -1;
 }
 
 export interface PiTail {
@@ -67,16 +109,17 @@ export interface PiTail {
 export function tailRule(lines: StyledLine[]): PiTail | null {
   let end = lines.length;
   while (end > 0 && text(lines[end - 1]!) === "") end--;
-  // The status rows: one to four, every one a status row.
+  // The status rows: one to four, painted as `paintedStatus` says.
   let statusStart = end;
   while (statusStart > 0 && end - statusStart < MAX_STATUS_ROWS && statusRow(lines[statusStart - 1]!)) statusStart--;
-  if (statusStart === end || statusStart === 0) return null;
+  if (statusStart === end || statusStart === 0 || !paintedStatus(lines.slice(statusStart, end))) return null;
   if (RULE.test(text(lines[statusStart - 1]!))) return { bottom: statusStart - 1, statusStart, end, palette: false };
-  // The palette: `→ ` on its first row and two spaces on every other, directly under the bottom rule.
+  // The palette, directly under the bottom rule, in either form.
   let top = statusStart;
-  while (top > 0 && statusStart - top < MAX_PALETTE_ROWS && /^ {2}\S/.test(text(lines[top - 1]!))) top--;
-  if (top < 2 || !text(lines[top - 1]!).startsWith("→ ") || !RULE.test(text(lines[top - 2]!))) return null;
-  return { bottom: top - 2, statusStart, end, palette: true };
+  while (top > 0 && statusStart - top < MAX_PALETTE_ROWS && /^(?:→ | {2}\S| {4}\S)/.test(text(lines[top - 1]!))) top--;
+  if (top === statusStart || top < 1 || !RULE.test(text(lines[top - 1]!))) return null;
+  if (!paletteRows(lines.slice(top, statusStart).map(text))) return null;
+  return { bottom: top - 1, statusStart, end, palette: true };
 }
 
 export interface PiComposer {

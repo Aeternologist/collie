@@ -50,7 +50,8 @@ import { lineText, type StyledLine } from "../../blocks";
 import { pointerWalk } from "../menu-hints";
 import type { PromptFeedback, PromptModel, PromptOption } from "../prompt-model";
 import type { WizardAnswer, WizardModel, WizardStepChip } from "../wizard-model";
-import { parsePiFooter, type PiFooter } from "./footer";
+import { locateComposer, MAX_PICKER_HEADER_ROWS, paintedStatus, ruleAbove } from "./composer";
+import { keyHintPairs, parsePiFooter, type PiFooter } from "./footer";
 
 /** A full-width rule: pi's editor rules and every question extension's own top and bottom rule. */
 const RULE = /^─{8,}$/;
@@ -95,19 +96,19 @@ function ruleColor(line: StyledLine): string | undefined {
  * else, or null. pi always paints at least one status row under the area a dialog replaces (every pi
  * frame in the corpus has one to three), so a rule-bounded block with nothing under it is text that
  * scrolled to the tail, such as a dialog quoted in agent prose after pi exited
- * (pi/ask.test.ts, "a quoted dialog is not a dialog"). Status rows are styled (pi paints them muted or coloured)
- * and never a rule; a plain row under the frame is output written after it
- * (pi--prose-quoted-dialog-then-shell.txt).
+ * (pi/ask.test.ts, "a quoted dialog is not a dialog"). Status rows are never a rule, and they are
+ * painted as `paintedStatus` (composer.ts) says: pi paints its own rows muted or coloured, and only
+ * the last row, the extension-status line, may be plain. A plain row straight under the frame is
+ * output written after it (pi--prose-quoted-dialog-then-shell.txt).
  */
 function statusTailBottom(lines: StyledLine[], texts: string[], end: number): number | null {
   let bottom = end;
   while (bottom >= 0 && end - bottom <= MAX_STATUS_ROWS && !RULE.test(texts[bottom]!)) bottom--;
   if (bottom < 0 || !RULE.test(texts[bottom]!) || end - bottom > MAX_STATUS_ROWS || end === bottom) return null;
   for (let i = bottom + 1; i <= end; i++) {
-    if (texts[i] === "") continue;
-    if (/^\s*─{3,}/.test(texts[i]!) || !styledRow(lines[i]!)) return null;
+    if (/^\s*─{3,}/.test(texts[i]!)) return null;
   }
-  return bottom;
+  return paintedStatus(lines.slice(bottom + 1, end + 1)) ? bottom : null;
 }
 
 /** Read the frame at the tail of `lines`, or null. Says nothing yet about what is inside it. */
@@ -148,28 +149,54 @@ export function readPiFrame(lines: StyledLine[]): PiFrame | null {
 
 /**
  * Positive evidence that a pi modal is up (the unread-dialog card's fifth condition, ADR 0053): a
- * rule-bounded frame at the tail whose footer names an Escape key. A composer prints no footer, so a
- * live editor never answers true.
+ * rule-bounded frame at the tail whose footer names an Escape key, or a picker's key-hint row. A
+ * composer prints neither, so a live editor never answers true.
  */
 export function piModalOnScreen(lines: StyledLine[]): boolean {
   if (readPiFrame(lines)?.footer.escapeVerb != null) return true;
-  return coreModalFooter(lines);
+  return pickerOnScreen(lines);
+}
+
+
+/** Every visible segment painted: a hint row is dim, and pi never paints what the operator typed. */
+function paintedRow(line: StyledLine): boolean {
+  const visible = line.segments.filter((s) => s.text.trim() !== "");
+  return visible.length > 0 && visible.every((s) => s.fg !== undefined || s.muted);
 }
 
 /**
- * pi's own pickers (`/model`, pi--v110-core-selector.txt) print a `·`-separated footer two spaces in,
- * directly above the bottom rule: `Enter to select · Ctrl+S to set as default · Escape/Ctrl+C to
- * cancel`. Read for the card's evidence only; nothing is lifted from it.
+ * A picker is up (.adr/0098, "Pickers"): pi's own `/model`, `/tree` and `/resume`, OmO's, and any
+ * other selector an extension draws in the editor's place. Every one prints a key-hint row, and a
+ * picker is told by that row alone, never by its title, its name or the extension behind it:
+ *   - a painted row that is nothing but two or more key/action pairs (`keyHintPairs`, footer.ts);
+ *   - between the bottom rule over the live status rows and the nearest rule of its width above, or,
+ *     when that section is not an editor, in a header section of at most eight rows above that
+ *     (`/tree` puts its hints over an inner rule, pi--omo-v5130-picker-tree.txt);
+ *   - never in an OmO editor: a `❯` frame is the editor, so its rows are the operator's draft. A
+ *     stock editor's rows are the draft too, and typed text is never painted.
+ * Read for the card's evidence only; nothing is lifted from it.
  */
-function coreModalFooter(lines: StyledLine[]): boolean {
+function pickerOnScreen(lines: StyledLine[]): boolean {
   const texts = lines.map((l) => lineText(l).trimEnd());
   let end = texts.length - 1;
   while (end >= 0 && texts[end] === "") end--;
   const bottom = statusTailBottom(lines, texts, end);
   if (bottom === null || bottom < 1) return false;
-  const row = lines[bottom - 1]!;
-  if (!styledRow(row)) return false;
-  return parsePiFooter(texts[bottom - 1]!)?.escapeVerb != null;
+  const editor = locateComposer(lines);
+  if (editor?.layout === "omo") return false;
+  const width = texts[bottom]!.length;
+  const hintIn = (from: number, to: number): boolean => {
+    for (let r = from; r < to; r++) {
+      if (paintedRow(lines[r]!) && keyHintPairs(texts[r]!) >= 2) return true;
+    }
+    return false;
+  };
+  const top = ruleAbove(texts, bottom, width, MAX_BODY_ROWS);
+  if (top < 0) return false;
+  if (hintIn(top + 1, bottom)) return true;
+  if (editor !== null) return false;
+  const header = ruleAbove(texts, top, width, MAX_PICKER_HEADER_ROWS + 1);
+  return header >= 0 && hintIn(header + 1, top);
 }
 
 /** One option row, read. */

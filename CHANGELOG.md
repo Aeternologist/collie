@@ -23,6 +23,10 @@ Running a crew? Update the lead first; members follow on their own. Details:
 
 ## [Unreleased]
 
+### Fixed
+
+- **Messages and slash commands reach OmO again, and pi's pickers show in Chat.** Since 1.20.1 Collie refused every send to an OmO pane on a default install, because OmO prints its last status row with no colour, and it refused a `/` command while OmO's completion list was open. Both now send. The `/model`, `/tree` and `/resume` pickers of OmO and stock pi show the Escape card in Chat, and Collie no longer types into them. When OmO's side panel runs beside the editor on a wide fullscreen pane, Collie reads the editor without the panel's text; a question beside the panel shows the Escape card instead of buttons. Thanks @welldoingk (#416, #412).
+
 ## [1.20.1] - 2026-10-12
 
 ### Added

@@ -42,6 +42,45 @@ This cohort is OmO's built-in question UI, not stock pi's optional question exte
 
 Keystroke probes, and what each pi screen reads as: [`pi/ASK_NOTES.md`](../../lib/harness/pi/ASK_NOTES.md).
 
+## OmO 5.1.30 default install, pickers and side panel (captured 2026-10-12, Herdr 0.9.3, issues 416 and 412)
+
+OmO 5.1.30 (Senpi 2026.10.11) as installed, with no extension of its own, and stock pi 1.1.0, in an
+isolated Herdr session with its own bridge, read through `GET /api/pane/:id?lines=60` as the phone
+reads it. Model `anthropic/claude-haiku-4.5` on OpenRouter, thinking off. Three pane shapes: 113
+columns; 125 columns in fullscreen mode (`--tui-mode fullscreen`) split down to 18 rows, so OmO's
+side panel runs beside the editor; and 125 by 40 rows. `panel-phantom` comes from the same 18-row
+pane with a lab extension that adds a coloured `│ Board 3` status segment, as the #416 reporter's
+setup does. The OmO files use LF line ends, the pi 1.1.0 files CRLF as read.
+
+The 113-column files are cut to the first rule of the frame (the banner's first row for
+`question-banner`); the 18-row files are whole screens; `panel-picker-tree` starts at the picker's
+header rule. Privacy: the lab's working directory was replaced with
+`/home/demo/sandbox/collie-pi-labs/omo-lab/work`, a path of the same length, and every `…`-shortened
+copy of it with the same characters, so rule widths and the panel's column are unchanged. No user,
+host, key or token remains; `/tmp/pi110-lab/work` is the stock pi sandbox.
+
+| Fixture | State | Reads as |
+| --- | --- | --- |
+| `pi--omo-v5130-plain-idle.txt` | Empty editor; the last status row, OmO's badge and memory, has no colour | composer |
+| `pi--omo-v5130-plain-draft.txt` | `hello collie draft` typed | composer, draft read back |
+| `pi--omo-v5130-plain-running.txt` | A turn running, `── • Working …` on the top rule | composer |
+| `pi--omo-v5130-slash-model.txt` | `/model` typed: three completion rows, `  → model` then four-space rows | composer, bound |
+| `pi--omo-v5130-slash-compact.txt` | `/compact` typed: one completion row | composer, bound |
+| `pi--omo-v5130-picker-model.txt` | `/model` picker, hint row `enter select ctrl+s select as default ctrl+f favorite` | Escape card |
+| `pi--omo-v5130-picker-tree.txt` | `/tree` picker, hints over an inner rule | Escape card |
+| `pi--omo-v5130-picker-resume.txt` | `/resume` picker, `tab scope · …` and `ctrl+s sort · …` | Escape card |
+| `pi--omo-v5130-plain-question.txt` | OmO's ask, one question, Red and Green | digit |
+| `pi--omo-v5130-question-banner.txt` | `? Question pending …` banner over a ready editor | composer (a send answers the question, see ASK_NOTES) |
+| `pi--omo-v5130-panel-idle.txt` | 18 rows, the panel still above the editor | composer, bound |
+| `pi--omo-v5130-panel-draft.txt` | The panel beside the editor, a rule running into `MEMORY` | composer, cropped, unbound |
+| `pi--omo-v5130-panel-running.txt` | The running turn's labelled rule running into the panel | composer, cropped, unbound |
+| `pi--omo-v5130-panel-slash-model.txt` | `/model` typed beside the panel | composer, cropped, unbound |
+| `pi--omo-v5130-panel-phantom.txt` | Clean rules, the panel's path beside an empty `❯` | composer, cropped, no draft |
+| `pi--omo-v5130-panel-question.txt` | OmO's ask beside the panel | Escape card, not lifted |
+| `pi--omo-v5130-panel-picker-tree.txt` | 40 rows, `/tree` with the panel beside its header | Escape card |
+| `pi--v110-stock-picker-resume.txt` | Stock pi 1.1.0 `/resume` picker | Escape card |
+| `pi--v110-stock-picker-tree.txt` | Stock pi 1.1.0 `/tree` picker | Escape card |
+
 ## pi 1.1.0 corpus, PR 397 (captured 2026-10-10 by @raffaelenatale, pi 1.1.0 with a pi question extension, Linux sandbox panes)
 
 Byte-faithful `format:ansi` captures of **pi 1.1.0** with a pi question extension loaded (the

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { parseAnsi } from "../../ansi";
 import { lineText, splitLines, type StyledLine } from "../../blocks";
@@ -79,12 +79,21 @@ describe("OmO composer", () => {
     ["an intervening blank", [...idle.slice(0, 4), row(""), ...idle.slice(4)]],
     ["a boxed footer", [...idle.slice(0, 5), row(`${blue}╭────────╮`)]],
     ["a double-line boxed footer", [...idle.slice(0, 5), row(`${blue}╔════════╗`)]],
-    ["an unstyled continuation", [...idle.slice(0, 5), row("ordinary output")]],
+    ["two unstyled rows under the styled ones", [...idle.slice(0, 4), row("ordinary output"), row("more output")]],
+    ["an unstyled row between styled ones", [...idle.slice(0, 4), row("ordinary output"), idle[5]!]],
     ["unstyled status fields", [...idle.slice(0, 3), row("cwd • model")]],
     ["a box bottom instead of a plain rule", [idle[0]!, idle[1]!, row(`${blue}╰────────╯`), ...idle.slice(3)]],
   ])("rejects the unknown tail when it contains %s", (_name, lines) => {
     expect(locateComposer(lines)).toBeNull();
     expect(composerStatusLines(lines)).toEqual([]);
+  });
+
+  it("accepts one plain last row under styled ones: pi's extension-status line", () => {
+    // pi's footer prints every extension's status text on one row after its own, unstyled unless the
+    // extension paints it. A default OmO install prints its badge there (pi--omo-v5130-plain-idle).
+    const lines = [...idle.slice(0, 5), row("(badge) mem:work-0000 just now")];
+    expect(tailRule(lines)).toMatchObject({ bottom: 2, statusStart: 3, end: 6, palette: false });
+    expect(locateComposer(lines)?.layout).toBe("omo");
   });
 
   it.each([
@@ -224,5 +233,75 @@ describe("pi 1.1.0 composer (PR 397 captures)", () => {
       ...lines.slice(0, composer.top), { segments: [{ ...ruleSegment, text: mark }] }, ...lines.slice(composer.top + 1),
     ];
     expect(composerDraft(scrolled)).toBe("Add unit tests for the parser");
+  });
+});
+
+// Issue 416, OmO 5.1.30 as installed (fixtures README): the badge row is plain, and the `/` list
+// stands between the bottom rule and the status rows, two spaces in, four before the others.
+describe("OmO default install (issue 416)", () => {
+  const omo = (name: string) => fixture(`pi--omo-v5130-${name}`);
+
+  it("reads the editor over a styled status row and the plain badge row under it", () => {
+    const lines = omo("plain-idle");
+    expect(locateComposer(lines)).toEqual({ layout: "omo", top: 0, bottom: 2, statusStart: 3, end: 5 });
+    expect(composerStatusLines(lines)).toEqual(lines.slice(3, 5));
+    expect(composerDraft(omo("plain-draft"))).toBe("hello collie draft");
+    expect(locateComposer(omo("plain-running"))?.top).toBe(0);
+  });
+
+  it("reads the indented completion list under a slash draft and binds the frame inside the tail window", () => {
+    const lines = omo("slash-model");
+    expect(tailRule(lines)).toMatchObject({ bottom: 2, statusStart: 6, palette: true });
+    expect(composerDraft(lines)).toBe("/model");
+    expect(composerPrompt(lines)).toBe(lines.slice(0, 3).map((l) => lineText(l).trimEnd()).join("\n"));
+    expect(composerDraft(omo("slash-compact"))).toBe("/compact");
+  });
+
+  const palette = omo("slash-model");
+  const at = (rows: string[]) => [...palette.slice(0, 3), ...rows.map((r) => row(r)), ...palette.slice(6)];
+
+  it("takes the arrow on any one row: the list scrolls under it", () => {
+    expect(locateComposer(at(["    model    Select model", "  → scoped-models  Enable", "    favorite-models  Manage"]))).not.toBeNull();
+    expect(locateComposer(at(["    model    Select model", "    scoped-models  Enable", "  → favorite-models  Manage"]))).not.toBeNull();
+  });
+
+  it.each([
+    ["no arrow", ["    model    Select model", "    scoped-models  Enable"]],
+    ["two arrows", ["  → model    Select model", "  → scoped-models  Enable"]],
+    ["both forms at once", ["  → model    Select model", "  scoped-models  Enable"]],
+    ["a stock arrow over OmO rows", ["→ model    Select model", "    scoped-models  Enable"]],
+  ])("refuses a list with %s", (_name, rows) => {
+    expect(locateComposer(at(rows))).toBeNull();
+  });
+
+  it("refuses the list under a draft that is not a slash command", () => {
+    const draft = (text: string) => [palette[0]!, row(`\x1b[38;2;112;112;112m❯\x1b[0m ${text}`), ...palette.slice(2)];
+    expect(locateComposer(draft("/model"))).not.toBeNull();
+    expect(locateComposer(draft("plain text"))).toBeNull();
+  });
+
+  it("leaves the frame unbound when a longer list pushes it out of the bridge's tail window", () => {
+    const long = at(["  → model    Select model", "    a  b", "    c  d", "    e  f"]);
+    expect(composerDraft(long)).toBe("/model");
+    expect(composerPrompt(long)).toBeNull();
+  });
+});
+
+// Design point 1 of issue 416 loosened the status rows by one plain last row. Nothing outside pi's
+// own captures reads as a pi editor because of it: the same three agy screens did before.
+describe("the status rule across the whole corpus", () => {
+  const PANES = new URL("../../../fixtures/panes/", import.meta.url);
+  const foreign = readdirSync(PANES).filter((n) => n.endsWith(".txt") && !n.startsWith("pi--")).toSorted();
+
+  it("finds a pi editor in no other harness's capture but agy's prompt rows", () => {
+    expect(foreign.length).toBeGreaterThan(400);
+    const found = foreign.filter((name) => locateComposer(fixture(name.slice(0, -4))) !== null);
+    expect(found).toEqual(["agy--done.txt", "agy--fresh-idle.txt", "agy--working.txt"]);
+  });
+
+  it("keeps prose under a markdown rule out: a plain row straight under the rule is not a status row", () => {
+    const prose = [row(rule), row(" Some reply text."), row(rule), row("plain prose under the rule")];
+    expect(tailRule(prose)).toBeNull();
+    expect(tailRule([...prose.slice(0, 3), row(`${blue}styled`), row("one"), row("two")])).toBeNull();
   });
 });

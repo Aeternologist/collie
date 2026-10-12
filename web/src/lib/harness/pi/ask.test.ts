@@ -5,6 +5,9 @@ import { parseAnsi } from "../../ansi";
 import { lineText, splitLines, type StyledLine } from "../../blocks";
 import { promptsEqual, promptsSameIdentity, type PromptModel } from "../prompt-model";
 import { detectPiQuestion, piModalOnScreen, readPiFrame } from "./ask";
+import { ruleAbove, tailRule } from "./composer";
+import { keyHintPairs } from "./footer";
+import { piAdapter } from "./index";
 
 const PANES = join(import.meta.dirname, "../../../fixtures/panes");
 const raw = (name: string) => readFileSync(join(PANES, name), "utf8");
@@ -59,6 +62,8 @@ const LIFTS_397 = new Map<string, Expect>([
   ["pi--v110-review-complete.txt", "review"],
   ["pi--omo-v5130-single-described.txt", "digit"],
   ["pi--omo-v5130-single-described-moved.txt", "digit"],
+  // A default OmO install: the status rows end in a plain badge row (fixtures README, issue 416).
+  ["pi--omo-v5130-plain-question.txt", "digit"],
 ]);
 /** Screens with a pi modal up that stay raw: the Escape card's evidence. */
 const RAW_MODALS = new Set([
@@ -75,6 +80,15 @@ const RAW_MODALS = new Set([
   "pi--v110-tabs-editor-open.txt",
   "pi--v110-tabs-multi.txt",
   "pi--v110-review-incomplete.txt",
+  // Pickers, told by their key-hint row (.adr/0098, "Pickers"), and a question beside OmO's side
+  // panel, which stays raw because its rows are not the screen's (panel.ts).
+  "pi--omo-v5130-picker-model.txt",
+  "pi--omo-v5130-picker-tree.txt",
+  "pi--omo-v5130-picker-resume.txt",
+  "pi--omo-v5130-panel-picker-tree.txt",
+  "pi--omo-v5130-panel-question.txt",
+  "pi--v110-stock-picker-resume.txt",
+  "pi--v110-stock-picker-tree.txt",
   ...["v0871", "v110"].flatMap((v) => [
     `pi--${v}-question-other-focused.txt`,
     `pi--${v}-question-answer-editor.txt`,
@@ -90,11 +104,13 @@ function expected(name: string): Expect {
   return (state === undefined ? undefined : LIFTS.get(state)) ?? LIFTS_397.get(name) ?? "raw";
 }
 
+/** What the adapter lifts, through the side-panel crop (index.ts), as the phone reads it. */
 function actual(lines: StyledLine[]): Expect {
-  const question = detectPiQuestion(lines);
-  if (question === null) return "raw";
-  if (question.kind === "wizard") return "review";
-  return question.model.options[0]!.keys.every((k) => /^[1-9]$/.test(k)) ? "digit" : "walk";
+  const block = piAdapter.buildBlocks(lines).find((b) => b.kind !== "raw");
+  if (block === undefined) return "raw";
+  if (block.kind === "wizard") return "review";
+  if (block.kind !== "prompt-select") throw new Error(`unexpected ${block.kind}`);
+  return block.prompt.options[0]!.keys.every((k) => /^[1-9]$/.test(k)) ? "digit" : "walk";
 }
 
 describe("every pi screen in the corpus", () => {
@@ -108,7 +124,7 @@ describe("every pi screen in the corpus", () => {
     const lines = load(name);
     expect(actual(lines)).toBe(expected(name));
     const modal = expected(name) !== "raw" || RAW_MODALS.has(name);
-    expect(piModalOnScreen(lines)).toBe(modal);
+    expect(piAdapter.modalOnScreen?.(lines)).toBe(modal);
   });
 });
 
@@ -219,9 +235,11 @@ describe("the shape declines anything unexpected", () => {
   });
 
   it("does not lift a dialog once plain output follows its status rows", () => {
+    // One plain row under the styled ones is pi's extension-status line (composer.ts, paintedStatus),
+    // so output is two plain rows, or a plain row straight under the rule.
+    const plain = (text: string): StyledLine => ({ segments: [{ text, style: {}, muted: false }] });
     for (const name of ["pi--omo-v5130-single-described.txt", "pi--v0871-question-single.txt"]) {
-      const output: StyledLine = { segments: [{ text: "Agent resumed", style: {}, muted: false }] };
-      expect(detectPiQuestion([...load(name), output])).toBeNull();
+      expect(detectPiQuestion([...load(name), plain("Agent resumed"), plain("done")])).toBeNull();
     }
   });
 
@@ -331,6 +349,73 @@ describe("piModalOnScreen", () => {
   it("is true on pi's own /model picker", () => {
     expect(piModalOnScreen(load("pi--v110-core-selector.txt"))).toBe(true);
   });
+
+  // Issue 416: a picker is a dialog by its key-hint row, whatever it is called.
+  it.each([
+    "pi--omo-v5130-picker-model.txt",
+    "pi--omo-v5130-picker-tree.txt",
+    "pi--omo-v5130-picker-resume.txt",
+    "pi--v110-stock-picker-resume.txt",
+    "pi--v110-stock-picker-tree.txt",
+  ])("is true on the picker %s, and the editor is not ready under it", (name) => {
+    const lines = load(name);
+    expect(piModalOnScreen(lines)).toBe(true);
+    expect(piAdapter.composerReady?.(lines)).toBe(false);
+    expect(piAdapter.extractInputDraft(lines)).toBeNull();
+  });
+
+  it("names no picker: a renamed title, or none, changes nothing", () => {
+    const resume = raw("pi--omo-v5130-picker-resume.txt");
+    expect(piModalOnScreen(linesOf(replaceLast(resume, "Resume Session", "Choose a thing")))).toBe(true);
+    const tree = raw("pi--omo-v5130-picker-tree.txt");
+    expect(piModalOnScreen(linesOf(replaceLast(tree, "Session Tree", "            ")))).toBe(true);
+  });
+
+  it("reads OmO's single-space hint row with a named key as an action: `ctrl+d delete`", () => {
+    const model = raw("pi--omo-v5130-picker-model.txt");
+    const deleting = replaceLast(model, "ctrl+f\x1b[0m\x1b[38;2;160;160;160m favorite", "ctrl+d\x1b[0m\x1b[38;2;160;160;160m delete");
+    expect(deleting).not.toBe(model);
+    expect(keyHintPairs("enter select ctrl+s select as default ctrl+d delete")).toBe(3);
+    expect(piModalOnScreen(linesOf(deleting))).toBe(true);
+  });
+
+  it("is false once the hint row is gone, or reads as prose", () => {
+    const resume = raw("pi--omo-v5130-picker-resume.txt");
+    // `with s sort · with n named …`: no key starts a pair, and `tab scope` alone is one pair.
+    const noHints = resume.replaceAll("ctrl+", "with ");
+    expect(noHints).not.toBe(resume);
+    expect(piModalOnScreen(linesOf(noHints))).toBe(false);
+  });
+
+  it("is false on OmO's question banner: it waits over a ready editor", () => {
+    const lines = load("pi--omo-v5130-question-banner.txt");
+    expect(piModalOnScreen(lines)).toBe(false);
+    expect(piAdapter.composerReady?.(lines)).toBe(true);
+  });
+});
+
+// The hint words typed into the editor are the operator's draft, not a picker: the shape matches,
+// the position does not. An OmO `❯` frame is the editor whatever its rows say, and a stock editor's
+// rows are typed text, which pi never paints.
+describe("a draft that reads like key hints", () => {
+  const hints = "enter select ctrl+s select as default ctrl+f favorite";
+  const omo = raw("pi--omo-v5130-plain-draft.txt");
+  const stock = raw("pi--v110-stock-draft.txt");
+
+  it.each([
+    ["OmO, one row", replaceLast(omo, "hello collie draft", hints)],
+    ["OmO, painted", replaceLast(omo, "hello collie draft", `\x1b[38;2;130;130;130m${hints}\x1b[0m`)],
+    ["OmO, a second row", replaceLast(omo, "hello collie draft", `see\n  ${hints}`)],
+    ["stock, one row", replaceLast(stock, "collie stock pi draft probe", hints)],
+    ["stock, the stock footer's words", replaceLast(stock, "collie stock pi draft probe", "Enter to select · Ctrl+S to set as default · Escape/Ctrl+C to cancel")],
+    ["stock, under a first row", replaceLast(stock, "collie stock pi draft probe", `see this:\r\n${hints}`)],
+  ])("%s: no modal, and the draft reads back", (_name, text) => {
+    const lines = linesOf(text);
+    expect(keyHintPairs(hints)).toBe(3);
+    expect(piModalOnScreen(lines)).toBe(false);
+    expect(piAdapter.composerReady?.(lines)).toBe(true);
+    expect(piAdapter.extractInputDraft(lines)).toMatch(/ctrl\+s/i);
+  });
 });
 
 // Agent prose can quote a whole dialog: a real dialog's own rows (pi--prose-*, built from the real
@@ -365,7 +450,8 @@ describe("a quoted dialog is not a dialog", () => {
   });
 
   // Without an editor below, the quoted rows lift only when EVERY tail rule holds: one to four
-  // styled, non-rule rows under the bottom rule and nothing else; two full rules of one length and
+  // non-rule rows under the bottom rule and nothing else, every one styled but the last, which may
+  // be plain when a styled row stands above it (pi's extension-status line); two full rules of one length and
   // colour; a styled footer row of known key hints that names Esc, at most one blank row above the
   // bottom rule; and the option shape. That is pi's own screen, so a styled row under a quoted block
   // is the one case the screen cannot tell apart. A walked tap there still sends no Enter: the pointer
@@ -376,10 +462,12 @@ describe("a quoted dialog is not a dialog", () => {
     const plain: StyledLine = { segments: [{ text: "$ ", style: {}, muted: false }] };
     expect(detectPiQuestion(quoted)).toBeNull();
     expect(detectPiQuestion([...quoted, plain])).toBeNull();
-    expect(detectPiQuestion([...quoted, styled("a"), plain])).toBeNull();
+    expect(detectPiQuestion([...quoted, plain, styled("a")])).toBeNull();
+    expect(detectPiQuestion([...quoted, styled("a"), plain, plain])).toBeNull();
     expect(detectPiQuestion([...quoted, ...["a", "b", "c", "d", "e"].map(styled)])).toBeNull();
     expect(detectPiQuestion([...quoted, styled("─".repeat(20))])).toBeNull();
     expect(detectPiQuestion([...quoted, styled("/tmp/project")])?.kind).toBe("prompt-select");
+    expect(detectPiQuestion([...quoted, styled("/tmp/project"), plain])?.kind).toBe("prompt-select");
   });
 
   it("does not take key hints typed into a draft for a footer", () => {
@@ -388,5 +476,66 @@ describe("a quoted dialog is not a dialog", () => {
     const lines = linesOf(typed);
     expect(piModalOnScreen(lines)).toBe(false);
     expect(detectPiQuestion(lines)).toBeNull();
+  });
+});
+
+// Transcript text near the bottom of the pane, above a real frame: agent output can print anything,
+// and none of it may change what the frame at the tail is.
+describe("transcript text above a real frame", () => {
+  const row = (value: string): StyledLine => ({ segments: parseAnsi(value) });
+  const text = (line: StyledLine) => lineText(line).trimEnd();
+  /** The row index of the frame's top rule. */
+  function frameTop(lines: StyledLine[]): number {
+    const tail = tailRule(lines);
+    if (tail === null) throw new Error("no frame at the tail");
+    const texts = lines.map(text);
+    const top = ruleAbove(texts, tail.bottom, texts[tail.bottom]!.length, 200);
+    if (top < 0) throw new Error("no top rule");
+    return top;
+  }
+  const above = (lines: StyledLine[], rows: StyledLine[]) => {
+    const top = frameTop(lines);
+    return [...lines.slice(0, top), ...rows, ...lines.slice(top)];
+  };
+  const inlineCode = row("\x1b[38;2;130;130;130mctrl+c copy · esc close\x1b[0m");
+
+  it.each([
+    ["pi--v110-stock-idle.txt", null],
+    ["pi--v110-stock-draft.txt", "collie stock pi draft probe"],
+    ["pi--omo-v5130-plain-idle.txt", null],
+    ["pi--omo-v5130-plain-draft.txt", "hello collie draft"],
+  ])("a painted line that reads like hints, straight above the editor of %s, is no dialog", (name, draft) => {
+    const plain = load(name);
+    expect(keyHintPairs(text(inlineCode))).toBe(2);
+    for (const rows of [[inlineCode], [inlineCode, row("")], [row(text(plain[frameTop(plain)]!)), inlineCode]]) {
+      const lines = above(plain, rows);
+      expect(piModalOnScreen(lines)).toBe(false);
+      expect(piAdapter.composerReady?.(lines)).toBe(true);
+      expect(piAdapter.extractInputDraft(lines)).toBe(draft);
+    }
+  });
+
+  // A frame printed by the agent higher up (rule, `❯ text`, rule, a painted row, a plain row) looks
+  // like OmO's editor. The frame that counts is the one at the tail: here a real question.
+  it.each([
+    ["pi--omo-v5130-plain-question.txt", "digit"],
+    ["pi--v110-single.txt", "walk"],
+  ])("a spoofed editor above the question %s leaves the composer not ready", (name, plan) => {
+    const dialog = load(name);
+    const width = text(dialog[frameTop(dialog)]!).length;
+    const rule = row(`\x1b[38;2;112;112;112m${"─".repeat(width)}\x1b[0m`);
+    const spoof = [
+      rule,
+      row("\x1b[38;2;112;112;112m❯\x1b[0m hello from the transcript"),
+      rule,
+      row("\x1b[38;2;97;133;204m~/project • main\x1b[0m"),
+      row("plain badge row"),
+      row(""),
+    ];
+    const lines = [...spoof, ...dialog];
+    expect(piAdapter.composerReady?.(lines)).toBe(false);
+    expect(piAdapter.extractInputDraft(lines)).toBeNull();
+    expect(piAdapter.modalOnScreen?.(lines)).toBe(true);
+    expect(actual(lines)).toBe(plan);
   });
 });
