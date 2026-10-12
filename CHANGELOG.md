@@ -11,6 +11,10 @@ the GitHub Release page prints. Older versions carry a single flat list. Every e
 
 - **pi and OmO questions get buttons in Chat.** One reader serves every pi-family question screen. It reads the screen's shape and its key-hint footer, and sends only the keys that footer names: the arrows and then Enter, or the digit OmO prints. It names no extension, so pi's own `question` and `questionnaire` examples, OmO's built-in ask and other extensions with such a footer all get buttons, and a complete Submit page gets Submit and Cancel. Multi-select, a free-text answer and every screen the reader does not know stay in the terminal view with an Escape card. Stock pi sends now go through the guarded send, which reads the draft back before Enter. Thanks @welldoingk and @raffaelenatale (#412, #397).
 
+### Fixed
+
+- **A crew peer with no standby door is no longer rolled back on every update.** A peer that pins a lead and binds no standby port serves only mutual TLS, so the plain-HTTP probe the update health gate sends could never authenticate and the gate read the new version as not up, rolling each update back. That shape of peer is now verified by its restart, the same exception the Windows launcher already makes for a bridge that offers no plain-HTTP check.
+
 ## [1.20.0] - 2026-10-11
 
 ### Added
