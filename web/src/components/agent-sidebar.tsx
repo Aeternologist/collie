@@ -14,7 +14,7 @@ import { pinMatcher, type Pin } from "@/lib/pins";
 import { paneName, panePlaceParts } from "@/lib/pane-name";
 import { shortenHome } from "@/lib/shorten-home";
 import { bucketOf, isAttention, worstTriage, type TriageKey } from "@/lib/triage";
-import type { AgentView, Launcher, ServerSummary, TabView } from "@/lib/types";
+import type { AgentStatus, AgentView, Launcher, ServerSummary, TabView } from "@/lib/types";
 import { t } from "@/lib/i18n";
 import { useFrozenRanks } from "@/hooks/use-frozen-ranks";
 import { useLocale } from "@/hooks/use-locale";
@@ -302,7 +302,7 @@ export function ThreadSidebar({
               id={`switch-ws-${g.key.replace(/[^A-Za-z0-9_-]/gu, "_")}`}
               label={g.label}
               tone="strong"
-              dot={worstTriage(g.panes) === "needs" ? "bg-status-blocked" : undefined}
+              mark={worstTriage(g.panes) === "needs" ? "blocked" : undefined}
               trailing={<StatusCounts panes={g.panes} className="shrink-0 text-[11px] text-muted-foreground" />}
             >
               {rows.map((a) => (
@@ -370,6 +370,7 @@ function Section({
   headingId,
   label,
   count,
+  mark,
   dot,
   tone,
   trailing,
@@ -382,8 +383,10 @@ function Section({
   headingId?: string;
   label: string;
   count?: number;
-  /** Status-palette bullet beside the header — the same colors the status badges use. A workspace
-   *  heading carries one only while a pane inside needs you, as on the dashboard. */
+  /** The status mark beside the header. A workspace heading carries one only while a pane inside
+   *  needs you, as on the dashboard. */
+  mark?: AgentStatus | undefined;
+  /** A plain status-palette bullet, for a section that is a kind of thing (Shells, Launch). */
   dot?: string | undefined;
   tone?: "muted" | "strong";
   trailing?: React.ReactNode;
@@ -400,6 +403,7 @@ function Section({
         className="px-2"
         {...(headingId !== undefined ? { id: headingId } : {})}
         {...(count !== undefined ? { count } : {})}
+        {...(mark !== undefined ? { mark } : {})}
         {...(dot !== undefined ? { dot } : {})}
         {...(tone !== undefined ? { tone } : {})}
         {...(trailing !== undefined ? { trailing } : {})}

@@ -87,7 +87,7 @@ describe("ThreadSidebar", () => {
     const { container } = render(
       <ThreadSidebar agents={[...fixtureAgents, idleAgent]} currentPaneKey="" onSelect={vi.fn()} />,
     );
-    const lit = [...container.querySelectorAll("h3")].filter((h) => h.querySelector(".bg-status-blocked"));
+    const lit = [...container.querySelectorAll("h3")].filter((h) => h.querySelector(".text-status-blocked"));
     expect(lit.map((h) => h.textContent)).toEqual([expect.stringContaining("webapp")]);
   });
 
@@ -239,9 +239,9 @@ describe("ThreadSidebar", () => {
         onSelect={vi.fn()}
       />,
     );
-    // The same status palette the badges use: the needs-you heading dot, the working count's dot, and
-    // the Shells section's bullet.
-    for (const cls of ["bg-status-blocked", "bg-status-working", "bg-status-unknown"]) {
+    // The same status palette the badges use: the needs-you heading mark, the working count's mark
+    // (both shapes, inked with the token), and the Shells section's plain bullet.
+    for (const cls of ["text-status-blocked", "text-status-working", "bg-status-unknown"]) {
       expect(container.getElementsByClassName(cls).length).toBeGreaterThan(0);
     }
   });

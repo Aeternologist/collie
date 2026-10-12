@@ -464,7 +464,7 @@ function StatusSlot({ status, exitCode }: { status: ChatToolStatus; exitCode?: n
       options={[
         {
           key: "running",
-          node: <StatusDot status="working" live label={t("chat.card.status.running")} className="size-2" />,
+          node: <StatusDot status="working" live label={t("chat.card.status.running")} className="size-2.5" />,
         },
         { key: "failed", node: <BadBadge>{t("chat.card.status.failed")}</BadBadge> },
         { key: "denied", node: <BadBadge>{t("chat.card.status.denied")}</BadBadge> },

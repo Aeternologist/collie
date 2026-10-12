@@ -99,7 +99,7 @@ export function SpaceOverview({
                 className="flex items-center gap-1 text-[11px] font-semibold tabular-nums text-status-blocked"
                 aria-label={tn("space.overview.needsYou", blockedSpaces)}
               >
-                <span className="size-2 rounded-full bg-status-blocked" aria-hidden />
+                <StatusDot status="blocked" className="size-2.5" />
                 {blockedSpaces}
               </span>
             )}
@@ -214,7 +214,7 @@ export function SpaceOverview({
                   >
                     {status ? (
                       <>
-                        <StatusDot status={status} />
+                        <StatusDot status={status} className="size-2.5" />
                         {/* The dot alone is colour-only; give SR users the status word. */}
                         <span className="sr-only">{statusLabel(status)}</span>
                       </>

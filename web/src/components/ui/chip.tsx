@@ -127,16 +127,16 @@ export function Chip({
       )}
     >
       {glyph}
-      {status === "ready" && <UnseenMark size="sm" />}
+      {status === "ready" && <UnseenMark className="size-2.5" />}
       {status && status !== "ready" && (
         <>
           {/* A hollow resting dot is filled with the chip's own fill, which differs when active. */}
           <StatusDot
             status={TRIAGE_STATUS[status]}
             surface={active ? "bg-primary" : "bg-muted"}
-            className="size-2"
+            className="size-2.5"
           />
-          {/* The dot is colour-only; say it in words for screen readers. */}
+          {/* The mark is a shape and a colour; say it in words for screen readers. */}
           {!named && <span className="sr-only">{statusLabel(TRIAGE_STATUS[status])}</span>}
         </>
       )}

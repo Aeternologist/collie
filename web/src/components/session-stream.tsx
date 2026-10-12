@@ -442,7 +442,7 @@ export function SessionStream({
           {/* The same mark a running step wears inside a card (`chat-cards.tsx` § StepStatus), so
               "still going" looks the same wherever the stream says it. UNNAMED: it leads the word,
               and a name here is the state announced twice (status-badge.tsx § label). */}
-          <StatusDot status="working" live className="size-2" />
+          <StatusDot status="working" live className="size-2.5" />
           <span>{t("chat.stream.working")}</span>
         </div>
       )}

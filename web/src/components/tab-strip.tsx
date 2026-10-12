@@ -362,7 +362,7 @@ function Tab({
         // the open tab's border is the only box any cell draws.
       )}
     >
-      {status === "ready" && <UnseenMark size="sm" />}
+      {status === "ready" && <UnseenMark className="size-2.5" />}
       {status && status !== "ready" && (
         <>
           {/* A hollow resting dot is filled with the surface it sits ON, and every tab, open or
@@ -370,9 +370,9 @@ function Tab({
           <StatusDot
             status={TRIAGE_STATUS[status]}
             surface="bg-chrome"
-            className="size-1.5"
+            className="size-2.5"
           />
-          {/* The dot is colour-only; say it in words for screen readers. */}
+          {/* The mark is a shape and a colour; say it in words for screen readers. */}
           <span className="sr-only">{statusLabel(TRIAGE_STATUS[status])}</span>
         </>
       )}

@@ -255,9 +255,11 @@ describe("AgentChat — the pane header's identity block", () => {
     // tokens, and "needs you" against "done" — the most consequential opposite pair the app has —
     // collapses in BOTH themes.
     //
-    // What carries it now is this header's dot, which is the ONE NAMED StatusDot in the app: an empty
-    // span with `aria-label={statusLabel(...)}`, so a reader gets the word and the eye gets the
-    // colour, and nothing is painted for it.
+    // What carries it now is this header's mark, which is the ONE NAMED StatusDot in the app: a span
+    // with `aria-label={statusLabel(...)}`, so a reader gets the word and the eye gets the SHAPE
+    // (a triangle, a half-filled circle, a disc, a ring: issue 420) with the colour as a second
+    // channel, and nothing is painted as a word. The shape does not read at 8px, so the badge is the
+    // status marks' own 12px box.
     //
     // THREE claims per status, and each fails on its own: the dot NAMES the state, no word is drawn
     // in the header, and no word is drawn on the composer either. Drop the label while "tidying" the
@@ -282,6 +284,10 @@ describe("AgentChat — the pane header's identity block", () => {
       // The dot names it, badged onto the agent's own tile inside the identity block. (The AgentIcon
       // beside it is also a role="img", hence the list rather than a first-match query.)
       expect(names(container)).toContain(word);
+      // …in a 12px box that holds the shape.
+      const badge = block(container)?.querySelector(`[role="img"][aria-label="${word}"]`);
+      expect(badge?.className).toContain("size-3");
+      expect(badge?.querySelector("svg")).not.toBeNull();
       // …and nothing DRAWS it: not the header's text, not the composer's.
       expect(block(container)?.textContent).not.toContain(word);
       expect(slot(container, "caption")).toBeNull(); // the caption line is gone, not merely emptied

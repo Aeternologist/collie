@@ -4,6 +4,7 @@ import type { LucideIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { HarnessBar, useHarnessBarItems } from "@/components/harness-bar";
+import { StatusDot } from "@/components/status-badge";
 import { OverflowEdges } from "@/components/ui/overflow-edges";
 import { SectionLabel } from "@/components/ui/section-label";
 import { BELT_ICON, STRIP_ROW_PILL, STRIP_SCROLLER } from "@/components/ui/labelled-strip";
@@ -791,12 +792,13 @@ export function ActionsRow({ general, agent, mine, onRun, disabled, hand = "righ
                 className={cn(`${STRIP_ROW_PILL} ${PINNED_PILL}`, pinnedReach(!clear && !changes, true, hand))}
               >
                 <Layers className={cn(BELT_ICON, "text-primary")} />
-                {/* The red dot, on the mark's top-right corner, absolutely placed so it never moves the
-                    belt. `ring-chrome` cuts it out of the glyph it overlaps. */}
+                {/* The needs-you mark (the triangle), on the mark's top-right corner, absolutely placed
+                    so it never moves the belt. The chrome-coloured disc and ring cut it out of the
+                    glyph it overlaps. */}
                 {handle.alert === true && (
-                  <span
-                    aria-hidden
-                    className="pointer-events-none absolute top-1 right-1 size-2 rounded-full bg-status-blocked ring-2 ring-chrome"
+                  <StatusDot
+                    status="blocked"
+                    className="pointer-events-none absolute top-0.5 right-0.5 size-3 rounded-full bg-chrome ring-2 ring-chrome"
                   />
                 )}
               </Button>

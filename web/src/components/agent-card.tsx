@@ -289,6 +289,8 @@ export function AgentCard({
                 // is `--card`, a flat row is the page.
                 surface={flat ? "bg-background" : "bg-card"}
                 glide="dot"
+                // The shape is drawn in a 12px box; the row keeps the 10px slot the dot had.
+                className="-mx-px"
               />
             )}
             {/* An avatar is a FRAME around someone else's artwork, not a shape that means
@@ -399,7 +401,7 @@ export function AgentCard({
         {isShell ? (
           <ShellBadge />
         ) : cornerDot ? (
-          /* The dot itself is colour-only and lives on line 1; give SR users the word. */
+          /* The mark lives on line 1 and is aria-hidden; give SR users the word. */
           <span className="sr-only">{stale ? statusLabelPast(agent.status) : statusLabel(agent.status)}</span>
         ) : (
           <StatusBadge status={agent.status} past={stale} />

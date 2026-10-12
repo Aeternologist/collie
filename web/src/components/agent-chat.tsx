@@ -1844,6 +1844,10 @@ export function AgentChat({
                   is the anchor that welds the state to its subject, and its ring is what separates
                   it from the Claude tile's own orange.
 
+                  Since issue 420 that dot is also a SHAPE (a triangle for "needs you", a half-filled
+                  circle for working, a disc, a ring), so the range no longer rests on hue alone; the
+                  word stays down on the strip, and the badge keeps its name.
+
                   The row does not shrink for the missing line: `min-h-15` is a FLOOR (app-header.tsx),
                   36px of lines centred in it still measures 60px, and that floor is shared by every
                   route and must not be lowered to fit this one. */}
@@ -1869,8 +1873,9 @@ export function AgentChat({
                     --status-blocked (0.700 0.200 24) are 0.028 apart in lightness and 15° in hue: as
                     two loose marks on one line they are one colour, and "blocked" — the state that
                     most needs to be seen — would disappear into the subject glyph. The ring separates
-                    them physically instead of by tuning colours. The dot drops to 8px with the tile,
-                    so the badge stays a badge instead of swallowing the mark it sits on.
+                    them physically instead of by tuning colours. The badge is the status mark's own 12px
+                    box (a shape does not read at 8px, issue 420), badged on the tile's corner and
+                    absolute, so it is paint and moves nothing in the header.
 
                     The line states its own 20px height either way (`items-center` over a 16px mark in
                     a 20px line box), so the block is still 20 + 4 + 12 and the header row's floor is
@@ -1909,7 +1914,7 @@ export function AgentChat({
                         live
                         surface="bg-background"
                         glide="dot"
-                        className="absolute -bottom-0.5 -right-0.5 size-2 rounded-full ring-2 ring-background"
+                        className="absolute -bottom-1 -right-1 size-3 rounded-full ring-2 ring-background"
                       />
                     )}
                   </div>

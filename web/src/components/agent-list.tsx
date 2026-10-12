@@ -170,10 +170,10 @@ const NO_KEYS: readonly string[] = [];
 const NO_PINS: readonly Pin[] = [];
 const NO_MACHINES: readonly string[] = [];
 
-/** The heading's dot, in the worst URGENT status inside the group; none when quiet. */
-function urgentDot(g: WorkspaceGroup): string | undefined {
+/** The heading's mark, for the worst URGENT status inside the group; none when quiet. */
+function urgentMark(g: WorkspaceGroup): "blocked" | undefined {
   const worst = worstTriage(g.panes);
-  if (worst === "needs") return "bg-status-blocked";
+  if (worst === "needs") return "blocked";
   return undefined;
 }
 
@@ -616,7 +616,7 @@ export function AgentList({
       {renderBody?.(shown)}
 
       {/* By workspace. The heading IS the landmark: full ink, its own case, and it lights up with a
-          dot and a count when a pane inside needs you. Flat rows in ONE bordered group. Under Needs
+          mark and a count when a pane inside needs you. Flat rows in ONE bordered group. Under Needs
           you with nothing urgent, no group is left, and the summary line's all-clear above is the
           whole answer (with the Pinned group under it, when pins exist): no empty list, no second
           message.
@@ -648,7 +648,7 @@ export function AgentList({
           <SectionHeader
             label={g.label}
             tone="strong"
-            dot={urgentDot(g)}
+            mark={urgentMark(g)}
             className="min-h-7"
             trailing={
               <>

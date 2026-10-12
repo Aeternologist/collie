@@ -971,25 +971,23 @@
   }
 }
 
-/* The working status dot's "live" pulse (components/status-badge.tsx StatusDot, `live` prop) — a
-   slow breathe, not a ping. One dot, opacity only, no second ring element and no scale: a phone
-   screen can carry several of these at once (pane chip, pane header) and an unsynchronized scaling
-   ring on each read as blinking. 2.4s is slow enough that a handful of un-phased dots still read as
-   "alive", not as a strobe. */
-.status-breathe {
-  animation: status-breathe 2.4s ease-in-out infinite;
+/* The working status mark's "live" turn (components/status-badge.tsx StatusDot, `live` prop): the
+   half-filled circle rotates, nothing else. ROTATE ONLY, linear, one full turn in 1.8s: no scale and
+   no opacity on top, so a handful of un-phased marks on one phone screen read as "alive" and never
+   as a strobe, and the turn is visible in the silhouette at any size and to any eye. It REPLACED the
+   opacity breathe this rule used to hold (issue 420): a fade is carried by hue and lightness, which
+   is what the mark no longer depends on. Only the ONE mark the operator is watching carries the
+   class; every other mark is still. */
+.status-turn {
+  animation: status-turn 1.8s linear infinite;
 }
-@keyframes status-breathe {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.45;
+@keyframes status-turn {
+  to {
+    transform: rotate(360deg);
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .status-breathe {
+  .status-turn {
     animation: none;
   }
 }
