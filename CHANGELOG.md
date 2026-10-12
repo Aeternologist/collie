@@ -5,15 +5,37 @@ This file tracks all notable changes to Collie, ordered newest version first. Th
 `### Added`, `### Changed`, `### Fixed`, `### Packaging` and `### Docs`, in that order and only
 where there is content, and every bullet opens with a short bold lead sentence, which is the line
 the GitHub Release page prints. Older versions carry a single flat list. Every entry links to its commit and credits the contributor where there is one. The
-`## [Unreleased]
+`## [Unreleased]` section contains merged work waiting for release. The release
+commit renames this heading to `## [x.y.z] - YYYY-MM-DD`, adds the commit hashes, and adds a new
+empty `## [Unreleased]` section above it. The newest numbered `## [x.y.z]` heading (excluding the
+Unreleased heading) **must** match the `version` field in `herdr-plugin.toml`, `package.json`,
+and `web/package.json`, which `scripts/check-version.sh` checks. See [`CLAUDE.md`](./CLAUDE.md) →
+*Versioning* for the bump policy.
+
+## Upgrading
+
+**Already on 1.x?** Run `collie update`, or run
+`herdr plugin action invoke update --plugin herdr.collie`. Check the result with
+`bin/collie version` (or `herdr plugin action invoke version --plugin herdr.collie`). It shows the
+newest tag. The phone PWA updates itself within about a minute; no reload needed.
+Running a crew? Update the lead first; members follow on their own. Details:
+`docs/crew.md` → *Updating from 1.7.0*.
+
+## [Unreleased]
+
+## [1.20.1] - 2026-10-12
 
 ### Added
 
-- **pi and OmO questions get buttons in Chat.** One reader serves every pi-family question screen. It reads the screen's shape and its key-hint footer, and sends only the keys that footer names: the arrows and then Enter, or the digit OmO prints. It names no extension, so pi's own `question` and `questionnaire` examples, OmO's built-in ask and other extensions with such a footer all get buttons, and a complete Submit page gets Submit and Cancel. Multi-select, a free-text answer and every screen the reader does not know stay in the terminal view with an Escape card. Stock pi sends now go through the guarded send, which reads the draft back before Enter. Thanks @welldoingk and @raffaelenatale (#412, #397).
+- **Questions from pi and OmO show as buttons in Chat.** This works when the question screen prints a key hint at the bottom, such as `↑↓ navigate • Enter to select` or OmO's `1-9 select`. Collie reads that hint, not the extension's name. A tap moves the pointer, reads it back and only then presses Enter, or sends the digit OmO prints. Tested with pi's own `question` and `questionnaire` examples on pi 0.87.1 and 1.1.0, and with OmO's built-in ask. Each page of a multi-question dialog gets buttons, and a complete Submit page gets Submit and Cancel. Pick-many questions, typed answers and screens without such a hint stay in the terminal view, with a card whose Escape button closes them. Thanks @welldoingk and @raffaelenatale (#412, #397). ([95b8e4c2](https://github.com/AltanS/collie/commit/95b8e4c2))
+
+### Changed
+
+- **Messages to a pi pane use the guarded send.** Collie types the message, reads pi's editor back, and presses Enter only when the text matches. When Collie cannot read the editor, it types nothing and Chat says so; a second tap sends anyway, still with the read-back check. ([e55ed47d](https://github.com/AltanS/collie/commit/e55ed47d))
 
 ### Fixed
 
-- **A crew peer's update no longer rolls back on a check it cannot pass.** A peer with no standby door serves only mutual TLS, so the plain-HTTP health check failed and every update rolled back. The check now asks the restarted bridge for its TLS certificate and passes when it is this machine's own. `collie status` shows that address as the crew link. The update runs the check of the version being replaced, so a peer still on an older version installs this release once with `curl -fsSL https://colliepwa.dev/install.sh | COLLIE_TAG=v1.20.1 sh` and then `collie restart`. Thanks @dwm8 (#410) and @theluckystrike (#411).
+- **A crew peer's update no longer rolls back on a check it cannot pass.** A peer with no standby door serves only mutual TLS, so the plain-HTTP health check failed and every update rolled back. The check now passes when a bridge that booted after the restart is alive and holds the port with this machine's own TLS certificate. It cannot name the build, as the plain-HTTP check does. `collie status` shows that address as the crew link. The update runs the check of the version being replaced, so a peer still on an older version installs this release once with `curl -fsSL https://colliepwa.dev/install.sh | COLLIE_TAG=v1.20.1 sh` and then `collie restart`. Thanks @theluckystrike and @dwm8 (#411, #410). ([eae150d5](https://github.com/AltanS/collie/commit/eae150d5))
 
 ## [1.20.0] - 2026-10-11
 
