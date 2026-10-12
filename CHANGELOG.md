@@ -33,6 +33,7 @@ Running a crew? Update the lead first; members follow on their own. Details:
 - **Oh My Pi 18.10 sends multi-line messages again.** It paints a draft's later lines under the prompt row, where they were read as autocomplete, so every multi-line send stalled and a blank line hid the input box. Thanks @GGGODLIN (#419).
 - **A Muse draft with an indented line stays sendable.** A line that began with spaces was read as a torn frame, so the input box disappeared and the send was refused. Thanks @GGGODLIN (#419).
 - **The unread-dialog card no longer flashes when Codex, Grok or Muse starts or exits.** The card now also needs the agent's own dialog on screen. On Grok it had offered to send ctrl+c to the shell left behind. Thanks @GGGODLIN (#419).
+- **Claude Code's dialogs show their buttons again in a named session.** Claude Code 2.1.296 draws a closing rule with the session name under the questions of its question dialog (one question, several, pick-many and the review page), under `/config` and under `/resume`. Collie read each of those as a dialog it cannot read, and the phone offered only Esc. Collie now takes that one rule off before it reads the screen, and only when a key-hint footer sits right above it. The permission, plan and `/effort` dialogs draw no such rule and were not affected.
 
 ## [1.20.1] - 2026-10-12
 

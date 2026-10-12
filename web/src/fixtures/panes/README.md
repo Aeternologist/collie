@@ -1011,6 +1011,73 @@ which fails the day agy stops claiming it.
 |---|---|---|
 | `claude--v2291-permission-bash-subagent.txt` | A subagent's Bash permission, pointer on `1. Yes`. Lifts `prompt-select` (`permission`, `Do you want to proceed?`, Yes `1`, No `2`) from the `─` edge, with the header, the description, the three command rows and the warning as its subject, no `╌` row and no `│` gutter | `blocked` |
 
+## Claude Code 2.1.296 closing rule (captured 2026-10-12, herdr 0.9.3, throwaway Herdr session)
+
+A session renamed with `/rename` (or started with `--name`) makes Claude Code 2.1.296 draw ONE more
+row under some dialogs: a rule with the session name set into it, right-aligned, as the very last
+row. Every Claude grammar anchors on the last non-blank row being its footer, so each of those
+dialogs fell to the unread-dialog card with Esc only. `claude/closing-rule.ts` takes the row off
+once, at the adapter's entry points, so the render, the race guard and the bridge's binding check
+read the same rows an unnamed session shows ([`harness/claude/closing-rule.ts`](../../lib/harness/claude/closing-rule.ts)).
+
+```
+Enter to select · ↑/↓ to navigate · Esc to cancel
+──────────────────────────────────────────────────────────────────── capture lab ─
+```
+
+The lab was the usual one: a throwaway Herdr server in its own `XDG_CONFIG_HOME`, a `/tmp` git
+project, a copied `CLAUDE_CONFIG_DIR` holding only the credentials and a four-key `settings.json`
+(classic TUI, `defaultMode` default), deleted after the run, and `stty cols N rows 40` in the pane
+for the width. The session was renamed to `capture lab`. Each capture is a
+`herdr pane read --source recent --lines 300 --format ansi`, byte for byte. A scan for the user
+name, host, home path and e-mail address found none in the promoted files; the only path on them is
+`/tmp/nr-lab/project`, and nothing was altered.
+
+**Where the closing rule appears.** Named against unnamed, at 82 columns unless noted:
+
+| Screen | Named session | Unnamed session |
+|---|---|---|
+| AskUserQuestion, one question | rule under the footer | nothing under the footer |
+| AskUserQuestion, pick-many | rule under the footer | nothing |
+| AskUserQuestion wizard, question step | rule under the footer (also at 40) | nothing |
+| AskUserQuestion wizard, Submit review step | rule under `2. Cancel`, which prints no footer (also at 40) | nothing |
+| `/config` | rule under the footer (also at 40) | nothing |
+| `/resume` | rule under the footer (also at 40) | nothing |
+| Bash and Edit permission | nothing | nothing |
+| Plan approval | nothing | nothing |
+| `/effort`, `/model`, `/status`, `/tasks`, `/permissions`, `/plugin` | nothing | `/effort` nothing (the others not taken) |
+| Folder trust, auto-mode offer | not reachable in a named session | nothing |
+| Idle input box | the SESSION NAME sits in the box's TOP border, as before (`claude-lab--idle-labelled-top-border--w83.txt`); no row under the statusline | no label |
+
+So the rule belongs to the AskUserQuestion family and to the two full-screen panels, and the idle
+box did not change. The label is the name, right-aligned and followed by one `─`; at 40 columns the
+run before it shortens, the form does not change. An unnamed session never draws the row, so the
+helper is a no-op there and the existing captures read exactly as they did (the corpus was run
+before and after the change: 608 captures, no reading moved).
+
+| Fixture | State / what's in it |
+|---|---|
+| `claude-lab--ask-single-named-v2296--w82.txt`, `claude-lab--ask-single-v2296--w82.txt` | One question, Red / Blue; rows `Type something.` and `Chat about this`. Lifts `prompt-select` |
+| `claude-lab--ask-multi-named-v2296--w82.txt`, `claude-lab--ask-multi-v2296--w82.txt` | One pick-many question, three checkbox rows and a Submit row. Lifts `multi-select` |
+| `claude-lab--ask-wizard-named-v2296--w82.txt`, `claude-lab--ask-wizard-v2296--w82.txt` | Two questions, first step. Lifts `wizard` |
+| `claude-lab--ask-wizard-review-named-v2296--w{40,82}.txt`, `claude-lab--ask-wizard-review-v2296--w{40,82}.txt` | The review step with no answer given. Lifts `wizard` (phase `review`) |
+| `claude-lab--menu-config-panel-named-v2296--w{40,82}.txt`, `claude-lab--menu-config-panel-v2296--w{40,82}.txt` | `/config`, footer wrapped over two rows at 40 columns. Lifts `menu` |
+| `claude-lab--menu-resume-picker-named-v2296--w82.txt`, `claude-lab--menu-resume-picker-v2296--w82.txt`, `claude-lab--menu-resume-picker-named-v2296--w40.txt` | `/resume` with one saved session (82) and two (40, no unnamed twin). Lifts `prompt-select` |
+
+**Not captured, and gaps found on the way.**
+
+- No fixture of the named permission, plan and `/effort` screens: they were read live and carry no
+  rule, and the Bash/Edit/plan reading did not change on 2.1.296.
+- At 40 columns the select footer wraps (`Enter to select · ↑/↓ to navigate · Esc` over `to cancel`).
+  The single-question and pick-many dialogs read as the unread-dialog card in a session of either
+  kind, and the wizard's question step reads as a generic `menu`. That is older than 2.1.296 and the
+  closing rule did not cause it; the pairs are not in the corpus because their `prompt-select`,
+  `multi-select` and `wizard` readings are not what the screen shows.
+- The auto-mode offer that a fresh config shows once (`Make auto mode your default permission mode?`,
+  `Yes, set auto mode as my default permission mode` / `No, keep manual mode`) lifts nothing and gets
+  no unread-dialog card either: it names no key and carries no numbered `❯` row, so `modalOnScreen`
+  declines it. Taken at 82 and 40 columns, not promoted.
+
 ## Wizard corpus (captured 2026-07-05, sandbox pane; choreography in `../../lib/grammar/WIZARD_NOTES.md`)
 
 | Fixture | State / what's in it |

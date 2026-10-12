@@ -8,6 +8,7 @@ import { detectMultiSelect } from "./claude/multi-select";
 import { detectPreviewSelect } from "./claude/preview-select";
 import { detectPromptSelect } from "./claude/prompt-select";
 import { detectWizard } from "./claude/wizard";
+import { dropClosingRule } from "./claude/closing-rule";
 import { detectMenu } from "./claude/menu";
 import { detectResumePicker } from "./claude/resume";
 import { detectMarketplaces } from "./claude/marketplaces";
@@ -50,7 +51,10 @@ const REGIONS = JSON.parse(
 
 /** The region each detector hands to the bridge, or null when it does not recognise the pane. The
  *  order mirrors the precedence the action layer uses, so a pane is attributed to one detector. */
-function detectRegion(lines: StyledLine[]): { detector: string; region: string } | null {
+function detectRegion(input: StyledLine[]): { detector: string; region: string } | null {
+  // The adapter takes the closing rule a named session draws under a dialog off first (2.1.296,
+  // claude/closing-rule.ts), so the region the phone binds to is the one an unnamed session shows.
+  const lines = dropClosingRule(input);
   const prompt = detectPromptSelect(lines);
   if (prompt) return { detector: "prompt-select", region: prompt.signature };
   const wizard = detectWizard(lines);

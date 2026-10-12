@@ -184,6 +184,20 @@ const REGIONS = JSON.parse(
   readFileSync(join(import.meta.dir, "..", "web", "src", "fixtures", "prompt-binding-regions.json"), "utf8"),
 ) as BindingRegion[];
 
+/** Fixtures that show ONE dialog and so legitimately share a region: the `-named-` captures of Claude
+ *  Code 2.1.296 beside their unnamed twins, and the wizard review step at both widths. */
+const SAME_DIALOG: string[][] = [
+  ["claude-lab--ask-multi-named-v2296--w82.txt", "claude-lab--ask-multi-v2296--w82.txt"],
+  ["claude-lab--ask-wizard-named-v2296--w82.txt", "claude-lab--ask-wizard-v2296--w82.txt"],
+  [
+    "claude-lab--ask-wizard-review-named-v2296--w82.txt",
+    "claude-lab--ask-wizard-review-named-v2296--w40.txt",
+    "claude-lab--ask-wizard-review-v2296--w82.txt",
+    "claude-lab--ask-wizard-review-v2296--w40.txt",
+  ],
+  ["claude-lab--menu-config-panel-named-v2296--w40.txt", "claude-lab--menu-config-panel-v2296--w40.txt"],
+];
+
 describe("client/bridge binding contract", () => {
   test("the committed expectations cover every dialog detector", () => {
     expect(REGIONS.length).toBeGreaterThan(0);
@@ -215,6 +229,7 @@ describe("client/bridge binding contract", () => {
 
     let compared = 0;
     let identicalPairs = 0;
+    let sameDialogPairs = 0;
     for (const a of REGIONS) {
       const raw = rawOf(a.fixture);
       for (const b of REGIONS) {
@@ -228,6 +243,16 @@ describe("client/bridge binding contract", () => {
           identicalPairs++;
           continue;
         }
+        // The same dialog captured twice, with different bytes around it: a session named with
+        // `/rename` and an unnamed one draw the same dialog (Claude Code 2.1.296 adds a closing
+        // rule under it in the named one), and the wizard's review step reads the same at 40 and 82
+        // columns. The exemption is a NAMED list, not a comparison of region text, and a group is
+        // only legitimate while its members really hold one region.
+        if (SAME_DIALOG.some((group) => group.includes(a.fixture) && group.includes(b.fixture))) {
+          expect(b.region, `${a.fixture} and ${b.fixture} are listed as one dialog`).toBe(a.region);
+          sameDialogPairs++;
+          continue;
+        }
         compared++;
         expect(verifyExpectedPrompt(raw, b.region).ok).toBe(false);
       }
@@ -236,6 +261,7 @@ describe("client/bridge binding contract", () => {
     // The exemption must not go vacuous: if the duplicate capture ever leaves the corpus, the skip
     // above is dead code and this line says so.
     expect(identicalPairs).toBeGreaterThan(0);
+    expect(sameDialogPairs).toBeGreaterThan(0);
   });
 });
 

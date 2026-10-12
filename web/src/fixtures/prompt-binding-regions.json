@@ -708,5 +708,90 @@
     "fixture": "claude-lab--trust-prompt--w82.txt",
     "detector": "prompt-select",
     "region": "\n──────────────────────────────────────────────────────────────────────────────────\n Accessing workspace:\n\n /tmp/claude-lab/trust82\n\n Quick safety check: Is this a project you created or one you trust? (Like your\n own code, a well-known open source project, or work from your team). If not,\n take a moment to review what's in this folder first.\n\n Claude Code'll be able to read, edit, and execute files here.\n\n Security guide\n\n ❯ No, exit\n   Yes, I trust this folder\n\n Enter to confirm · Esc to cancel"
+  },
+  {
+    "fixture": "claude-lab--ask-multi-named-v2296--w82.txt",
+    "detector": "multi-select",
+    "region": "←  ☐ Toppings  ✔ Submit  →\n\nPick toppings?\n\n❯ 1. [ ] Cheese\n         Cheese\n  2. [ ] Ham\n         Ham\n  3. [ ] Olives\n         Olives\n  4. [ ] Type something\n     Submit\n──────────────────────────────────────────────────────────────────────────────────\n  5. Chat about this"
+  },
+  {
+    "fixture": "claude-lab--ask-multi-v2296--w82.txt",
+    "detector": "multi-select",
+    "region": "←  ☐ Toppings  ✔ Submit  →\n\nPick toppings?\n\n❯ 1. [ ] Cheese\n         Cheese\n  2. [ ] Ham\n         Ham\n  3. [ ] Olives\n         Olives\n  4. [ ] Type something\n     Submit\n──────────────────────────────────────────────────────────────────────────────────\n  5. Chat about this"
+  },
+  {
+    "fixture": "claude-lab--ask-single-named-v2296--w82.txt",
+    "detector": "prompt-select",
+    "region": "❯ Make a tiny plan to add a line \"bye\" to notes.txt, then call ExitPlanMode with  \n  it. Do not do anything else.                                                    \n  \n● Updated plan\n  ⎿  /plan to preview\n  ⎿  User rejected Claude's plan:\n     ╭───────────────────────────────────────────────────────────────────────────╮\n     │ Plan: add \"bye\" to notes.txt                                              │\n     │                                                                           │\n     │ Context                                                                   │\n     │                                                                           │\n     │ The user wants a line bye added to notes.txt.                             │\n     │                                                                           │\n     │ Steps                                                                     │\n     │                                                                           │\n     │ 1. Read notes.txt to confirm its current contents and whether it ends     │\n     │    with a newline.                                                        │\n     │ 2. Append the line bye at the end of the file, keeping existing content   │\n     │    unchanged.                                                             │\n     │                                                                           │\n     │ Verification                                                              │\n     │                                                                           │\n     │ - Read notes.txt and confirm the last line is bye.                        │\n     ╰───────────────────────────────────────────────────────────────────────────╯\n\n✻ Cooked for 5s · done 8:18 PM\n\n❯ /effort                                                                         \n  ⎿  Cancelled\n\n❯ /rename capture lab \n  ⎿  Session renamed to: capture lab\n\n❯ Use the AskUserQuestion tool exactly once to ask me one question: \"Pick a       \n  colour?\" with the options Red and Blue (no multiSelect). Do nothing else.       \n──────────────────────────────────────────────────────────────────────────────────\n ☐ Colour \n\nPick a colour?\n\n❯ 1. Red\n     Red\n  2. Blue\n     Blue\n  3. Type something.\n──────────────────────────────────────────────────────────────────────────────────\n  4. Chat about this\n\nEnter to select · ↑/↓ to navigate · Esc to cancel"
+  },
+  {
+    "fixture": "claude-lab--ask-single-v2296--w82.txt",
+    "detector": "prompt-select",
+    "region": " ▐▛███▛█   Claude Code v2.1.296\n▝▜██████▀  Sonnet 5.5 · Claude Max\n ▝▝   ▝▝   /tmp/nr-lab/project\n\n\n❯ Use the AskUserQuestion tool exactly once to ask me one question: \"Pick a       \n  colour?\" with the options Red and Blue (no multiSelect). Do nothing else.       \n──────────────────────────────────────────────────────────────────────────────────\n ☐ Colour \n\nPick a colour?\n\n❯ 1. Red\n     Red\n  2. Blue\n     Blue\n  3. Type something.\n──────────────────────────────────────────────────────────────────────────────────\n  4. Chat about this\n\nEnter to select · ↑/↓ to navigate · Esc to cancel"
+  },
+  {
+    "fixture": "claude-lab--ask-wizard-named-v2296--w82.txt",
+    "detector": "wizard",
+    "region": "←  ☐ Colour  ☐ Size  ✔ Submit  →\n\nPick a colour?\n\n❯ 1. Red\n     Red\n  2. Blue\n     Blue\n  3. Type something.\n──────────────────────────────────────────────────────────────────────────────────\n  4. Chat about this\n\nEnter to select · Tab/Arrow keys to navigate · Esc to cancel"
+  },
+  {
+    "fixture": "claude-lab--ask-wizard-review-named-v2296--w40.txt",
+    "detector": "wizard",
+    "region": "←  ☐ Colour  ☐ Size  ✔ Submit  →\n\nReview your answers\n\n⚠ You have not answered all questions\n\nReady to submit your answers?\n\n❯ 1. Submit answers\n  2. Cancel"
+  },
+  {
+    "fixture": "claude-lab--ask-wizard-review-named-v2296--w82.txt",
+    "detector": "wizard",
+    "region": "←  ☐ Colour  ☐ Size  ✔ Submit  →\n\nReview your answers\n\n⚠ You have not answered all questions\n\nReady to submit your answers?\n\n❯ 1. Submit answers\n  2. Cancel"
+  },
+  {
+    "fixture": "claude-lab--ask-wizard-review-v2296--w40.txt",
+    "detector": "wizard",
+    "region": "←  ☐ Colour  ☐ Size  ✔ Submit  →\n\nReview your answers\n\n⚠ You have not answered all questions\n\nReady to submit your answers?\n\n❯ 1. Submit answers\n  2. Cancel"
+  },
+  {
+    "fixture": "claude-lab--ask-wizard-review-v2296--w82.txt",
+    "detector": "wizard",
+    "region": "←  ☐ Colour  ☐ Size  ✔ Submit  →\n\nReview your answers\n\n⚠ You have not answered all questions\n\nReady to submit your answers?\n\n❯ 1. Submit answers\n  2. Cancel"
+  },
+  {
+    "fixture": "claude-lab--ask-wizard-v2296--w82.txt",
+    "detector": "wizard",
+    "region": "←  ☐ Colour  ☐ Size  ✔ Submit  →\n\nPick a colour?\n\n❯ 1. Red\n     Red\n  2. Blue\n     Blue\n  3. Type something.\n──────────────────────────────────────────────────────────────────────────────────\n  4. Chat about this\n\nEnter to select · Tab/Arrow keys to navigate · Esc to cancel"
+  },
+  {
+    "fixture": "claude-lab--menu-config-panel-named-v2296--w40.txt",
+    "detector": "menu",
+    "region": "  ╰──────────────────────────────────╯\n\n  ❯ Auto-compact\n      true\n    Continue automatically at usage l…\n      true\n    Switch models when a message is f…\n      Not asked yet ›\n    Show tips\n      false\n    Claude-drafted feedback\n      notify\n    Reduce motion\n      false\n    Thinking mode\n      true\n    Thinking can't be turned off for\n    Sonnet 5.5\n    Prompt suggestions\n      false\n\n    ↓ 36 more\n\n  Type to filter · Enter/↓ to select ·\n  ↑ to tabs · Esc to clear"
+  },
+  {
+    "fixture": "claude-lab--menu-config-panel-named-v2296--w82.txt",
+    "detector": "menu",
+    "region": "  ╰────────────────────────────────────────────────────────────────────────────╯\n\n  ❯ Auto-compact                      false\n    Continue automatically at usage…  true\n    Switch models when a message is…  Not asked yet ›\n    Show tips                         false\n    Claude-drafted feedback           notify\n    Reduce motion                     false\n    Thinking mode                     true\n    Thinking can't be turned off for Sonnet 5.5\n    Prompt suggestions                false\n    Session recap                     true\n    Rewind code (checkpoints)         true\n    Dynamic workflows                 true\n    Ultracode keyword trigger         true\n    Dynamic workflow size             medium (default)\n    Artifacts                         true\n    Verbose output                    false\n    Terminal progress bar             true\n    Show turn duration                true\n    Precompute compaction             true\n    Time format                       auto ›\n    ↓ 25 more\n\n  Type to filter · Enter/↓ to select · ↑ to tabs · Esc to clear"
+  },
+  {
+    "fixture": "claude-lab--menu-config-panel-v2296--w40.txt",
+    "detector": "menu",
+    "region": "  ╰──────────────────────────────────╯\n\n  ❯ Auto-compact\n      true\n    Continue automatically at usage l…\n      true\n    Switch models when a message is f…\n      Not asked yet ›\n    Show tips\n      false\n    Claude-drafted feedback\n      notify\n    Reduce motion\n      false\n    Thinking mode\n      true\n    Thinking can't be turned off for\n    Sonnet 5.5\n    Prompt suggestions\n      false\n\n    ↓ 36 more\n\n  Type to filter · Enter/↓ to select ·\n  ↑ to tabs · Esc to clear"
+  },
+  {
+    "fixture": "claude-lab--menu-config-panel-v2296--w82.txt",
+    "detector": "menu",
+    "region": "  ╰────────────────────────────────────────────────────────────────────────────╯\n\n  ❯ Auto-compact                      true\n    Continue automatically at usage…  true\n    Switch models when a message is…  Not asked yet ›\n    Show tips                         false\n    Claude-drafted feedback           notify\n    Reduce motion                     false\n    Thinking mode                     true\n    Thinking can't be turned off for Sonnet 5.5\n    Prompt suggestions                false\n    Session recap                     true\n    Rewind code (checkpoints)         true\n    Dynamic workflows                 true\n    Ultracode keyword trigger         true\n    Dynamic workflow size             medium (default)\n    Artifacts                         true\n    Verbose output                    false\n    Terminal progress bar             true\n    Show turn duration                true\n    Precompute compaction             true\n    Time format                       auto ›\n    ↓ 25 more\n\n  Type to filter · Enter/↓ to select · ↑ to tabs · Esc to clear"
+  },
+  {
+    "fixture": "claude-lab--menu-resume-picker-named-v2296--w40.txt",
+    "detector": "prompt-select",
+    "region": "  Resume session\n  ╭──────────────────────────────────╮\n  │ ⌕ Search…                        │\n  ╰──────────────────────────────────╯\n    project\n\n  ❯ capture lab\n    12 seconds ago · master · 3.7KB\n\n    AskUserQuestion colour and size…\n    30 seconds ago · master · 188.1KB\n\n    Ctrl+A to show all projects ·\n    Ctrl+B to only show current branch\n    · Space to preview · Ctrl+R to \n    rename · Type to search · Esc to\n    cancel"
+  },
+  {
+    "fixture": "claude-lab--menu-resume-picker-named-v2296--w82.txt",
+    "detector": "prompt-select",
+    "region": "  Resume session\n  ╭────────────────────────────────────────────────────────────────────────────╮\n  │ ⌕ Search…                                                                  │\n  ╰────────────────────────────────────────────────────────────────────────────╯\n    project\n\n  ❯ AskUserQuestion colour and size test\n    12 seconds ago · master · 188.1KB\n\n    Ctrl+A to show all projects · Ctrl+B to only show current branch · Space to\n    preview · Ctrl+R to rename · Type to search · Esc to cancel"
+  },
+  {
+    "fixture": "claude-lab--menu-resume-picker-v2296--w82.txt",
+    "detector": "prompt-select",
+    "region": "  Resume session\n  ╭────────────────────────────────────────────────────────────────────────────╮\n  │ ⌕ Search…                                                                  │\n  ╰────────────────────────────────────────────────────────────────────────────╯\n    project\n\n  ❯ capture lab\n    15 seconds ago · master · 301.8KB\n\n    Ctrl+A to show all projects · Ctrl+B to only show current branch · Space to\n    preview · Ctrl+R to rename · Type to search · Esc to cancel"
   }
 ]
