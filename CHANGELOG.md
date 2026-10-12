@@ -13,7 +13,7 @@ the GitHub Release page prints. Older versions carry a single flat list. Every e
 
 ### Fixed
 
-- **A crew peer with no standby door is no longer rolled back on every update.** A peer that pins a lead and binds no standby port serves only mutual TLS, so the plain-HTTP probe the update health gate sends could never authenticate and the gate read the new version as not up, rolling each update back. That shape of peer is now verified by its restart, the same exception the Windows launcher already makes for a bridge that offers no plain-HTTP check.
+- **A crew peer's update no longer rolls back on a check it cannot pass.** A peer with no standby door serves only mutual TLS, so the plain-HTTP health check failed and every update rolled back. The check now asks the restarted bridge for its TLS certificate and passes when it is this machine's own. `collie status` shows that address as the crew link. The update runs the check of the version being replaced, so a peer still on an older version installs this release once with `curl -fsSL https://colliepwa.dev/install.sh | COLLIE_TAG=v1.20.1 sh` and then `collie restart`. Thanks @dwm8 (#410) and @theluckystrike (#411).
 
 ## [1.20.0] - 2026-10-11
 

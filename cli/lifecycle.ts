@@ -1302,14 +1302,21 @@ export async function statusView(deps: LifecycleDeps): Promise<StatusView> {
   if (deps.ctx.instance !== null) rows.push({ label: "instance", value: deps.ctx.instance });
   rows.push({ label: "service", value: serviceDescription(deps) });
   // F13: the address the bridge BOUND, not a hardcoded loopback string — see `localBridgeUrl`.
-  rows.push({ label: "local", value: localBridgeUrl(deps.ctx.env, deps.ctx.port) });
+  // A peer's main listener is mutual TLS only (ADR 0013), so an `http://` address there never
+  // answers. Name it as the crew link it is.
+  const isPeer = crewModeOnDisk(deps) === "peer";
+  const localUrl = localBridgeUrl(deps.ctx.env, deps.ctx.port);
+  rows.push({
+    label: "local",
+    value: isPeer ? `${localUrl.replace(/^http:/, "https:")} (crew link, mutual TLS only)` : localUrl,
+  });
   // The front-door row, and the one machine that has no front door to describe. A PEER publishes
   // none (ADR 0013) — `cmdServe` refuses the publish and says so — so a `tailnet` row here was a row
   // about a door that is not there, offering a loopback URL that is not even a peer's bind (the
   // `local` row above says what is). Asked of the same function that takes the publish decision, so
   // the banner and the refusal can never disagree. The crew's door is named instead, because "where
   // do I point my phone?" still has an answer on a peer: the lead's (F24).
-  if (crewModeOnDisk(deps) === "peer") {
+  if (isPeer) {
     rows.push({ label: "crew", value: "peer — no front door here; the lead's door serves the crew (ADR 0013)" });
   } else if (deps.ctx.env.COLLIE_SKIP_SERVE === "1") {
     const url = configuredPublicUrl(deps.ctx.env);

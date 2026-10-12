@@ -59,7 +59,8 @@ import {
   driveApply,
   HEALTH_POLL_MS,
   HEALTH_TIMEOUT_ENV,
-  healthProbe,
+  bootEvidenceOf,
+  updateHealthProbe,
   probeConfigOf,
   updateHealthTarget,
   healthTimeoutMs,
@@ -2786,9 +2787,10 @@ async function runApply(deps: UpdateDeps, a: ApplyArgs): Promise<number> {
       ? flipCurrent(deps, layout, dir)
       : flipToStaged(deps, layout, { dir, version: dir.replace(/^v/, ""), complete: true }).ok;
 
-  const probeTargetForUpdate = updateHealthTarget(
-    probeConfigOf(deps.ctx.env, deps.files, deps.ctx.stateDir, deps.ctx.port),
-  );
+  // The wall-clock moment of the latest restart, for the peer-listener check: the bridge stamps its
+  // runtime marker with `Date.now()` at boot, and only a marker from after this moment is the
+  // restarted process. Infinite until a restart happens, so nothing passes before one.
+  let restartedAt = Number.POSITIVE_INFINITY;
 
   const run = await driveApply(
     {
@@ -2796,19 +2798,23 @@ async function runApply(deps: UpdateDeps, a: ApplyArgs): Promise<number> {
       // Through `current`, for BOTH install kinds. This process is the OLD version, and its own
       // `restart` would rewrite the unit from its own root — pinning the supervisor to the version
       // the flip just left, which would make the flip cosmetic.
-      restart: () => Promise.resolve(restartThroughCurrent(deps, layout)),
+      restart: () => {
+        // Each restart moves it, so a rollback's bridge must boot after the SECOND one.
+        restartedAt = deps.now();
+        return Promise.resolve(restartThroughCurrent(deps, layout));
+      },
       // Not "loopback and the front-door port": a wide bind and a peer's TLS-pinned listener are
-      // both real, and both make that URL the wrong door (`cli/update-run.ts` → `probeTarget`).
-      // A peer that pins a lead and binds no standby door has no plain-HTTP door at all — its only
-      // listener is mutual TLS — so there is no probe this process could authenticate against. For
-      // that shape `updateHealthTarget` is null (the same exception the Windows launcher makes in
-      // `livenessUrl`), `healthSkipped` makes `driveApply` skip a gate no probe could ever pass,
-      // and the update is verified by the restart alone.
-      health:
-        probeTargetForUpdate !== null
-          ? healthProbe(deps.net, probeTargetForUpdate)
-          : () => Promise.resolve({ ok: false, reason: "no door to probe" }),
-      healthSkipped: probeTargetForUpdate === null,
+      // both real, and both make that URL the wrong door (`cli/update-run.ts` → `updateHealthTarget`).
+      // A peer with no standby door has no plain-HTTP door at all, so it is asked for its own
+      // certificate on the main port instead.
+      health: updateHealthProbe(
+        deps.net,
+        updateHealthTarget(probeConfigOf(deps.ctx.env, deps.files, deps.ctx.stateDir, deps.ctx.port)),
+        bootEvidenceOf(deps.files, stateDir, () => restartedAt, (pid) => {
+          const found = deps.exec.processLookup(pid);
+          return found.kind === "unknown" ? null : found.kind === "running";
+        }),
+      ),
       prune: () => {
         if (a.kind === "binary") collectOldVersions(deps, layout, a.to);
         else pruneVersions(deps, layout);

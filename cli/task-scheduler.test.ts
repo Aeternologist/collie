@@ -511,7 +511,7 @@ describe("_supervise, the loop", () => {
   });
 
   describe("livenessUrl", () => {
-    const base = { host: "", port: 8787, standbyPort: null, pinsALead: false };
+    const base = { host: "", port: 8787, standbyPort: null, pinsALead: false, selfCertPem: null };
 
     test("asks the front door on loopback by default, and on the address the bridge bound", () => {
       expect(livenessUrl(base)).toBe("http://127.0.0.1:8787/api/health");
