@@ -149,3 +149,24 @@ dialog with the pointer moved (`omp--v18-8-ask-single-described-moved.txt`, omp 
   pointed option's own row, which description rows push down. Counted in options, the blank would
   miss the pointer, and every walk to an option below a description would read back as a changed
   dialog.
+
+## Addendum — 2026-10-13: current Ask footers and single-select batches
+
+The OMP 18.10.3 captures supersede the one-question-only boundary, not the multi-select decision.
+`Alt+H hide` is a measured trailing hint, and `Ctrl+O expand/collapse` is the measured long-text
+state. The former had prevented even short questions from producing a card in Chat.
+
+- Single-select batch questions reuse the guarded pointer walk of ADR 0080. Enter advances;
+  the complete final review offers Submit with Enter alone. Review arrows scroll, not select.
+- The active question is style-only. Its tab index is part of the walk identity and the styled
+  region binds each write, including the final review. Identical text on another tab is not
+  the same question.
+- Truncated text offers only Expand and Cancel. Answers become available after the expanded
+  screen is read; no hidden text is reconstructed from the session journal.
+- Missing answers, partial lists/reviews, previews, timeout titles and unmeasured dialects
+  remain declined. Multi-select still needs its own guarded toggle recipe.
+
+Evidence and limits: `ASK_NOTES.md`, the `omp--v18-10-ask-*` captures, parser/guard tests and
+`e2e/omp-ask-chat.spec.ts`. A paired mobile-shaped browser completed a real three-question call
+including expansion and final Submit; another completed a typed custom answer. The Chat journal
+card stays read-only. No shared model or Chat component changes are needed.
