@@ -5,21 +5,13 @@ import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
 
 import { en } from "@/lib/i18n/messages/en";
-import type {
-  ChatEntry,
-  PaneChatResponse,
-  SnapshotResponse,
-  ToolQuestion,
-  TranscriptPart,
-} from "@/lib/types";
-import { fixtureAgents, fixtureSnapshot } from "@/test/handlers";
+import type { PaneChatResponse, SnapshotResponse } from "@/lib/types";
+import { fixtureAgents, fixtureOmpAskBatchChat, fixtureOmpAskSingleChat, fixtureSnapshot } from "@/test/handlers";
 
 import { installApiStub, pinLocale } from "./fixtures/api";
 
-// Replay real OMP 18.10 Ask captures through Chat. Before the grammar fix, the journal
-// showed read-only questions with no answering dock. History must stay read-only; taps
-// belong to the current terminal dialog and must survive walk/verify/commit.
-// The stateful pane stub follows actual keys. Live terminal proof is in ASK_NOTES.md.
+// Replay captured OMP Ask screens through Chat with a key-driven pane stub.
+// History stays read-only; live answers use walk/verify/commit. Live proof: ASK_NOTES.md.
 
 // No service worker: `page.route` does not see a request the worker makes for the page, so once it
 // takes control the pane read reaches the real static server instead of the capture
@@ -56,37 +48,7 @@ const SNAPSHOT_OMP: SnapshotResponse = {
   ...fixtureSnapshot,
   agents: [Object.assign({}, fixtureAgents[0]!, { agent: "omp", hasSession: true })],
 };
-const ASK_CALL_ID = "omp-ask-1";
 
-function chatWindow(summary: string, questions: readonly ToolQuestion[]): PaneChatResponse {
-  const part: TranscriptPart = {
-    kind: "tool",
-    name: "ask",
-    summary,
-    id: ASK_CALL_ID,
-    call: { kind: "question", name: "ask", summary, questions },
-  };
-  const turn: ChatEntry = {
-    uuid: "omp-ask-turn",
-    ts: "2026-10-13T09:00:00.000Z",
-    role: "assistant",
-    seq: 1_000_000,
-    parts: [part],
-  };
-  return {
-    paneId: PANE_ID,
-    available: true,
-    page: "live",
-    gen: 1,
-    rev: 1,
-    head: turn.seq,
-    oldest: turn.seq,
-    hasOlder: false,
-    upserts: [turn],
-  };
-}
-
-/** Assert both the intended keys and the region each write was bound to. */
 interface SentKeys {
   readonly keys: readonly string[];
   readonly expected_prompt?: string;
@@ -163,13 +125,7 @@ const ANSWER = "Blue";
 function singleWorld(page: Page): Promise<SentKeys[]> {
   const asking = screenOf("omp--v18-10-ask-single");
   return installPaneWorld(page, {
-    chat: chatWindow(QUESTION, [
-      {
-        question: QUESTION,
-        multiple: false,
-        options: [{ label: "Red" }, { label: ANSWER }, { label: "Other (type your own)" }],
-      },
-    ]),
+    chat: fixtureOmpAskSingleChat,
     screens: { asking, answering: pointerOn(asking, ANSWER), answered: screenOf("omp--v18-10-draft-blank-line") },
     start: "asking",
     script: [
@@ -197,17 +153,14 @@ test("the dock answers it: tapping Blue walks the pointer, verifies, then commit
   const sent = await singleWorld(page);
   await page.goto(PANE_URL);
 
-  // This group was absent on the reported screen, despite the visible history card.
   const dock = page.getByRole("group", { name: QUESTION });
   await expect(dock).toBeVisible();
   for (const label of ["Red", ANSWER, "Other (type your own)"]) {
     await expect(dock.getByRole("button", { name: label })).toBeVisible();
   }
 
-  // The pending journal card now points to the live answer controls.
   await expect(page.getByText(en["chat.question.answerBelow"])).toBeVisible();
 
-  // Walk first; commit only after the re-read shows Blue under the pointer.
   await dock.getByRole("button", { name: ANSWER }).click();
   await expect.poll(() => sent.length, { timeout: 10_000 }).toBe(2);
   expect(sent.map((write) => write.keys)).toEqual([["Down"], ["Enter"]]);
@@ -215,33 +168,11 @@ test("the dock answers it: tapping Blue walks the pointer, verifies, then commit
   await expect(dock).toHaveCount(0);
 });
 
-const BATCH: readonly ToolQuestion[] = [
-  {
-    header: "Location",
-    question: "Where should the note go?",
-    multiple: false,
-    options: [{ label: "Above" }, { label: "Below" }, { label: "Separate" }, { label: "Other (type your own)" }],
-  },
-  {
-    header: "Alternative",
-    question: "Which alternative should we keep?",
-    multiple: false,
-    options: [{ label: "Above" }, { label: "Below" }, { label: "Separate" }, { label: "Other (type your own)" }],
-  },
-  {
-    header: "Confirm",
-    question: "Confirm this plan?",
-    multiple: false,
-    options: [{ label: "Above" }, { label: "Below" }, { label: "Separate" }, { label: "Other (type your own)" }],
-  },
-];
-
-// Below -> Above -> Separate -> review. The third pointer move is derived column-for-column;
-// all question/review screens are real captures. Submit returns to an ordinary composer.
+// Question/review screens are real captures; only the third pointer move is derived.
 function batchWorld(page: Page): Promise<SentKeys[]> {
   const q3 = screenOf("omp--v18-10-ask-batch-third");
   return installPaneWorld(page, {
-    chat: chatWindow("Where should the note go?", BATCH),
+    chat: fixtureOmpAskBatchChat,
     screens: {
       q1: screenOf("omp--v18-10-ask-batch"),
       "q1-below": screenOf("omp--v18-10-ask-batch-moved"),
@@ -271,7 +202,6 @@ test("a three-question ask is answered in the dock, question by question, throug
     await expect(page.getByText(header, { exact: true })).toBeVisible();
   }
 
-  // Question 1: one Down, then the separately guarded commit.
   const first = page.getByRole("group", { name: "Where should the note go?" });
   await expect(first).toBeVisible();
   await first.getByRole("button", { name: "Below" }).click();

@@ -1,23 +1,8 @@
-// OMP Ask single-select questions and batch review (.adr/0077; captures and key evidence in
-// ASK_NOTES.md). Recognition stays tail-anchored on a complete box and a measured footer dialect.
-//
-// Question taps use the existing guarded Up/Down walk, then Enter. In a batch Enter advances;
-// only the review card submits all answers. Review Up/Down SCROLLS, so it is never a pointer walk.
-// Other opens the existing answer editor; Cancel always sends the footer's Escape.
-//
-// Current OMP adds Alt+H hide and, for truncated text, Ctrl+O expand/collapse. A collapsed card
-// offers only Expand and Cancel: answers become available only after the complete text is visible.
-// Descriptions join their indented rows. Previews, wrapped option labels and scrolled/partial lists
-// remain declined rather than inventing hidden content or key semantics.
-//
-// Batch tabs identify the step by STYLE, not text. Bind the styled region at entry/commit and keep
-// the current tab in coreSignature, so an identical-looking next question cannot finish an old walk.
-// A revisited question may contain one saved radio; multi-select toggles remain unsupported.
-// Review requires every numbered answer, the active Submit tab, and the static Submit row; missing
-// answers, clipped reviews, notes or unknown footer segments fail closed.
-//
-// No inferred digits, timeout titles, tab-switch shortcuts or note-editor commands. Existing raw
-// dialog/Keys controls remain the fallback for layouts outside the captured grammar.
+// OMP Ask single-select questions and batch review; captures/key evidence: ASK_NOTES.md.
+// Questions use guarded pointer walks. Review arrows SCROLL; only its explicit Submit commits.
+// Ctrl+O expand exposes only Expand/Cancel until the expanded screen is read.
+// Batch identity is style-only: bind the styled region and include the active tab in coreSignature.
+// Unknown layouts retain the raw dialog/Keys controls; no hidden content or key recipes are inferred.
 
 import type { StyledLine } from "../../blocks";
 import { canonicalStyledLines, encodeStyledRegion } from "../../styled-region";
@@ -123,7 +108,7 @@ export function detectAskSelectRegion(lines: StyledLine[]): AskSelectRegion | nu
   const footer = readOmpHintList(footerRow[1]!);
   if (footer === null) return null;
   const tabbed = footer.segments.includes("⇥/←/→ question");
-  const preset = PRESETS.find((p) => (!tabbed || p.enter === "⏎") && sameSegments(footer.segments, footerOf(p, tabbed), true));
+  const preset = PRESETS.find((p) => (!tabbed || p.enter === "⏎") && matchesAskFooter(footer.segments, footerOf(p, tabbed), true));
   if (preset === undefined) return readReview(lines, texts, end, footer.segments);
   const truncated = footer.segments.at(-1) === "Ctrl+O expand";
   const maxQuestionRows = footer.segments.at(-1) === "Ctrl+O collapse" ? MAX_BODY_ROWS : MAX_QUESTION_ROWS;
@@ -211,7 +196,7 @@ export function detectAskSelect(lines: StyledLine[]): PromptModel | null {
 
 /** Review Enter submits once; Up/Down scroll here and must never be a pointer walk. */
 function readReview(lines: StyledLine[], texts: string[], end: number, footer: string[]): AskSelectRegion | null {
-  if (!sameSegments(footer, ["⏎ submit", "↑/↓ scroll", "⎋ cancel"])) return null;
+  if (!matchesAskFooter(footer, ["⏎ submit", "↑/↓ scroll", "⎋ cancel"])) return null;
   const lowerDivider = end - 2;
   if (!DIVIDER.test(texts[lowerDivider]!)) return null;
   let upperDivider = lowerDivider - 1;
@@ -336,11 +321,11 @@ function readOption(row: string, preset: Preset, bodyRow: number, allowSelected:
   return { label: noted === null ? rest : noted[1]!, note: noted !== null, pointed, selected, bodyRow };
 }
 
-function sameSegments(a: string[], b: string[], allowExpansion = false): boolean {
-  let length = a.length;
-  if (allowExpansion && /^Ctrl\+O (?:expand|collapse)$/.test(a[length - 1]!)) length--;
-  if (a[length - 1] === "Alt+H hide") length--;
-  return length === b.length && b.every((s, i) => s === a[i]);
+function matchesAskFooter(segments: string[], expected: string[], allowExpansion = false): boolean {
+  let length = segments.length;
+  if (allowExpansion && /^Ctrl\+O (?:expand|collapse)$/.test(segments[length - 1]!)) length--;
+  if (segments[length - 1] === "Alt+H hide") length--;
+  return length === expected.length && expected.every((segment, i) => segment === segments[i]);
 }
 
 function capitalise(word: string): string {
